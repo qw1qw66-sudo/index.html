@@ -1,0 +1,2107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
+<title>Pump Cartridge Installation Tracker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root {
+  /* Warmer, softer palette */
+  --bg: #0c1420;
+  --bg-2: #101a2a;
+  --surface: #152033;
+  --surface-2: #1a2740;
+  --border: #24344d;
+  --border-2: #314665;
+  --text: #e4ecf7;
+  --text-2: #c4d0e2;
+  --muted: #7a8ca5;
+  --faint: #3e5575;
+
+  --sky: #38bdf8;
+  --sky-dim: rgba(56,189,248,.12);
+  --green: #34d399;
+  --green-dim: rgba(52,211,153,.12);
+  --amber: #fbbf24;
+  --amber-dim: rgba(251,191,36,.12);
+  --red: #f87171;
+  --red-dim: rgba(248,113,113,.12);
+  --purple: #a78bfa;
+  --purple-dim: rgba(167,139,250,.12);
+
+  --mono: 'JetBrains Mono', ui-monospace, monospace;
+  --sans: 'Inter', system-ui, -apple-system, sans-serif;
+
+  --shadow-sm: 0 1px 2px rgba(0,0,0,.2);
+  --shadow-md: 0 4px 16px rgba(0,0,0,.25);
+  --shadow-lg: 0 12px 40px rgba(0,0,0,.35);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  background: var(--bg);
+  background-image:
+    radial-gradient(at 20% 0%, rgba(56,189,248,.06) 0%, transparent 50%),
+    radial-gradient(at 80% 100%, rgba(167,139,250,.04) 0%, transparent 50%);
+  background-attachment: fixed;
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.wrap { max-width: 1040px; margin: 0 auto; padding: 20px 16px 60px; }
+
+/* ─────────────────── HEADER ─────────────────── */
+.app-header { margin-bottom: 18px; }
+.app-title {
+  font-size: 19px;
+  font-weight: 800;
+  letter-spacing: -.3px;
+  color: #f3f7fc;
+  line-height: 1.2;
+}
+.app-sub {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--muted);
+  margin-top: 3px;
+}
+
+/* ─────────────────── WORK DATE BAR ─────────────────── */
+.workdate-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: linear-gradient(135deg, var(--surface), var(--surface-2));
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 11px 14px;
+  margin-top: 14px;
+  box-shadow: var(--shadow-sm);
+}
+.workdate-icon {
+  width: 32px; height: 32px;
+  background: var(--sky-dim);
+  border-radius: 8px;
+  display: grid; place-items: center;
+  color: var(--sky);
+  flex-shrink: 0;
+}
+.workdate-info { flex: 1; min-width: 0; }
+.workdate-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--muted);
+}
+.workdate-value {
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  margin-top: 1px;
+}
+.workdate-value.not-today { color: var(--amber); }
+.workdate-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.workdate-bar input[type=date] {
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 7px 9px;
+  border-radius: 7px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color-scheme: dark;
+  min-width: 0;
+  max-width: 140px;
+}
+
+/* ─────────────────── STATS ─────────────────── */
+.stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-top: 12px;
+}
+.stat {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  box-shadow: var(--shadow-sm);
+}
+.stat-label {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+.stat-val {
+  font-family: var(--mono);
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--sky);
+  line-height: 1;
+  letter-spacing: -.5px;
+}
+.stat-val.g { color: var(--green); }
+.stat-val.a { color: var(--amber); }
+
+.overall {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 11px 14px;
+  margin-top: 8px;
+  box-shadow: var(--shadow-sm);
+}
+.overall-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-family: var(--mono);
+  font-size: 11px;
+  margin-bottom: 7px;
+}
+.overall-top span:first-child { color: var(--muted); text-transform: uppercase; letter-spacing: .05em; font-size: 10px; }
+.overall-top span:last-child { color: var(--text); font-weight: 700; font-size: 13px; }
+.bar-track {
+  height: 6px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 99px;
+  overflow: hidden;
+}
+.bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--sky), var(--green));
+  border-radius: 99px;
+  transition: width .5s cubic-bezier(.4,0,.2,1);
+}
+
+/* ─────────────────── TOOLBAR ─────────────────── */
+.toolbar {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+.tb-btn {
+  padding: 8px 11px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 12px;
+  font-family: var(--sans);
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: all .15s ease;
+  white-space: nowrap;
+  min-height: 36px;
+}
+.tb-btn:hover { background: var(--surface-2); border-color: var(--border-2); }
+.tb-btn:active { transform: scale(.97); }
+.tb-btn.primary { background: var(--sky-dim); border-color: var(--sky); color: var(--sky); }
+.tb-btn.primary:hover { background: rgba(56,189,248,.2); }
+.tb-btn.danger { color: var(--red); border-color: rgba(248,113,113,.3); }
+.tb-btn.danger:hover { background: var(--red-dim); }
+.tb-btn svg { width: 14px; height: 14px; flex-shrink: 0; }
+
+/* ─────────────────── BACKUP REMINDER ─────────────────── */
+.backup-warn {
+  display: none;
+  align-items: center;
+  gap: 8px;
+  background: var(--amber-dim);
+  border: 1px solid rgba(251,191,36,.3);
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--amber);
+}
+.backup-warn.show { display: flex; }
+.backup-warn button {
+  margin-left: auto;
+  padding: 5px 10px;
+  background: transparent;
+  border: 1px solid var(--amber);
+  color: var(--amber);
+  border-radius: 6px;
+  font-size: 11px;
+  cursor: pointer;
+  font-family: var(--sans);
+  font-weight: 600;
+}
+
+/* ─────────────────── SECTIONS ─────────────────── */
+.sections {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 16px;
+}
+.sec {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  transition: border-color .2s, box-shadow .2s;
+  box-shadow: var(--shadow-sm);
+}
+.sec.complete {
+  border-color: rgba(52,211,153,.4);
+  background: linear-gradient(180deg, var(--surface), rgba(52,211,153,.03));
+}
+.sec-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 13px 14px;
+  cursor: pointer;
+  user-select: none;
+  transition: background .15s;
+  min-height: 56px;
+}
+.sec-head:hover { background: rgba(255,255,255,.015); }
+.sec-num {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--muted);
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px 6px;
+  min-width: 28px;
+  text-align: center;
+  flex-shrink: 0;
+}
+.sec-title-wrap { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; }
+.sec-title {
+  font-weight: 700;
+  font-size: 13.5px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sec-title-input {
+  flex: 1;
+  background: var(--bg-2);
+  border: 1px solid var(--sky);
+  color: var(--text);
+  padding: 5px 8px;
+  border-radius: 6px;
+  font-family: var(--sans);
+  font-size: 13px;
+  font-weight: 700;
+  box-shadow: 0 0 0 2px rgba(56,189,248,.15);
+}
+.edit-icon {
+  width: 24px; height: 24px;
+  display: grid; place-items: center;
+  color: var(--faint);
+  border: 1px solid transparent;
+  border-radius: 5px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all .15s;
+  opacity: 0;
+}
+.sec-head:hover .edit-icon,
+.task .edit-icon { opacity: 1; }
+.edit-icon:hover { color: var(--sky); background: var(--sky-dim); border-color: var(--sky); }
+.edit-icon svg { width: 13px; height: 13px; }
+.sec-meta { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.sec-pct {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  min-width: 34px;
+  text-align: right;
+}
+.sec-pct.done { color: var(--green); }
+.sec-pct.active { color: var(--sky); }
+.mini-bar { width: 60px; height: 4px; background: var(--bg-2); border-radius: 99px; overflow: hidden; }
+.mini-fill { height: 100%; background: linear-gradient(90deg, var(--sky), var(--green)); border-radius: 99px; transition: width .4s; }
+.sec-count { font-family: var(--mono); font-size: 10px; color: var(--faint); min-width: 32px; text-align: right; }
+.chev { width: 16px; height: 16px; color: var(--faint); transition: transform .25s; flex-shrink: 0; }
+.chev.open { transform: rotate(180deg); color: var(--sky); }
+
+.sec-body { height: 0; overflow: hidden; transition: height .3s cubic-bezier(.4,0,.2,1); }
+.sec-body-inner {
+  padding: 0 10px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+  margin-top: 0;
+}
+
+/* ─────────────────── TASK ─────────────────── */
+.task {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border);
+  border-radius: 9px;
+  overflow: hidden;
+  transition: border-left-color .2s;
+}
+.task.prog { border-left-color: var(--amber); }
+.task.done { border-left-color: var(--green); }
+.task-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 11px;
+  min-height: 42px;
+}
+.dot {
+  width: 9px; height: 9px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  border: 1.5px solid var(--faint);
+  background: transparent;
+  transition: all .2s;
+}
+.dot.prog { background: var(--amber); border-color: var(--amber); }
+.dot.done { background: var(--green); border-color: var(--green); }
+.task-title-wrap { flex: 1; min-width: 0; display: flex; align-items: center; gap: 5px; }
+.task-title {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text);
+  line-height: 1.35;
+  word-break: break-word;
+}
+.task-title.done { color: var(--green); }
+.task-title-input {
+  flex: 1;
+  background: var(--bg-2);
+  border: 1px solid var(--sky);
+  color: var(--text);
+  padding: 4px 7px;
+  border-radius: 5px;
+  font-family: var(--sans);
+  font-size: 12.5px;
+  font-weight: 500;
+  box-shadow: 0 0 0 2px rgba(56,189,248,.15);
+}
+.pill {
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 700;
+  padding: 2px 5px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  flex-shrink: 0;
+}
+.pill-flex { background: rgba(56,189,248,.1); border: 1px solid rgba(56,189,248,.3); color: var(--sky); }
+.pill-oring { background: var(--purple-dim); border: 1px solid rgba(167,139,250,.3); color: var(--purple); }
+
+.quick { display: flex; gap: 3px; flex-shrink: 0; }
+.qbtn {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  padding: 5px 7px;
+  border-radius: 6px;
+  border: 1px solid var(--border-2);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: all .15s;
+  min-width: 30px;
+  min-height: 28px;
+}
+.qbtn:hover { background: var(--bg-2); color: var(--text); }
+.qbtn:active { transform: scale(.94); }
+.qbtn.active { background: var(--green-dim); border-color: var(--green); color: var(--green); }
+
+.expand-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  border-radius: 6px;
+  padding: 5px 8px;
+  cursor: pointer;
+  font-size: 11px;
+  transition: all .15s;
+  flex-shrink: 0;
+  min-width: 28px;
+  min-height: 28px;
+  display: grid;
+  place-items: center;
+}
+.expand-btn:hover { border-color: var(--sky); color: var(--sky); }
+.expand-btn svg { width: 12px; height: 12px; transition: transform .2s; }
+.expand-btn.open svg { transform: rotate(180deg); }
+
+/* ─────────────────── TASK DETAIL ─────────────────── */
+.detail { height: 0; overflow: hidden; transition: height .25s cubic-bezier(.4,0,.2,1); }
+.detail-inner {
+  padding: 10px 11px 12px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.field-label {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--muted);
+  margin-bottom: 4px;
+  font-weight: 600;
+}
+.dates { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
+input[type=date],
+input[type=number],
+input[type=text],
+textarea {
+  width: 100%;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 7px 10px;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+  color-scheme: dark;
+  min-height: 34px;
+  transition: border-color .15s, box-shadow .15s;
+}
+textarea {
+  resize: vertical;
+  min-height: 60px;
+  font-family: var(--sans);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+input:focus, textarea:focus {
+  outline: none;
+  border-color: var(--sky);
+  box-shadow: 0 0 0 3px rgba(56,189,248,.1);
+}
+
+.prog-control { display: flex; align-items: center; gap: 10px; }
+.prog-slider {
+  flex: 1;
+  -webkit-appearance: none;
+  appearance: none;
+  height: 5px;
+  border-radius: 99px;
+  background: var(--border-2);
+  cursor: pointer;
+  outline: none;
+}
+.prog-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 18px; height: 18px;
+  border-radius: 50%;
+  background: var(--sky);
+  cursor: pointer;
+  border: 2px solid var(--bg);
+  box-shadow: 0 2px 6px rgba(56,189,248,.4);
+  transition: transform .15s;
+}
+.prog-slider::-webkit-slider-thumb:active { transform: scale(1.2); }
+.prog-slider::-moz-range-thumb {
+  width: 18px; height: 18px;
+  border-radius: 50%;
+  background: var(--sky);
+  cursor: pointer;
+  border: 2px solid var(--bg);
+}
+.prog-num { width: 60px; text-align: center; font-weight: 700; }
+
+/* Milestones */
+.milestones { display: flex; flex-direction: column; gap: 4px; }
+.ms {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  cursor: pointer;
+  user-select: none;
+  transition: border-color .15s;
+  min-height: 34px;
+}
+.ms:hover { border-color: var(--border-2); }
+.ms-check {
+  width: 16px; height: 16px;
+  border-radius: 4px;
+  border: 1.5px solid var(--border-2);
+  display: grid; place-items: center;
+  flex-shrink: 0;
+  color: var(--green);
+  transition: all .15s;
+}
+.ms-check.done { background: var(--green-dim); border-color: var(--green); }
+.ms-check svg { width: 11px; height: 11px; opacity: 0; transition: opacity .15s; }
+.ms-check.done svg { opacity: 1; }
+.ms-label { font-size: 12px; color: var(--text); flex: 1; }
+.ms-label.done { color: var(--green); }
+
+/* Updates */
+.updates-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 3px 0;
+  user-select: none;
+}
+.updates-header:hover { color: var(--text); }
+.updates-header svg { width: 11px; height: 11px; transition: transform .2s; }
+.updates-header.open svg { transform: rotate(90deg); }
+
+.upd-list { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
+.upd-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 7px 9px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  font-size: 12px;
+}
+.upd-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--sky); flex-shrink: 0; margin-top: 5px; }
+.upd-text { flex: 1; color: var(--text); line-height: 1.4; word-break: break-word; }
+.upd-date {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: var(--faint);
+  white-space: nowrap;
+  margin-top: 1px;
+}
+.upd-del {
+  background: transparent;
+  border: none;
+  color: var(--faint);
+  cursor: pointer;
+  font-size: 15px;
+  padding: 0 4px;
+  line-height: 1;
+  opacity: .6;
+  transition: all .15s;
+}
+.upd-del:hover { color: var(--red); opacity: 1; }
+
+.add-upd { display: flex; gap: 6px; margin-top: 6px; flex-direction: column; }
+.add-upd-row { display: flex; gap: 6px; align-items: stretch; }
+.add-upd-row input[type=text] { flex: 1; }
+.add-upd-row input[type=date] { max-width: 125px; }
+.add-upd-btn {
+  padding: 8px 14px;
+  background: var(--sky-dim);
+  border: 1px solid var(--sky);
+  color: var(--sky);
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: var(--sans);
+  transition: all .15s;
+  white-space: nowrap;
+  flex-shrink: 0;
+  min-height: 34px;
+}
+.add-upd-btn:hover { background: rgba(56,189,248,.2); }
+.add-upd-btn:active { transform: scale(.97); }
+
+/* O-Ring */
+.oring-info {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  padding: 10px 11px;
+  border-top: 1px solid var(--border);
+  background: rgba(167,139,250,.04);
+}
+.or-field { display: flex; flex-direction: column; gap: 2px; }
+.or-key {
+  font-family: var(--mono);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: rgba(167,139,250,.7);
+  font-weight: 600;
+}
+.or-val { font-family: var(--mono); font-size: 12.5px; font-weight: 700; color: var(--text); }
+
+.verify-btn {
+  padding: 6px 12px;
+  border-radius: 7px;
+  border: 1px solid var(--border-2);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 11.5px;
+  font-family: var(--sans);
+  font-weight: 600;
+  transition: all .15s;
+  flex-shrink: 0;
+  white-space: nowrap;
+  min-height: 30px;
+}
+.verify-btn:hover:not(.verified) { border-color: var(--sky); color: var(--sky); }
+.verify-btn.verified { border-color: var(--green); color: var(--green); background: var(--green-dim); }
+.verify-btn:active { transform: scale(.96); }
+
+.last-mod {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: var(--faint);
+  padding-top: 4px;
+  text-align: right;
+}
+
+/* ─────────────────── MODAL ─────────────────── */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.7);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  z-index: 100;
+  display: none;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 16px;
+  overflow-y: auto;
+  animation: fadeIn .2s ease;
+}
+.modal-overlay.show { display: flex; }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+.modal {
+  background: var(--surface);
+  border: 1px solid var(--border-2);
+  border-radius: 16px;
+  max-width: 700px;
+  width: 100%;
+  margin: 20px 0;
+  box-shadow: var(--shadow-lg);
+  animation: slideUp .3s cubic-bezier(.2,.8,.2,1);
+  overflow: hidden;
+}
+@keyframes slideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-2);
+}
+.modal-title { font-size: 16px; font-weight: 700; color: var(--text); flex: 1; }
+.modal-close {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  width: 30px; height: 30px;
+  border-radius: 7px;
+  cursor: pointer;
+  display: grid; place-items: center;
+  transition: all .15s;
+}
+.modal-close:hover { background: var(--red-dim); color: var(--red); border-color: var(--red); }
+
+.modal-body { padding: 16px 18px; max-height: 70vh; overflow-y: auto; }
+
+.rpt-date-picker {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  margin-bottom: 14px;
+}
+.rpt-date-picker label {
+  font-family: var(--mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--muted);
+  font-weight: 600;
+}
+.rpt-date-picker input { max-width: 170px; }
+
+.rpt-summary {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.rpt-stat {
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 9px 11px;
+  text-align: center;
+}
+.rpt-stat-val {
+  font-family: var(--mono);
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--sky);
+  line-height: 1;
+}
+.rpt-stat-val.g { color: var(--green); }
+.rpt-stat-val.a { color: var(--amber); }
+.rpt-stat-label {
+  font-family: var(--mono);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+.rpt-section { margin-bottom: 14px; }
+.rpt-sec-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--sky);
+  padding: 7px 10px;
+  background: var(--sky-dim);
+  border-left: 3px solid var(--sky);
+  border-radius: 6px;
+  margin-bottom: 7px;
+}
+.rpt-task {
+  padding: 9px 11px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 5px;
+}
+.rpt-task-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text);
+  margin-bottom: 5px;
+}
+.rpt-task-pct {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  margin-left: auto;
+}
+.rpt-events {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding-left: 16px;
+  font-size: 12px;
+  color: var(--text-2);
+}
+.rpt-events li { list-style: disc; color: var(--muted); }
+.rpt-events li span { color: var(--text-2); }
+
+.rpt-empty {
+  text-align: center;
+  padding: 30px 14px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.rpt-empty-icon { font-size: 32px; margin-bottom: 10px; opacity: .4; }
+
+.modal-footer {
+  display: flex;
+  gap: 8px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-2);
+  flex-wrap: wrap;
+}
+
+/* Toast */
+.toast {
+  position: fixed;
+  bottom: 22px;
+  left: 50%;
+  transform: translateX(-50%) translateY(100px);
+  background: var(--surface);
+  border: 1px solid var(--border-2);
+  color: var(--text);
+  padding: 11px 18px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 500;
+  box-shadow: var(--shadow-lg);
+  z-index: 200;
+  transition: transform .3s cubic-bezier(.2,.8,.2,1);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.toast.show { transform: translateX(-50%) translateY(0); }
+.toast.success { border-color: var(--green); color: var(--green); }
+.toast.error { border-color: var(--red); color: var(--red); }
+
+/* Save indicator */
+.save-ind {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  padding: 5px 10px;
+  border-radius: 99px;
+  font-family: var(--mono);
+  font-size: 10px;
+  display: none;
+  align-items: center;
+  gap: 5px;
+  z-index: 90;
+  box-shadow: var(--shadow-sm);
+}
+.save-ind.show { display: flex; }
+.save-ind .dot-save {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--green);
+  animation: pulse 1.5s ease-in-out infinite;
+}
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+/* Mobile */
+@media (max-width: 680px) {
+  .wrap { padding: 14px 12px 60px; }
+  .app-title { font-size: 17px; }
+  .stats { grid-template-columns: 1fr 1fr; }
+  .sec-count, .mini-bar { display: none; }
+  .dates { grid-template-columns: 1fr; }
+  .oring-info { grid-template-columns: 1fr 1fr; }
+  .rpt-summary { grid-template-columns: 1fr 1fr; }
+  .modal-body { max-height: 65vh; }
+  .add-upd-row { flex-direction: column; }
+  .add-upd-row input[type=date] { max-width: 100%; }
+  .workdate-bar { flex-wrap: wrap; }
+  .workdate-bar input[type=date] { max-width: 160px; }
+  .modal { margin: 0; border-radius: 12px; }
+  .modal-overlay { padding: 10px; }
+}
+@media (max-width: 400px) {
+  .sec-num { display: none; }
+  .edit-icon { opacity: 1; } /* Always visible on small mobile */
+}
+</style>
+</head>
+<body>
+
+<div class="save-ind" id="save-ind"><span class="dot-save"></span><span id="save-text">Saved</span></div>
+
+<div class="wrap">
+  <div class="app-header">
+    <div class="app-title">Pump Cartridge Installation Tracker</div>
+    <div class="app-sub">HP Booster Pump · Cartridge Change-out · 15 Sections</div>
+  </div>
+
+  <!-- Work Date Bar -->
+  <div class="workdate-bar">
+    <div class="workdate-icon">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+        <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+        <line x1="16" y1="2" x2="16" y2="6"/>
+        <line x1="8" y1="2" x2="8" y2="6"/>
+        <line x1="3" y1="10" x2="21" y2="10"/>
+      </svg>
+    </div>
+    <div class="workdate-info">
+      <div class="workdate-label">Logging changes for</div>
+      <div class="workdate-value" id="wd-display">Today</div>
+    </div>
+    <div class="workdate-actions">
+      <input type="date" id="wd-input" onchange="setWorkDate(this.value)">
+      <button class="tb-btn" onclick="setWorkDate(todayISO())">Today</button>
+    </div>
+  </div>
+
+  <!-- Stats -->
+  <div class="stats">
+    <div class="stat"><div class="stat-label">Total Tasks</div><div class="stat-val" id="st-total">0</div></div>
+    <div class="stat"><div class="stat-label">Completed</div><div class="stat-val g" id="st-done">0</div></div>
+    <div class="stat"><div class="stat-label">In Progress</div><div class="stat-val a" id="st-prog">0</div></div>
+    <div class="stat"><div class="stat-label">Sections</div><div class="stat-val" id="st-secs">0/15</div></div>
+  </div>
+
+  <div class="overall">
+    <div class="overall-top"><span>Overall Progress</span><span id="overall-txt">0%</span></div>
+    <div class="bar-track"><div class="bar-fill" id="overall-bar" style="width:0%"></div></div>
+  </div>
+
+  <!-- Backup Warning -->
+  <div class="backup-warn" id="backup-warn">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+      <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+      <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+    </svg>
+    <span id="backup-msg">It's been a while since your last backup. Export now to be safe.</span>
+    <button onclick="exportData()">Backup Now</button>
+  </div>
+
+  <!-- Toolbar -->
+  <div class="toolbar">
+    <button class="tb-btn primary" onclick="openReport()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+      Daily Report
+    </button>
+    <button class="tb-btn" onclick="exportData()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      Export
+    </button>
+    <button class="tb-btn" onclick="document.getElementById('import-input').click()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      Import
+    </button>
+    <input type="file" id="import-input" accept=".json" style="display:none" onchange="importData(this)">
+    <button class="tb-btn" onclick="expandAll()">Expand All</button>
+    <button class="tb-btn" onclick="collapseAll()">Collapse All</button>
+    <button class="tb-btn danger" onclick="resetAll()">Reset</button>
+  </div>
+
+  <div class="sections" id="sections"></div>
+</div>
+
+<!-- Report Modal -->
+<div class="modal-overlay" id="report-modal" onclick="if(event.target===this)closeReport()">
+  <div class="modal">
+    <div class="modal-header">
+      <svg viewBox="0 0 24 24" fill="none" stroke="var(--sky)" stroke-width="2" width="20" height="20"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+      <div class="modal-title">Daily Report</div>
+      <button class="modal-close" onclick="closeReport()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="modal-body" id="report-body"></div>
+    <div class="modal-footer">
+      <button class="tb-btn primary" onclick="copyReport()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+        Copy Text
+      </button>
+      <button class="tb-btn" onclick="downloadReport()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        Download
+      </button>
+      <button class="tb-btn" onclick="window.print()">Print</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ═════════════════════════════════════════════════════════════════
+// SECTIONS & TASKS DATA
+// ═════════════════════════════════════════════════════════════════
+const SECTIONS = [
+  { id:"s1", num:1, title:"Isolation", tasks:[
+    {id:"s1t1", title:"LOTO and Mechanical Isolation Completed"},
+    {id:"s1t2", title:"Suction Spool Drop"},
+    {id:"s1t3", title:"Discharge Spool Drop"},
+    {id:"s1t4", title:"Blinds Installation"},
+    {id:"s1t5", title:"Safe Isolation Confirmation"},
+  ]},
+  { id:"s2", num:2, title:"Removal Preparation", tasks:[
+    {id:"s2t1", title:"Suction Screen Inspection"},
+    {id:"s2t2", title:"Cartridge Withdrawal Tools at Site"},
+    {id:"s2t3", title:"IB Instrumentation Removal"},
+    {id:"s2t4", title:"OB Instrumentation Removal"},
+    {id:"s2t5", title:"IB Oil Pipes and Drain Sight Glass Removal"},
+    {id:"s2t6", title:"OB Oil Pipes Removal, Draining, and Blinding"},
+    {id:"s2t7", title:"Water Pipes Removal"},
+    {id:"s2t8", title:"OB Upper Bearing Housing Inspection and Boxing Up"},
+    {id:"s2t9", title:"Delivery Flange Nut Loosening by Hydraulic Method", flex:true},
+  ]},
+  { id:"s3", num:3, title:"Coupling and Guard Removal", tasks:[
+    {id:"s3t1", title:"Spacer Coupling Guard Removal"},
+    {id:"s3t2", title:"Spacer Coupling Split Plate Removal"},
+    {id:"s3t3", title:"Spacer Coupling Removal"},
+    {id:"s3t4", title:"Load Coupling Guard Bolt Loosening"},
+    {id:"s3t5", title:"Load Coupling Guard Removal by Crane"},
+    {id:"s3t6", title:"Load Coupling Guard Removal"},
+    {id:"s3t7", title:"Load Coupling Disconnection"},
+    {id:"s3t8", title:"Coupling Hub Removal by Hydraulic Method", flex:true},
+  ]},
+  { id:"s4", num:4, title:"Discharge Side and Withdrawal Setup", tasks:[
+    {id:"s4t1", title:"Tensioning Tools Setup"},
+    {id:"s4t2", title:"Delivery Flange Stud Cleaning and Polishing"},
+    {id:"s4t3", title:"Pull-Up Ring Bolts Removal"},
+    {id:"s4t4", title:"Withdrawal Table Rigging Up"},
+    {id:"s4t5", title:"Extension Piece Rigging Up"},
+    {id:"s4t6", title:"Extension Piece Installation"},
+    {id:"s4t7", title:"Extension Piece Pedestal Installation"},
+    {id:"s4t8", title:"Withdrawal Table Level Alignment"},
+    {id:"s4t9", title:"Discharge Head Guide Plate Installation"},
+    {id:"s4t10", title:"Pull-Up Ring Removal"},
+  ]},
+  { id:"s5", num:5, title:"Cartridge Withdrawal", tasks:[
+    {id:"s5t1", title:"Pump Cartridge Partial Withdrawal"},
+    {id:"s5t2", title:"Intermediate Piece Installation"},
+    {id:"s5t3", title:"Pump Cartridge Full Withdrawal"},
+    {id:"s5t4", title:"Old Cartridge Rigging Down"},
+    {id:"s5t5", title:"Extension Piece Removal"},
+    {id:"s5t6", title:"Cartridge Guide Removal"},
+    {id:"s5t7", title:"Old Cartridge Transfer to Constar"},
+  ]},
+  { id:"s6", num:6, title:"Inspection and Cleaning", tasks:[
+    {id:"s6t1", title:"Barrel Cleaning"},
+    {id:"s6t2", title:"Barrel Mating Face Cleaning"},
+    {id:"s6t3", title:"Pump Barrel Measurement Verification"},
+    {id:"s6t4", title:"Cyclone Separator Piping Cleaning and Flushing"},
+    {id:"s6t5", title:"Lube Oil, Seal Piping, and Drain Line Cleaning"},
+  ]},
+  { id:"s7", num:7, title:"New Cartridge Preparation", tasks:[
+    {id:"s7t1", title:"New Cartridge Rigging Up from Constar"},
+    {id:"s7t2", title:"Extension Piece Installation on New Cartridge"},
+    {id:"s7t3", title:"Cartridge Guide Installation on New Cartridge"},
+    {id:"s7t4", title:"New Cartridge Installation on Withdrawal Table"},
+    {id:"s7t5", title:"Discharge Flange Gasket Installation"},
+    {id:"s7t6", title:"Required O-Rings Installation"},
+    {id:"s7t7", title:"Withdrawal Table Balancing"},
+  ]},
+  { id:"s8", num:8, title:"Material Readiness / O-Ring Verification", defaultCollapsed:true, tasks:[
+    {id:"s8t1", title:"First Impeller O-Ring Verification", type:"oring", partNo:"412.06", material:"1000787129", qty:6},
+    {id:"s8t2", title:"Discharge Flange Seal Ring Verification", type:"oring", partNo:"411.09", material:"1000475361", qty:2},
+    {id:"s8t3", title:"Middle Impeller O-Ring Verification", type:"oring", partNo:"412.09", material:"1000787132", qty:3},
+    {id:"s8t4", title:"Pull-Up Ring Face O-Ring Verification", type:"oring", partNo:"412.05", material:"1000787128", qty:3},
+    {id:"s8t5", title:"Pull-Up Ring Vertical O-Ring Verification", type:"oring", partNo:"412.04", material:"1000780984", qty:3},
+  ]},
+  { id:"s9", num:9, title:"Cartridge Installation", tasks:[
+    {id:"s9t1", title:"Refurbished Cartridge Insertion Start"},
+    {id:"s9t2", title:"Refurbished Cartridge Full Insertion"},
+    {id:"s9t3", title:"Cartridge Securing"},
+    {id:"s9t4", title:"Cartridge Guide Plate Removal"},
+    {id:"s9t5", title:"Delivery Flange Nut Installation"},
+  ]},
+  { id:"s10", num:10, title:"Hydraulic Tightening", tasks:[
+    {id:"s10t1", title:"Delivery Flange Tightening by Hydraulic Method", flex:true,
+      milestones:[
+        {id:"s10t1m1", label:"First Stage Completed"},
+        {id:"s10t1m2", label:"Third Stage Completed"},
+      ]
+    },
+  ]},
+  { id:"s11", num:11, title:"Post-Installation Mechanical and Alignment Checks", tasks:[
+    {id:"s11t1", title:"Free Rotation Check"},
+    {id:"s11t2", title:"Soft Foot Check"},
+    {id:"s11t3", title:"Soft Foot Correction"},
+    {id:"s11t4", title:"Pump and Gearbox Alignment Check", flex:true},
+    {id:"s11t5", title:"Alignment Correction", flex:true},
+    {id:"s11t6", title:"Shaft End Float Measurement"},
+    {id:"s11t7", title:"Shaft Centralization with PCST Crew"},
+    {id:"s11t8", title:"Pump Shaft Spider and Rig Alignment Installation"},
+    {id:"s11t9", title:"Gearbox Shaft Spider and Rig Alignment Installation"},
+    {id:"s11t10", title:"Axial Movement Measurement"},
+    {id:"s11t11", title:"Alignment Reading"},
+    {id:"s11t12", title:"Alignment Prechecks"},
+  ]},
+  { id:"s12", num:12, title:"Temporary Setup Removal and Reinstatement", tasks:[
+    {id:"s12t1", title:"Pull-Up Ring O-Rings Installation"},
+    {id:"s12t2", title:"Pull-Up Ring Installation"},
+    {id:"s12t3", title:"Extension Piece and Pedestal Removal"},
+    {id:"s12t4", title:"Withdrawal Table Rigging Down"},
+    {id:"s12t5", title:"Extension Piece and Pedestal Rigging Down"},
+    {id:"s12t6", title:"IB Instrumentation Installation by PCST Crew"},
+  ]},
+  { id:"s13", num:13, title:"Coupling, Gearbox, and Oil System Final Reassembly", tasks:[
+    {id:"s13t1", title:"Coupling Hub Installation by Hydraulic Method", flex:true},
+    {id:"s13t2", title:"Load Coupling Gap Calculation"},
+    {id:"s13t3", title:"Load Coupling Installation with Guard"},
+    {id:"s13t4", title:"Spacer Coupling Gap Calculation"},
+    {id:"s13t5", title:"Spacer Coupling Installation with Guard"},
+    {id:"s13t6", title:"Oil Supply Mesh Installation"},
+    {id:"s13t7", title:"Gearbox Breather Replacement"},
+    {id:"s13t8", title:"Gearbox Cleaning"},
+    {id:"s13t9", title:"Lube Oil Line Installation with Mesh"},
+    {id:"s13t10", title:"Lube Oil Filter Replacement"},
+    {id:"s13t11", title:"Lube Oil Flushing / Debris Monitoring", flex:true},
+    {id:"s13t12", title:"Oil Sampling and Lab Analysis"},
+  ]},
+  { id:"s14", num:14, title:"Spool Reinstatement and De-Blinding", tasks:[
+    {id:"s14t1", title:"Discharge Upstream Endblind Drop"},
+    {id:"s14t2", title:"Discharge Downstream Endblind Drop"},
+    {id:"s14t3", title:"Discharge Spool Installation"},
+    {id:"s14t4", title:"Discharge Spool Tightening"},
+    {id:"s14t5", title:"Discharge Flange Tightening Completion"},
+    {id:"s14t6", title:"Suction Upstream Endblind Drop"},
+    {id:"s14t7", title:"Suction Downstream Endblind Drop"},
+    {id:"s14t8", title:"Suction Spool Installation"},
+    {id:"s14t9", title:"Suction Spool Tightening"},
+  ]},
+  { id:"s15", num:15, title:"Startup and Handover", tasks:[
+    {id:"s15t1", title:"Startup with RU and Vibration Crew"},
+    {id:"s15t2", title:"Pump Handed Over to Operation for Startup"},
+  ]},
+];
+
+const ALL_TASKS = SECTIONS.flatMap(s => s.tasks);
+const TASK_MAP = {};
+ALL_TASKS.forEach(t => TASK_MAP[t.id] = t);
+const SEC_OF = {};
+SECTIONS.forEach(s => s.tasks.forEach(t => SEC_OF[t.id] = s.id));
+
+// ═════════════════════════════════════════════════════════════════
+// STATE
+// ═════════════════════════════════════════════════════════════════
+const KEY = "pump-tracker-v5";
+let S = {};
+
+function todayISO() {
+  const d = new Date();
+  return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+}
+
+function uid() { return Math.random().toString(36).slice(2,9); }
+
+function initState() {
+  try { S = JSON.parse(localStorage.getItem(KEY)) || {}; } catch(e) { S = {}; }
+
+  if (!S._meta) S._meta = { workDate: todayISO(), lastBackup: null };
+  if (!S._meta.workDate) S._meta.workDate = todayISO();
+  if (!S.activityLog) S.activityLog = [];
+
+  SECTIONS.forEach(sec => {
+    if (!S[sec.id]) S[sec.id] = { collapsed: sec.defaultCollapsed ?? false, customTitle: null };
+    if (S[sec.id].customTitle === undefined) S[sec.id].customTitle = null;
+  });
+  ALL_TASKS.forEach(t => {
+    if (!S[t.id]) S[t.id] = {
+      progress: 0, notes: "", startDate: "", endDate: "",
+      updates: [], verified: false, detailOpen: false, updOpen: true,
+      customTitle: null, lastModified: null
+    };
+    // Defensive defaults
+    const ts = S[t.id];
+    if (ts.updates === undefined) ts.updates = [];
+    if (ts.customTitle === undefined) ts.customTitle = null;
+    if (ts.lastModified === undefined) ts.lastModified = null;
+    if (t.milestones) t.milestones.forEach(m => {
+      if (ts[m.id] === undefined) ts[m.id] = false;
+    });
+  });
+}
+
+function persist() {
+  try {
+    localStorage.setItem(KEY, JSON.stringify(S));
+    showSaveIndicator();
+  } catch(e) {
+    showToast("Save failed: storage full or blocked", "error");
+  }
+}
+
+let saveIndTimer;
+function showSaveIndicator() {
+  const el = document.getElementById("save-ind");
+  const txt = document.getElementById("save-text");
+  txt.textContent = "Saved";
+  el.classList.add("show");
+  clearTimeout(saveIndTimer);
+  saveIndTimer = setTimeout(() => el.classList.remove("show"), 1500);
+}
+
+function getSecTitle(sec) { return S[sec.id].customTitle || sec.title; }
+function getTaskTitle(t)  { return S[t.id].customTitle || t.title; }
+
+// Activity logging
+function logActivity(taskId, type, extras={}) {
+  S.activityLog.push({
+    id: uid(),
+    date: S._meta.workDate,
+    ts: Date.now(),
+    taskId, type, ...extras
+  });
+  if (taskId) S[taskId].lastModified = S._meta.workDate;
+}
+
+function taskProgress(t) {
+  if (t.type === "oring") return S[t.id].verified ? 100 : 0;
+  return Number(S[t.id].progress) || 0;
+}
+
+// ═════════════════════════════════════════════════════════════════
+// HELPERS
+// ═════════════════════════════════════════════════════════════════
+function esc(s) {
+  return String(s ?? "")
+    .replace(/&/g,"&amp;").replace(/</g,"&lt;")
+    .replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");
+}
+
+function fmtDate(iso) {
+  if (!iso) return "—";
+  try {
+    const [y,m,d] = iso.split("-");
+    const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    return `${parseInt(d)} ${months[parseInt(m)-1]} ${y}`;
+  } catch(e) { return iso; }
+}
+
+function showToast(msg, type="") {
+  const t = document.createElement("div");
+  t.className = `toast ${type}`;
+  t.textContent = msg;
+  document.body.appendChild(t);
+  requestAnimationFrame(() => t.classList.add("show"));
+  setTimeout(() => {
+    t.classList.remove("show");
+    setTimeout(() => t.remove(), 300);
+  }, 2400);
+}
+
+function updateWorkDateDisplay() {
+  const wd = S._meta.workDate;
+  const today = todayISO();
+  const disp = document.getElementById("wd-display");
+  const inp = document.getElementById("wd-input");
+  inp.value = wd;
+  if (wd === today) {
+    disp.textContent = `Today · ${fmtDate(wd)}`;
+    disp.classList.remove("not-today");
+  } else {
+    disp.textContent = `${fmtDate(wd)}`;
+    disp.classList.add("not-today");
+  }
+}
+
+function setWorkDate(iso) {
+  if (!iso) return;
+  S._meta.workDate = iso;
+  persist();
+  updateWorkDateDisplay();
+  showToast(iso === todayISO() ? "Logging for today" : `Logging for ${fmtDate(iso)}`);
+}
+
+function checkBackupReminder() {
+  const last = S._meta.lastBackup;
+  const warn = document.getElementById("backup-warn");
+  if (!last) {
+    const logCount = S.activityLog.length;
+    if (logCount > 20) warn.classList.add("show");
+    return;
+  }
+  const daysSince = (Date.now() - new Date(last).getTime()) / (1000*60*60*24);
+  if (daysSince > 3) {
+    warn.classList.add("show");
+    document.getElementById("backup-msg").textContent =
+      `It's been ${Math.floor(daysSince)} days since your last backup. Export to be safe.`;
+  } else {
+    warn.classList.remove("show");
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════
+// RENDER
+// ═════════════════════════════════════════════════════════════════
+function taskHtml(t) {
+  const ts = S[t.id];
+  const isOring = t.type === "oring";
+  const p = taskProgress(t);
+  const taskCls = p === 100 ? "done" : p > 0 ? "prog" : "";
+  const dotCls = p === 100 ? "done" : p > 0 ? "prog" : "";
+  const title = getTaskTitle(t);
+
+  let rightControls = "";
+  if (isOring) {
+    rightControls = `<button class="verify-btn${ts.verified?" verified":""}" onclick="toggleVerify('${t.id}')">${ts.verified?"✓ Verified":"Verify"}</button>`;
+  } else {
+    rightControls = `
+      <div class="quick">
+        <button class="qbtn" onclick="qprog('${t.id}',0)">0</button>
+        <button class="qbtn" onclick="qprog('${t.id}',50)">50</button>
+        <button class="qbtn${p===100?" active":""}" onclick="qprog('${t.id}',100)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" width="11" height="11"><polyline points="20 6 9 17 4 12"/></svg>
+        </button>
+      </div>
+      <button class="expand-btn${ts.detailOpen?" open":""}" onclick="toggleDetail('${t.id}')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>`;
+  }
+
+  let bottom = "";
+  if (isOring) {
+    bottom = `
+      <div class="oring-info">
+        <div class="or-field"><div class="or-key">Part No</div><div class="or-val">${esc(t.partNo)}</div></div>
+        <div class="or-field"><div class="or-key">Material</div><div class="or-val">${esc(t.material)}</div></div>
+        <div class="or-field"><div class="or-key">Qty</div><div class="or-val">${esc(t.qty)}</div></div>
+      </div>`;
+  } else {
+    const flexHtml = t.flex ? `
+      <div>
+        <div class="field-label">Flexible Task — Date Range</div>
+        <div class="dates">
+          <div>
+            <div class="field-label" style="font-size:9px">Start</div>
+            <input type="date" value="${esc(ts.startDate||"")}" onchange="updField('${t.id}','startDate',this.value)">
+          </div>
+          <div>
+            <div class="field-label" style="font-size:9px">End</div>
+            <input type="date" value="${esc(ts.endDate||"")}" onchange="updField('${t.id}','endDate',this.value)">
+          </div>
+        </div>
+      </div>` : "";
+
+    const msHtml = t.milestones ? `
+      <div>
+        <div class="field-label">Milestones</div>
+        <div class="milestones">
+          ${t.milestones.map(m => `
+            <div class="ms" onclick="toggleMS('${t.id}','${m.id}')">
+              <div class="ms-check${ts[m.id]?" done":""}">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
+              </div>
+              <span class="ms-label${ts[m.id]?" done":""}">${esc(m.label)}</span>
+            </div>`).join("")}
+        </div>
+      </div>` : "";
+
+    const updItems = (ts.updates||[]).map((u,i) => `
+      <div class="upd-item">
+        <div class="upd-dot"></div>
+        <div style="flex:1">
+          <div class="upd-text">${esc(u.text)}</div>
+          <div class="upd-date">${fmtDate(u.date)}</div>
+        </div>
+        <button class="upd-del" onclick="delUpd('${t.id}',${i})" aria-label="Delete">×</button>
+      </div>`).join("");
+
+    const updHtml = `
+      <div>
+        <div class="updates-header${ts.updOpen?" open":""}" onclick="toggleUpd('${t.id}')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+          Updates / Readings (${(ts.updates||[]).length})
+        </div>
+        ${ts.updOpen ? `
+          <div class="upd-list">${updItems}</div>
+          <div class="add-upd">
+            <div class="add-upd-row">
+              <input type="text" id="updinp-${t.id}" placeholder="Add update, reading, or measurement…" onkeydown="if(event.key==='Enter')addUpd('${t.id}')">
+              <input type="date" id="upddate-${t.id}" value="${S._meta.workDate}">
+              <button class="add-upd-btn" onclick="addUpd('${t.id}')">Add</button>
+            </div>
+          </div>` : ""}
+      </div>`;
+
+    const lastModHtml = ts.lastModified ? `<div class="last-mod">Last updated: ${fmtDate(ts.lastModified)}</div>` : "";
+
+    bottom = `
+      <div class="detail" id="det-${t.id}" style="height:${ts.detailOpen?"auto":"0px"}">
+        <div class="detail-inner">
+          <div>
+            <div class="field-label">Progress</div>
+            <div class="prog-control">
+              <input type="range" class="prog-slider" min="0" max="100" value="${p}" oninput="liveProgress('${t.id}',this.value)">
+              <input type="number" class="prog-num" min="0" max="100" value="${p}" oninput="liveProgress('${t.id}',this.value)">
+              <span style="font-family:var(--mono);font-size:11px;color:var(--muted)">%</span>
+            </div>
+          </div>
+          ${flexHtml}
+          ${msHtml}
+          <div>
+            <div class="field-label">Notes / Findings</div>
+            <textarea placeholder="Readings, measurements, findings, issues…" oninput="updField('${t.id}','notes',this.value)">${esc(ts.notes||"")}</textarea>
+          </div>
+          ${updHtml}
+          ${lastModHtml}
+        </div>
+      </div>`;
+  }
+
+  return `
+    <div class="task ${taskCls}" id="ti-${t.id}">
+      <div class="task-row">
+        <div class="dot ${dotCls}"></div>
+        <div class="task-title-wrap">
+          <span class="task-title${p===100?" done":""}" id="ttl-${t.id}">${esc(title)}</span>
+          <button class="edit-icon" onclick="renameTask('${t.id}')" aria-label="Rename">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+          </button>
+        </div>
+        ${t.flex?`<span class="pill pill-flex">flex</span>`:""}
+        ${isOring?`<span class="pill pill-oring">o-ring</span>`:""}
+        ${rightControls}
+      </div>
+      ${bottom}
+    </div>`;
+}
+
+function secPct(sec) {
+  if (!sec.tasks.length) return 0;
+  return Math.round(sec.tasks.reduce((s,t) => s+taskProgress(t), 0) / sec.tasks.length);
+}
+function secDone(sec) { return sec.tasks.filter(t => taskProgress(t) === 100).length; }
+
+function secHtml(sec) {
+  const st = S[sec.id];
+  const pct = secPct(sec);
+  const done = secDone(sec);
+  const pctCls = pct === 100 ? "done" : pct > 0 ? "active" : "";
+  const title = getSecTitle(sec);
+
+  return `
+    <div class="sec${pct===100?" complete":""}" id="sc-${sec.id}">
+      <div class="sec-head" onclick="toggleSec('${sec.id}',event)">
+        <span class="sec-num">${String(sec.num).padStart(2,"0")}</span>
+        <div class="sec-title-wrap">
+          <span class="sec-title" id="stl-${sec.id}">${esc(title)}</span>
+          <button class="edit-icon" onclick="event.stopPropagation();renameSec('${sec.id}')" aria-label="Rename">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+          </button>
+        </div>
+        <div class="sec-meta">
+          <span class="sec-pct ${pctCls}" id="spct-${sec.id}">${pct}%</span>
+          <div class="mini-bar"><div class="mini-fill" id="sfill-${sec.id}" style="width:${pct}%"></div></div>
+          <span class="sec-count" id="scnt-${sec.id}">${done}/${sec.tasks.length}</span>
+          <svg class="chev${st.collapsed?"":" open"}" id="chev-${sec.id}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <polyline points="6 9 12 15 18 9"/>
+          </svg>
+        </div>
+      </div>
+      <div class="sec-body" id="sb-${sec.id}" style="height:${st.collapsed?"0":"auto"}">
+        <div class="sec-body-inner">
+          ${sec.tasks.map(t => taskHtml(t)).join("")}
+        </div>
+      </div>
+    </div>`;
+}
+
+function render() {
+  document.getElementById("sections").innerHTML = SECTIONS.map(secHtml).join("");
+  updateDash();
+}
+
+function updateDash() {
+  let total = 0, done = 0, inProg = 0, secsDone = 0;
+  SECTIONS.forEach(sec => {
+    let sd = 0;
+    sec.tasks.forEach(t => {
+      total++;
+      const p = taskProgress(t);
+      if (p === 100) { done++; sd++; }
+      else if (p > 0) inProg++;
+    });
+    if (sd === sec.tasks.length && sec.tasks.length > 0) secsDone++;
+  });
+  const overall = total ? Math.round(ALL_TASKS.reduce((s,t) => s+taskProgress(t), 0) / total) : 0;
+  document.getElementById("st-total").textContent = total;
+  document.getElementById("st-done").textContent = done;
+  document.getElementById("st-prog").textContent = inProg;
+  document.getElementById("st-secs").textContent = `${secsDone}/${SECTIONS.length}`;
+  document.getElementById("overall-txt").textContent = overall + "%";
+  document.getElementById("overall-bar").style.width = overall + "%";
+}
+
+function updateSecHeader(secId) {
+  const sec = SECTIONS.find(s => s.id === secId);
+  if (!sec) return;
+  const pct = secPct(sec), done = secDone(sec);
+  const pctCls = pct === 100 ? "done" : pct > 0 ? "active" : "";
+  const card = document.getElementById(`sc-${secId}`);
+  if (card) card.className = `sec${pct===100?" complete":""}`;
+  const pe = document.getElementById(`spct-${secId}`);
+  const fe = document.getElementById(`sfill-${secId}`);
+  const ce = document.getElementById(`scnt-${secId}`);
+  if (pe) { pe.textContent = pct + "%"; pe.className = `sec-pct ${pctCls}`; }
+  if (fe) fe.style.width = pct + "%";
+  if (ce) ce.textContent = `${done}/${sec.tasks.length}`;
+}
+
+function refreshTaskEl(tid) {
+  const t = TASK_MAP[tid];
+  if (!t) return;
+  const el = document.getElementById(`ti-${tid}`);
+  if (!el) return;
+  const wasOpen = S[tid].detailOpen;
+  el.outerHTML = taskHtml(t);
+  if (wasOpen) {
+    const det = document.getElementById(`det-${tid}`);
+    if (det) det.style.height = "auto";
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════
+// SECTION ACTIONS
+// ═════════════════════════════════════════════════════════════════
+function toggleSec(id, e) {
+  if (e && e.target.closest(".edit-icon")) return;
+  if (e && e.target.closest(".sec-title-input")) return;
+  const body = document.getElementById(`sb-${id}`);
+  const chev = document.getElementById(`chev-${id}`);
+  const isOpen = !S[id].collapsed;
+  if (isOpen) {
+    const h = body.getBoundingClientRect().height;
+    body.style.height = h + "px";
+    requestAnimationFrame(() => { body.style.height = "0px"; });
+    S[id].collapsed = true;
+    chev?.classList.remove("open");
+  } else {
+    body.style.height = "0px";
+    requestAnimationFrame(() => {
+      body.style.height = body.scrollHeight + "px";
+      setTimeout(() => { body.style.height = "auto"; }, 320);
+    });
+    S[id].collapsed = false;
+    chev?.classList.add("open");
+  }
+  persist();
+}
+
+function expandAll()   { SECTIONS.forEach(s => S[s.id].collapsed = false); persist(); render(); }
+function collapseAll() { SECTIONS.forEach(s => S[s.id].collapsed = true);  persist(); render(); }
+
+function renameSec(sid) {
+  const sec = SECTIONS.find(s => s.id === sid);
+  if (!sec) return;
+  const el = document.getElementById(`stl-${sid}`);
+  const cur = getSecTitle(sec);
+  const input = document.createElement("input");
+  input.type = "text";
+  input.value = cur;
+  input.className = "sec-title-input";
+  input.addEventListener("click", e => e.stopPropagation());
+  input.addEventListener("keydown", e => {
+    if (e.key === "Enter") { e.preventDefault(); commit(); }
+    if (e.key === "Escape") { cancel(); }
+  });
+  input.addEventListener("blur", commit);
+  el.replaceWith(input);
+  input.focus();
+  input.select();
+
+  function commit() {
+    const v = input.value.trim();
+    if (v && v !== sec.title) {
+      S[sid].customTitle = v;
+      logActivity(null, "rename-sec", { secId: sid, from: cur, to: v });
+    } else if (!v || v === sec.title) {
+      S[sid].customTitle = null;
+    }
+    persist();
+    render();
+    showToast("Section renamed");
+  }
+  function cancel() { render(); }
+}
+
+function renameTask(tid) {
+  const t = TASK_MAP[tid];
+  if (!t) return;
+  const el = document.getElementById(`ttl-${tid}`);
+  if (!el) return;
+  const cur = getTaskTitle(t);
+  const input = document.createElement("input");
+  input.type = "text";
+  input.value = cur;
+  input.className = "task-title-input";
+  input.addEventListener("keydown", e => {
+    if (e.key === "Enter") { e.preventDefault(); commit(); }
+    if (e.key === "Escape") { cancel(); }
+  });
+  input.addEventListener("blur", commit);
+  el.replaceWith(input);
+  input.focus();
+  input.select();
+
+  function commit() {
+    const v = input.value.trim();
+    if (v && v !== t.title) {
+      S[tid].customTitle = v;
+      logActivity(tid, "rename-task", { from: cur, to: v });
+    } else if (!v || v === t.title) {
+      S[tid].customTitle = null;
+    }
+    persist();
+    refreshTaskEl(tid);
+    showToast("Task renamed");
+  }
+  function cancel() { refreshTaskEl(tid); }
+}
+
+// ═════════════════════════════════════════════════════════════════
+// TASK ACTIONS
+// ═════════════════════════════════════════════════════════════════
+function toggleDetail(tid) {
+  const el = document.getElementById(`det-${tid}`);
+  const btn = document.querySelector(`#ti-${tid} .expand-btn`);
+  if (!el) return;
+  const isOpen = S[tid].detailOpen;
+  if (isOpen) {
+    const h = el.getBoundingClientRect().height;
+    el.style.height = h + "px";
+    requestAnimationFrame(() => { el.style.height = "0px"; });
+    S[tid].detailOpen = false;
+    btn?.classList.remove("open");
+  } else {
+    el.style.height = "0px";
+    requestAnimationFrame(() => {
+      el.style.height = el.scrollHeight + "px";
+      setTimeout(() => { el.style.height = "auto"; }, 260);
+    });
+    S[tid].detailOpen = true;
+    btn?.classList.add("open");
+  }
+  persist();
+}
+
+function qprog(tid, val) {
+  const old = Number(S[tid].progress) || 0;
+  if (old === val) return;
+  S[tid].progress = val;
+  logActivity(tid, "progress", { from: old, to: val });
+  persist();
+  updateTaskUI(tid, val);
+  updateSecHeader(SEC_OF[tid]);
+  updateDash();
+}
+
+let progDebounce = {};
+function liveProgress(tid, val) {
+  val = Math.max(0, Math.min(100, Number(val)));
+  const old = Number(S[tid].progress) || 0;
+  if (old === val) return;
+  S[tid].progress = val;
+
+  const det = document.getElementById(`det-${tid}`);
+  if (det) {
+    const sl = det.querySelector(".prog-slider");
+    const ni = det.querySelector(".prog-num");
+    if (sl && sl.value != val) sl.value = val;
+    if (ni && ni.value != val) ni.value = val;
+  }
+
+  // Debounce logging & dashboard update
+  clearTimeout(progDebounce[tid]);
+  progDebounce[tid] = setTimeout(() => {
+    logActivity(tid, "progress", { from: old, to: val });
+    persist();
+  }, 400);
+
+  updateTaskUI(tid, val);
+  updateSecHeader(SEC_OF[tid]);
+  updateDash();
+}
+
+function updateTaskUI(tid, p) {
+  const el = document.getElementById(`ti-${tid}`);
+  if (!el) return;
+  el.className = `task ${p===100?"done":p>0?"prog":""}`;
+  const dot = el.querySelector(".dot");
+  if (dot) dot.className = `dot ${p===100?"done":p>0?"prog":""}`;
+  const title = el.querySelector(".task-title");
+  if (title) { if (p === 100) title.classList.add("done"); else title.classList.remove("done"); }
+  const doneBtn = el.querySelector(".quick .qbtn:last-child");
+  if (doneBtn) { if (p === 100) doneBtn.classList.add("active"); else doneBtn.classList.remove("active"); }
+}
+
+function updField(tid, field, value) {
+  const old = S[tid][field];
+  S[tid][field] = value;
+  if (old !== value) {
+    logActivity(tid, field === "notes" ? "note" : "field", { field, to: value });
+  }
+  persist();
+}
+
+function toggleVerify(tid) {
+  S[tid].verified = !S[tid].verified;
+  logActivity(tid, "verify", { to: S[tid].verified });
+  persist();
+  refreshTaskEl(tid);
+  updateSecHeader(SEC_OF[tid]);
+  updateDash();
+}
+
+function toggleMS(tid, mid) {
+  S[tid][mid] = !S[tid][mid];
+  const t = TASK_MAP[tid];
+  const ms = t.milestones.find(m => m.id === mid);
+  logActivity(tid, "milestone", { msId: mid, label: ms.label, to: S[tid][mid] });
+  persist();
+  const det = document.getElementById(`det-${tid}`);
+  if (!det) return;
+  const idx = t.milestones.findIndex(m => m.id === mid);
+  const items = det.querySelectorAll(".ms");
+  if (idx >= 0 && items[idx]) {
+    const v = S[tid][mid];
+    items[idx].querySelector(".ms-check").className = `ms-check${v?" done":""}`;
+    items[idx].querySelector(".ms-label").className = `ms-label${v?" done":""}`;
+  }
+}
+
+function toggleUpd(tid) {
+  S[tid].updOpen = !S[tid].updOpen;
+  persist();
+  refreshTaskEl(tid);
+}
+
+function addUpd(tid) {
+  const inp = document.getElementById(`updinp-${tid}`);
+  const dateInp = document.getElementById(`upddate-${tid}`);
+  if (!inp || !inp.value.trim()) return;
+  const date = dateInp?.value || S._meta.workDate;
+  const text = inp.value.trim();
+  S[tid].updates = S[tid].updates || [];
+  S[tid].updates.push({ id: uid(), text, date });
+  logActivity(tid, "update", { text, updDate: date });
+  persist();
+  refreshTaskEl(tid);
+}
+
+function delUpd(tid, idx) {
+  if (!confirm("Delete this update?")) return;
+  S[tid].updates.splice(idx, 1);
+  persist();
+  refreshTaskEl(tid);
+}
+
+function resetAll() {
+  if (!confirm("Reset ALL progress and clear activity log?\n\nCustom section/task names will be kept.\nThis cannot be undone.")) return;
+  ALL_TASKS.forEach(t => {
+    S[t.id].progress = 0;
+    S[t.id].verified = false;
+    S[t.id].notes = "";
+    S[t.id].updates = [];
+    S[t.id].startDate = "";
+    S[t.id].endDate = "";
+    S[t.id].lastModified = null;
+    if (t.milestones) t.milestones.forEach(m => S[t.id][m.id] = false);
+  });
+  S.activityLog = [];
+  persist();
+  render();
+  showToast("All progress reset", "success");
+}
+
+// ═════════════════════════════════════════════════════════════════
+// DAILY REPORT
+// ═════════════════════════════════════════════════════════════════
+let currentReportDate = null;
+
+function openReport() {
+  currentReportDate = S._meta.workDate;
+  renderReport();
+  document.getElementById("report-modal").classList.add("show");
+  document.body.style.overflow = "hidden";
+}
+
+function closeReport() {
+  document.getElementById("report-modal").classList.remove("show");
+  document.body.style.overflow = "";
+}
+
+function renderReport() {
+  const body = document.getElementById("report-body");
+  const date = currentReportDate;
+
+  // Get activities for this date
+  const acts = S.activityLog.filter(a => a.date === date);
+
+  // Group by task
+  const byTask = {};
+  acts.forEach(a => {
+    if (!a.taskId) return;
+    if (!byTask[a.taskId]) byTask[a.taskId] = [];
+    byTask[a.taskId].push(a);
+  });
+
+  // Compute day stats
+  const tasksChanged = Object.keys(byTask).length;
+  const tasksDoneToday = Object.entries(byTask).filter(([tid, as]) => {
+    const progActs = as.filter(a => a.type === "progress");
+    return progActs.some(a => a.to === 100);
+  }).length;
+  const updatesToday = acts.filter(a => a.type === "update").length;
+  const overall = ALL_TASKS.length ? Math.round(ALL_TASKS.reduce((s,t) => s+taskProgress(t), 0) / ALL_TASKS.length) : 0;
+
+  let html = `
+    <div class="rpt-date-picker">
+      <label>Report for:</label>
+      <input type="date" value="${date}" onchange="currentReportDate=this.value;renderReport()">
+    </div>
+    <div class="rpt-summary">
+      <div class="rpt-stat"><div class="rpt-stat-val">${tasksChanged}</div><div class="rpt-stat-label">Tasks Active</div></div>
+      <div class="rpt-stat"><div class="rpt-stat-val g">${tasksDoneToday}</div><div class="rpt-stat-label">Completed</div></div>
+      <div class="rpt-stat"><div class="rpt-stat-val a">${updatesToday}</div><div class="rpt-stat-label">Updates</div></div>
+      <div class="rpt-stat"><div class="rpt-stat-val">${overall}%</div><div class="rpt-stat-label">Overall</div></div>
+    </div>`;
+
+  if (tasksChanged === 0) {
+    html += `<div class="rpt-empty"><div class="rpt-empty-icon">📋</div>No activity recorded for ${fmtDate(date)}.</div>`;
+    body.innerHTML = html;
+    return;
+  }
+
+  // Group by section
+  const bySec = {};
+  Object.keys(byTask).forEach(tid => {
+    const sid = SEC_OF[tid];
+    if (!bySec[sid]) bySec[sid] = [];
+    bySec[sid].push(tid);
+  });
+
+  SECTIONS.forEach(sec => {
+    const taskIds = bySec[sec.id];
+    if (!taskIds) return;
+    html += `<div class="rpt-section"><div class="rpt-sec-title">${String(sec.num).padStart(2,"0")} · ${esc(getSecTitle(sec))}</div>`;
+    taskIds.forEach(tid => {
+      const t = TASK_MAP[tid];
+      const title = getTaskTitle(t);
+      const as = byTask[tid].sort((a,b) => a.ts - b.ts);
+      const curP = taskProgress(t);
+      const p100 = curP === 100;
+
+      // Progress delta
+      const progActs = as.filter(a => a.type === "progress");
+      let progLine = "";
+      if (progActs.length > 0) {
+        const first = progActs[0].from;
+        const last = progActs[progActs.length-1].to;
+        progLine = first === last ? `` : `Progress: <span>${first}% → ${last}%</span>`;
+      }
+
+      html += `
+        <div class="rpt-task">
+          <div class="rpt-task-head">
+            <span>${p100?"✓":"◐"}</span>
+            <span>${esc(title)}</span>
+            <span class="rpt-task-pct">${curP}%</span>
+          </div>
+          <ul class="rpt-events">`;
+      if (progLine) html += `<li>${progLine}</li>`;
+
+      as.forEach(a => {
+        if (a.type === "update") html += `<li>Update: <span>${esc(a.text)}</span></li>`;
+        else if (a.type === "note") html += `<li>Note updated</li>`;
+        else if (a.type === "milestone") html += `<li>${a.to?"✓":"✗"} ${esc(a.label)}</li>`;
+        else if (a.type === "verify") html += `<li>${a.to?"✓ Verified":"Un-verified"}</li>`;
+        else if (a.type === "field" && a.field === "startDate") html += `<li>Start date set: ${fmtDate(a.to)}</li>`;
+        else if (a.type === "field" && a.field === "endDate") html += `<li>End date set: ${fmtDate(a.to)}</li>`;
+      });
+
+      html += `</ul></div>`;
+    });
+    html += `</div>`;
+  });
+
+  body.innerHTML = html;
+}
+
+function buildReportText() {
+  const date = currentReportDate;
+  const acts = S.activityLog.filter(a => a.date === date);
+  const byTask = {};
+  acts.forEach(a => { if (a.taskId) { (byTask[a.taskId] = byTask[a.taskId] || []).push(a); } });
+
+  const overall = ALL_TASKS.length ? Math.round(ALL_TASKS.reduce((s,t) => s+taskProgress(t), 0) / ALL_TASKS.length) : 0;
+  const tasksChanged = Object.keys(byTask).length;
+  const tasksDoneToday = Object.entries(byTask).filter(([tid, as]) =>
+    as.some(a => a.type === "progress" && a.to === 100)).length;
+  const updatesCount = acts.filter(a => a.type === "update").length;
+
+  let out = `📋 Pump Cartridge Installation — Daily Report\n`;
+  out += `📅 ${fmtDate(date)}\n\n`;
+  out += `━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+  out += `SUMMARY\n`;
+  out += `━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+  out += `• Overall Progress: ${overall}%\n`;
+  out += `• Tasks Active: ${tasksChanged}\n`;
+  out += `• Completed Today: ${tasksDoneToday}\n`;
+  out += `• Updates Logged: ${updatesCount}\n\n`;
+
+  if (tasksChanged === 0) {
+    out += `No activity recorded for this date.\n`;
+    return out;
+  }
+
+  out += `━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+  out += `TODAY'S ACTIVITY\n`;
+  out += `━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+
+  const bySec = {};
+  Object.keys(byTask).forEach(tid => {
+    const sid = SEC_OF[tid];
+    (bySec[sid] = bySec[sid] || []).push(tid);
+  });
+
+  SECTIONS.forEach(sec => {
+    const taskIds = bySec[sec.id];
+    if (!taskIds) return;
+    out += `▸ ${String(sec.num).padStart(2,"0")} ${getSecTitle(sec)}\n`;
+
+    taskIds.forEach(tid => {
+      const t = TASK_MAP[tid];
+      const title = getTaskTitle(t);
+      const as = byTask[tid].sort((a,b) => a.ts - b.ts);
+      const curP = taskProgress(t);
+      const mark = curP === 100 ? "✓" : "◐";
+
+      out += `   ${mark} ${title} — ${curP}%\n`;
+
+      const progActs = as.filter(a => a.type === "progress");
+      if (progActs.length > 0) {
+        const first = progActs[0].from;
+        const last = progActs[progActs.length-1].to;
+        if (first !== last) out += `      • Progress: ${first}% → ${last}%\n`;
+      }
+
+      as.forEach(a => {
+        if (a.type === "update") out += `      • ${a.text}\n`;
+        else if (a.type === "milestone") out += `      • ${a.to?"✓":"✗"} ${a.label}\n`;
+        else if (a.type === "verify" && a.to) out += `      • Material Verified\n`;
+      });
+    });
+    out += `\n`;
+  });
+
+  out += `━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+  out += `Generated: ${new Date().toLocaleString("en-GB")}\n`;
+  return out;
+}
+
+async function copyReport() {
+  const txt = buildReportText();
+  try {
+    await navigator.clipboard.writeText(txt);
+    showToast("Report copied to clipboard", "success");
+  } catch(e) {
+    // Fallback for older browsers
+    const ta = document.createElement("textarea");
+    ta.value = txt;
+    ta.style.position = "fixed";
+    ta.style.left = "-9999px";
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand("copy"); showToast("Report copied to clipboard", "success"); }
+    catch(e2) { showToast("Copy failed, use Download instead", "error"); }
+    document.body.removeChild(ta);
+  }
+}
+
+function downloadReport() {
+  const txt = buildReportText();
+  const blob = new Blob([txt], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `pump-report-${currentReportDate}.txt`;
+  a.click();
+  URL.revokeObjectURL(url);
+  showToast("Report downloaded", "success");
+}
+
+// ═════════════════════════════════════════════════════════════════
+// EXPORT / IMPORT
+// ═════════════════════════════════════════════════════════════════
+function exportData() {
+  try {
+    const data = {
+      version: 5,
+      exportedAt: new Date().toISOString(),
+      state: S,
+    };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `pump-tracker-backup-${todayISO()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    S._meta.lastBackup = new Date().toISOString();
+    persist();
+    checkBackupReminder();
+    showToast("Backup exported", "success");
+  } catch(e) {
+    showToast("Export failed", "error");
+  }
+}
+
+function importData(inputEl) {
+  const f = inputEl.files[0];
+  if (!f) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    try {
+      const data = JSON.parse(ev.target.result);
+      if (!data.state) throw new Error("Invalid backup file");
+      if (!confirm("This will replace all current data with the imported backup. Continue?")) {
+        inputEl.value = "";
+        return;
+      }
+      S = data.state;
+      if (!S._meta) S._meta = { workDate: todayISO(), lastBackup: null };
+      if (!S.activityLog) S.activityLog = [];
+      persist();
+      initState(); // re-apply defaults for any new fields
+      render();
+      updateWorkDateDisplay();
+      checkBackupReminder();
+      showToast("Backup restored", "success");
+    } catch(e) {
+      showToast("Import failed: " + e.message, "error");
+    }
+    inputEl.value = "";
+  };
+  reader.readAsText(f);
+}
+
+// ═════════════════════════════════════════════════════════════════
+// BOOT
+// ═════════════════════════════════════════════════════════════════
+initState();
+render();
+updateWorkDateDisplay();
+checkBackupReminder();
+
+// Keyboard shortcut: Esc closes modal
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape" && document.getElementById("report-modal").classList.contains("show")) {
+    closeReport();
+  }
+});
+
+// Prevent accidental data loss
+window.addEventListener("beforeunload", () => {
+  try { persist(); } catch(e) {}
+});
+</script>
+</body>
+</html>
