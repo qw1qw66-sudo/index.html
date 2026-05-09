@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#0f1115">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>نظام حجوزات الشاليهات - Cloud</title>
+  <style>
+    html,body{margin:0;padding:0;width:100%;height:100%;background:#0f1115;overflow:hidden}
+    iframe{width:100%;height:100%;border:0;display:block;background:#0f1115}
+    .note{position:fixed;top:10px;left:10px;right:10px;z-index:999998;background:#1b212b;color:#f6efe5;border:1px solid #344052;border-radius:16px;padding:10px 12px;font:12px -apple-system,BlinkMacSystemFont,'Segoe UI',Tahoma,Arial;box-shadow:0 8px 28px rgba(0,0,0,.35)}
+    .note strong{color:#d4af5f}.note.hide{display:none}.note a{color:#f0cf82}
+  </style>
+</head>
+<body>
+  <div class="note" id="startupNote"><strong>Cloud:</strong> النسخة السحابية للحجوزات. إذا ظهر زر Cloud: setup needed فهذا يعني أن مفاتيح Supabase لم تركب بعد.</div>
+  <iframe src="../index.html" title="نظام حجوزات الشاليهات"></iframe>
+  <script>
+    setTimeout(()=>{const n=document.getElementById('startupNote');if(n)n.classList.add('hide')},7000);
+    window.addEventListener('error', e => {
+      const n=document.getElementById('startupNote');
+      if(n){n.classList.remove('hide');n.innerHTML='<strong>خطأ:</strong> '+String(e.message||'Unknown error');}
+    });
+  </script>
+  <script src="../chalets-supabase-config.js"></script>
+  <script type="module" src="../chalets-cloud-sync.js"></script>
+</body>
+</html>
