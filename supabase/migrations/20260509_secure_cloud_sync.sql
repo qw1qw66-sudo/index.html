@@ -1,5 +1,7 @@
 -- Secure cloud sync for Chalet Booking System
 -- Uses Supabase Auth. Users own data by auth.uid(), not by raw email.
+-- Email-only sync is insecure because anyone can type another user's email.
+-- Run this file in Supabase SQL Editor.
 
 create extension if not exists pgcrypto;
 
@@ -19,6 +21,17 @@ create table if not exists public.user_data (
   updated_at timestamptz not null default now(),
   deleted_at timestamptz null,
   unique(user_id, data_key)
+);
+
+create table if not exists public.sync_queue (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  data_key text not null,
+  payload jsonb not null,
+  action text not null,
+  status text not null default 'pending',
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
 );
 
 create table if not exists public.sync_log (
@@ -51,6 +64,12 @@ before update on public.user_data
 for each row
 execute function public.set_updated_at();
 
+drop trigger if exists sync_queue_set_updated_at on public.sync_queue;
+create trigger sync_queue_set_updated_at
+before update on public.sync_queue
+for each row
+execute function public.set_updated_at();
+
 create or replace function public.handle_new_user()
 returns trigger
 language plpgsql
@@ -73,8 +92,10 @@ execute function public.handle_new_user();
 
 alter table public.profiles enable row level security;
 alter table public.user_data enable row level security;
+alter table public.sync_queue enable row level security;
 alter table public.sync_log enable row level security;
 
+-- profiles: id must equal auth.uid()
 drop policy if exists profiles_select_own on public.profiles;
 create policy profiles_select_own on public.profiles
 for select to authenticated
@@ -96,6 +117,7 @@ create policy profiles_delete_own on public.profiles
 for delete to authenticated
 using (id = auth.uid());
 
+-- user_data: user_id must equal auth.uid()
 drop policy if exists user_data_select_own on public.user_data;
 create policy user_data_select_own on public.user_data
 for select to authenticated
@@ -117,6 +139,29 @@ create policy user_data_delete_own on public.user_data
 for delete to authenticated
 using (user_id = auth.uid());
 
+-- sync_queue: user_id must equal auth.uid()
+drop policy if exists sync_queue_select_own on public.sync_queue;
+create policy sync_queue_select_own on public.sync_queue
+for select to authenticated
+using (user_id = auth.uid());
+
+drop policy if exists sync_queue_insert_own on public.sync_queue;
+create policy sync_queue_insert_own on public.sync_queue
+for insert to authenticated
+with check (user_id = auth.uid());
+
+drop policy if exists sync_queue_update_own on public.sync_queue;
+create policy sync_queue_update_own on public.sync_queue
+for update to authenticated
+using (user_id = auth.uid())
+with check (user_id = auth.uid());
+
+drop policy if exists sync_queue_delete_own on public.sync_queue;
+create policy sync_queue_delete_own on public.sync_queue
+for delete to authenticated
+using (user_id = auth.uid());
+
+-- sync_log: user_id must equal auth.uid()
 drop policy if exists sync_log_select_own on public.sync_log;
 create policy sync_log_select_own on public.sync_log
 for select to authenticated
