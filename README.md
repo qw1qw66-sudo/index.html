@@ -1,14 +1,14 @@
 # نظام حجوزات الشاليهات
 
-تطبيق عربي ثابت Static PWA لإدارة حجوزات الشاليهات والمنتجعات، يعمل محليًا أولًا ثم يزامن مع Supabase بعد تسجيل الدخول الحقيقي بالبريد.
+تطبيق عربي ثابت Static PWA لإدارة حجوزات الشاليهات والمنتجعات، يعمل محليًا أولًا ثم يزامن مع Supabase بعد تسجيل الدخول الحقيقي بالبريد عبر Magic Link.
 
-## الرابط
+## الرابط النهائي للاختبار
 
 ```txt
 https://qw1qw66-sudo.github.io/index.html/app.html
 ```
 
-الرابط القديم/السحابي يحوّل إلى نفس التطبيق:
+الرابط القديم يحوّل للتطبيق:
 
 ```txt
 https://qw1qw66-sudo.github.io/index.html/cloud/
@@ -22,7 +22,8 @@ https://qw1qw66-sudo.github.io/index.html/cloud/
 - حفظ محلي Local-first باستخدام `localStorage` و `IndexedDB`.
 - ترحيل بيانات النسخ القديمة من `chalets_app_state_v3` إلى النسخة الجديدة.
 - تصدير واستيراد نسخة احتياطية JSON.
-- تسجيل دخول حقيقي عبر Supabase Auth باستخدام Magic Link / OTP.
+- تسجيل دخول حقيقي عبر Supabase Auth باستخدام Email Magic Link فقط.
+- لا يتم قبول الإيميل كهوية بمجرد كتابته؛ الدخول يتم بعد تحقق Supabase فقط.
 - مزامنة Supabase حقيقية عبر الجداول: `chalets`, `bookings`, `app_settings`.
 - Realtime + مزامنة عند التشغيل، الرجوع للاتصال، التركيز على النافذة، وكل 30 ثانية.
 - واجهة عربية RTL مناسبة للآيفون و Add to Home Screen.
@@ -35,7 +36,8 @@ src/main.js                      منطق التطبيق والحفظ والمز
 cloud/index.html                 تحويل إلى app.html
 manifest.webmanifest             إعداد PWA
 database/supabase-schema.sql     قاعدة بيانات Supabase و RLS
-chalets-supabase-config.js       قيم Supabase الاختيارية العامة
+database/supabase_schema.sql     نسخة بنفس المحتوى لمن يفضل الاسم underscore
+chalets-supabase-config.js       قيم Supabase العامة للمتصفح
 README.md                        هذا الدليل
 ```
 
@@ -47,6 +49,12 @@ README.md                        هذا الدليل
 
 ```txt
 database/supabase-schema.sql
+```
+
+أو:
+
+```txt
+database/supabase_schema.sql
 ```
 
 هذا الملف ينشئ الجداول التالية:
@@ -67,7 +75,22 @@ auth.uid()
 
 وليس عن طريق البريد المكتوب يدويًا.
 
-## تفعيل Email OTP / Magic Link
+## المشاركة عبر نفس الإيميل
+
+المشاركة تتم عبر نفس الإيميل بعد التحقق، لكن الحماية داخل قاعدة البيانات تعتمد على `auth.uid()` وليس نص الإيميل.
+
+التسلسل الصحيح:
+
+```txt
+المستخدم يكتب الإيميل
+Supabase يرسل Magic Link
+المستخدم يفتح الرابط ويتحقق
+Supabase يعطي session و user.id
+التطبيق يحفظ البيانات بـ user_id = auth.uid()
+كل جهاز يدخل بنفس الإيميل الموثق يرى نفس البيانات
+```
+
+## تفعيل Email Magic Link
 
 من Supabase Dashboard:
 
@@ -75,7 +98,11 @@ auth.uid()
 Authentication > Providers > Email = Enabled
 ```
 
-ثم من:
+استخدم Email فقط. لا تستخدم SMS ولا Phone OTP.
+
+## إعداد رابط GitHub Pages في Supabase
+
+من:
 
 ```txt
 Authentication > URL Configuration
@@ -85,9 +112,96 @@ Authentication > URL Configuration
 
 ```txt
 Site URL = https://qw1qw66-sudo.github.io/index.html/app.html
-Additional Redirect URLs:
+```
+
+وفي Additional Redirect URLs أضف:
+
+```txt
 https://qw1qw66-sudo.github.io/index.html/app.html
 https://qw1qw66-sudo.github.io/index.html/cloud/
+```
+
+الكود يستخدم:
+
+```js
+window.location.origin + window.location.pathname
+```
+
+حتى يرجع رابط Magic Link لنفس صفحة التطبيق.
+
+## قالب Magic Link
+
+من:
+
+```txt
+Authentication > Email Templates > Magic Link
+```
+
+تأكد أن القالب يحتوي:
+
+```txt
+{{ .ConfirmationURL }}
+```
+
+لا تستبدلها برابط ثابت، ولا تحذفها.
+
+## تفعيل الإيميل للإنتاج - Custom SMTP
+
+خادم البريد الافتراضي في Supabase مناسب للاختبار فقط. للإنتاج ومع العملاء الحقيقيين، فعّل Custom SMTP.
+
+مزودات SMTP مناسبة:
+
+```txt
+Resend
+SendGrid
+Postmark
+Brevo
+AWS SES
+ZeptoMail
+```
+
+الحقول المطلوبة عادة:
+
+```txt
+SMTP host
+SMTP port
+SMTP username
+SMTP password
+Sender email مثل no-reply@yourdomain.com
+Sender name
+```
+
+الخطوات:
+
+```txt
+1) Supabase Dashboard
+2) Authentication
+3) SMTP Settings / Custom SMTP
+4) Enable Custom SMTP
+5) Enter SMTP host
+6) Enter port
+7) Enter username
+8) Enter password
+9) Enter sender email
+10) Save
+11) Send test email
+```
+
+قائمة DNS لتحسين وصول الإيميلات:
+
+```txt
+SPF
+DKIM
+DMARC
+```
+
+هذه السجلات تضبطها في مزود النطاق/DNS، وليس داخل كود التطبيق.
+
+يفضل عدم استخدام دومين التسويق للإيميلات الحساسة. استخدم مثلًا:
+
+```txt
+auth.yourdomain.com
+no-reply@yourdomain.com
 ```
 
 ## إضافة Supabase URL و anon key
@@ -118,7 +232,7 @@ Supabase anon public key
 ## تسجيل الدخول والمزامنة
 
 1. افتح التطبيق من الجوال الأول.
-2. ادخل Supabase URL و anon key من الإعدادات.
+2. أدخل Supabase URL و anon key من الإعدادات.
 3. أدخل بريدك واضغط “إرسال رابط الدخول”.
 4. لا تظهر رسالة النجاح إلا بعد قبول Supabase للطلب فعلًا.
 5. افتح رابط التحقق من البريد.
@@ -143,7 +257,7 @@ AND deleted_at is null
 يوجد حجز مؤكد لنفس الشاليه في هذه الفترة. لا يمكن حفظ الحجز.
 ```
 
-الحجوزات المعلقة يمكن أن تتداخل.
+الحجوزات المعلقة يمكن أن تتداخل حسب منطق التطبيق، والملغية أو المحذوفة لا تمنع الحجز.
 
 ## حل مشكلة عدم وصول إيميل التحقق
 
@@ -161,18 +275,29 @@ Site URL = رابط التطبيق الحقيقي
 Additional Redirect URLs = رابط التطبيق الحقيقي
 ```
 
-C. تأكد من قوالب البريد:
+C. تأكد من قالب Magic Link:
 
 ```txt
-Magic Link template يحتوي {{ .ConfirmationURL }}
-OTP template يحتوي {{ .Token }} إذا كنت تستخدم الرمز
+Magic Link template contains {{ .ConfirmationURL }}
 ```
 
-D. افحص Spam / Junk.
+D. إذا كنت تستخدم OTP template، يجب أن يحتوي:
 
-E. انتظر 60 ثانية قبل طلب رابط جديد.
+```txt
+{{ .Token }}
+```
 
-F. افتح Console في المتصفح وتأكد أن الطلب يذهب فعلًا إلى Supabase Auth. إذا ظهر خطأ، التطبيق يعرضه بدل رسالة نجاح وهمية.
+E. افحص Spam / Junk.
+
+F. انتظر 60 ثانية قبل طلب رابط جديد.
+
+G. افتح Console في المتصفح وتأكد أن الطلب يذهب فعلًا إلى Supabase Auth. إذا ظهر خطأ، التطبيق يعرضه بدل رسالة نجاح وهمية.
+
+H. إذا فتح رابط البريد على `localhost`، فهذا يعني أن رابط الدخول أرسل من نسخة محلية. افتح التطبيق من الرابط النهائي وأرسل الرابط من جديد:
+
+```txt
+https://qw1qw66-sudo.github.io/index.html/app.html
+```
 
 ## اختبار سريع
 
