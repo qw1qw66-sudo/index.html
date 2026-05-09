@@ -1,9 +1,7 @@
-/* Chalet Booking System Cloud Sync using Supabase Magic Link.
-
-Setup:
-1) Run chalets-supabase-schema.sql in Supabase SQL Editor.
-2) Replace values in chalets-supabase-config.js.
-3) Open cloud.html.
+/* Chalet Booking System - Email-only cloud sync.
+   The user enters the same email on each phone. No magic link is required.
+   Requires Supabase table: chalets_booking_state_email
+   Columns: sync_key text primary key, email_hint text, data jsonb, updated_at timestamptz
 */
 
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm';
@@ -11,14 +9,17 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
 const LOCAL_KEY = 'chalets_app_state_v3';
 const DB_NAME = 'chaletsDB';
 const STORE = 'kv';
-const TABLE = 'chalets_booking_state';
+const TABLE = 'chalets_booking_state_email';
+const EMAIL_KEY = 'chalets_sync_email';
+const SYNC_KEY = 'chalets_sync_key';
 const STATUS_ID = 'chaletsCloudStatus';
 const PANEL_ID = 'chaletsCloudPanel';
 
 const url = window.CHALETS_SUPABASE_URL;
 const anonKey = window.CHALETS_SUPABASE_ANON_KEY;
 let supabase = null;
-let currentUser = null;
+let syncEmail = localStorage.getItem(EMAIL_KEY) || '';
+let syncKey = localStorage.getItem(SYNC_KEY) || '';
 let applyingRemote = false;
 let saveTimer = null;
 let nativeSetItem = localStorage.setItem.bind(localStorage);
@@ -42,30 +43,32 @@ function setStatus(text,type='warn'){
   el.textContent=text;el.className=type;
 }
 function readLocal(){try{return JSON.parse(localStorage.getItem(LOCAL_KEY)||'{}')}catch{return {}}}
-function writeLocal(data){applyingRemote=true;const text=JSON.stringify(data||{});nativeSetItem(LOCAL_KEY,text);lastLocalSnapshot=text;writeIndexedDB(data||{}).catch(console.error).finally(()=>{applyingRemote=false})}
-function stamp(data){const next=data||{};next._cloud={...(next._cloud||{}),updated_at:new Date().toISOString()};return next}
+function writeLocal(data){applyingRemote=true;const text=JSON.stringify(data||{});nativeSetItem(LOCAL_KEY,text);lastLocalSnapshot=text;writeIndexedDB(data||{}).finally(()=>{applyingRemote=false})}
+function stamp(data){const next=data||{};next._cloud={...(next._cloud||{}),updated_at:new Date().toISOString(),email:syncEmail};return next}
 function clean(data){const c=JSON.parse(JSON.stringify(data||{}));if(c._cloud)delete c._cloud;return c}
 function localDate(data){return data?._cloud?.updated_at||null}
 function isNewer(a,b){if(!a)return false;if(!b)return true;return new Date(a).getTime()>new Date(b).getTime()}
+function validEmail(e){return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(e||'').trim())}
+async function sha256(text){const buf=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(text.trim().toLowerCase()));return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('')}
 
 function openDB(){return new Promise(resolve=>{if(!indexedDB)return resolve(null);const req=indexedDB.open(DB_NAME,1);req.onupgradeneeded=()=>{if(!req.result.objectStoreNames.contains(STORE))req.result.createObjectStore(STORE)};req.onsuccess=()=>resolve(req.result);req.onerror=()=>resolve(null)})}
 async function writeIndexedDB(data){const db=await openDB();if(!db)return;return new Promise(resolve=>{const tx=db.transaction(STORE,'readwrite');tx.objectStore(STORE).put(data,LOCAL_KEY);tx.oncomplete=resolve;tx.onerror=resolve})}
 
 async function getRemote(){
-  const {data,error}=await supabase.from(TABLE).select('data,updated_at').eq('user_id',currentUser.id).maybeSingle();
+  const {data,error}=await supabase.from(TABLE).select('data,updated_at').eq('sync_key',syncKey).maybeSingle();
   if(error)throw error;return data;
 }
 async function pushLocal(){
-  if(!currentUser||applyingRemote)return;
+  if(!syncKey||applyingRemote)return;
   const local=stamp(readLocal());writeLocal(local);
-  const {error}=await supabase.from(TABLE).upsert({user_id:currentUser.id,data:clean(local)},{onConflict:'user_id'});
+  const {error}=await supabase.from(TABLE).upsert({sync_key:syncKey,email_hint:syncEmail.slice(0,3)+'***',data:clean(local)},{onConflict:'sync_key'});
   if(error)throw error;setStatus('Cloud: synced','ok');
 }
 async function pullRemote(){
-  if(!currentUser)return false;
+  if(!syncKey)return false;
   const remote=await getRemote();if(!remote?.data)return false;
   if(isNewer(remote.updated_at,localDate(readLocal()))){
-    const data=remote.data||{};data._cloud={updated_at:remote.updated_at};writeLocal(data);setStatus('Cloud: updated','ok');setTimeout(()=>location.reload(),700);return true;
+    const data=remote.data||{};data._cloud={updated_at:remote.updated_at,email:syncEmail};writeLocal(data);setStatus('Cloud: updated','ok');setTimeout(()=>location.reload(),700);return true;
   }
   return false;
 }
@@ -74,9 +77,9 @@ async function firstSync(){
   catch(e){console.error(e);setStatus('Cloud: sync error','bad')}
 }
 function queuePush(){
-  if(!currentUser||applyingRemote)return;
+  if(!syncKey||applyingRemote)return;
   clearTimeout(saveTimer);
-  saveTimer=setTimeout(()=>pushLocal().catch(e=>{console.error(e);setStatus('Cloud: save failed','bad')}),1200);
+  saveTimer=setTimeout(()=>pushLocal().catch(e=>{console.error(e);setStatus('Cloud: save failed','bad')}),1000);
 }
 function patchLocalStorage(){
   if(!localStorage.__chaletsCloudPatched){
@@ -89,28 +92,26 @@ function patchLocalStorage(){
   pollTimer=setInterval(()=>{const now=localStorage.getItem(LOCAL_KEY)||'';if(now!==lastLocalSnapshot&&!applyingRemote){lastLocalSnapshot=now;queuePush();}},1500);
 }
 async function realtime(){
-  supabase.channel('chalets-state-'+currentUser.id).on('postgres_changes',{event:'*',schema:'public',table:TABLE,filter:`user_id=eq.${currentUser.id}`},()=>pullRemote().catch(console.error)).subscribe();
+  supabase.channel('chalets-email-'+syncKey).on('postgres_changes',{event:'*',schema:'public',table:TABLE,filter:`sync_key=eq.${syncKey}`},()=>pullRemote().catch(console.error)).subscribe();
+}
+async function activateEmail(email){
+  const e=String(email||'').trim().toLowerCase();
+  if(!validEmail(e))return alert('أدخل إيميل صحيح');
+  syncEmail=e;syncKey=await sha256('chalets:'+e);
+  localStorage.setItem(EMAIL_KEY,syncEmail);localStorage.setItem(SYNC_KEY,syncKey);
+  setStatus('Cloud: syncing','warn');
+  patchLocalStorage();await firstSync();await realtime();setStatus('Cloud: synced','ok');updatePanel();
 }
 function openPanel(){
   let p=document.getElementById(PANEL_ID);
-  if(!p){p=document.createElement('div');p.id=PANEL_ID;p.innerHTML=`<div class="box"><h3>المزامنة السحابية</h3><p>اربط نظام حجوزات الشاليهات بين أكثر من جوال بنفس الإيميل.</p><div id="cloudSignedOut"><input id="cloudEmail" type="email" placeholder="email@example.com"><div class="row"><button class="primary" id="cloudMagicBtn">إرسال رابط دخول</button></div><p class="small">استخدم نفس الإيميل في كل الأجهزة.</p></div><div id="cloudSignedIn" style="display:none"><p id="cloudUser"></p><div class="row"><button class="primary" id="cloudPush">رفع بيانات هذا الجهاز</button><button id="cloudPull">تنزيل بيانات السحابة</button><button class="danger" id="cloudOut">تسجيل خروج</button></div></div><div class="row"><button id="cloudClose">إغلاق</button></div></div>`;document.body.appendChild(p);p.addEventListener('click',e=>{if(e.target===p)p.classList.remove('show')});p.querySelector('#cloudClose').onclick=()=>p.classList.remove('show');p.querySelector('#cloudMagicBtn').onclick=sendMagic;p.querySelector('#cloudPush').onclick=()=>pushLocal().then(()=>alert('تم رفع البيانات'));p.querySelector('#cloudPull').onclick=()=>pullRemote().then(()=>alert('تم فحص بيانات السحابة'));p.querySelector('#cloudOut').onclick=async()=>{await supabase.auth.signOut();currentUser=null;setStatus('Cloud: sign in needed','warn');updatePanel()};}
+  if(!p){p=document.createElement('div');p.id=PANEL_ID;p.innerHTML=`<div class="box"><h3>المزامنة السحابية</h3><p>اكتب نفس الإيميل في كل جوال، وتبدأ المزامنة مباشرة بدون رابط دخول.</p><input id="cloudEmail" type="email" placeholder="email@example.com"><div class="row"><button class="primary" id="cloudStart">تفعيل المزامنة الآن</button><button id="cloudPull">تنزيل من السحابة</button><button class="danger" id="cloudForget">نسيان الإيميل</button></div><p id="cloudInfo" class="small"></p><div class="row"><button id="cloudClose">إغلاق</button></div></div>`;document.body.appendChild(p);p.addEventListener('click',e=>{if(e.target===p)p.classList.remove('show')});p.querySelector('#cloudClose').onclick=()=>p.classList.remove('show');p.querySelector('#cloudStart').onclick=()=>activateEmail(p.querySelector('#cloudEmail').value);p.querySelector('#cloudPull').onclick=()=>pullRemote().then(()=>alert('تم فحص السحابة'));p.querySelector('#cloudForget').onclick=()=>{localStorage.removeItem(EMAIL_KEY);localStorage.removeItem(SYNC_KEY);syncEmail='';syncKey='';setStatus('Cloud: email needed','warn');updatePanel()};}
   updatePanel();p.classList.add('show');
 }
-function updatePanel(){
-  const a=document.getElementById('cloudSignedOut'),b=document.getElementById('cloudSignedIn'),u=document.getElementById('cloudUser');if(!a||!b)return;
-  if(currentUser){a.style.display='none';b.style.display='block';u.textContent='مسجل دخول: '+(currentUser.email||currentUser.id)}else{a.style.display='block';b.style.display='none'}
-}
-async function sendMagic(){
-  const email=document.getElementById('cloudEmail').value.trim();if(!email)return alert('أدخل الإيميل');
-  const {error}=await supabase.auth.signInWithOtp({email});if(error)return alert(error.message);alert('تم إرسال رابط الدخول. افتحه من نفس الجهاز.');
-}
-async function afterSignedIn(){patchLocalStorage();await firstSync();await realtime();setStatus('Cloud: synced','ok');updatePanel()}
+function updatePanel(){const p=document.getElementById(PANEL_ID);if(!p)return;const inp=p.querySelector('#cloudEmail'),info=p.querySelector('#cloudInfo');if(inp)inp.value=syncEmail||'';if(info)info.textContent=syncEmail?'مفعل على: '+syncEmail:'أدخل إيميل واحد تستخدمه على كل الأجهزة.';}
 async function init(){
   addStyles();
   if(!url||!anonKey||url.includes('YOUR_PROJECT')||anonKey.includes('YOUR_SUPABASE')){setStatus('Cloud: setup needed','warn');return}
-  supabase=createClient(url,anonKey);setStatus('Cloud: checking','warn');
-  const {data}=await supabase.auth.getSession();currentUser=data.session?.user||null;
-  supabase.auth.onAuthStateChange(async(_event,session)=>{currentUser=session?.user||null;if(currentUser)await afterSignedIn();else setStatus('Cloud: sign in needed','warn')});
-  if(currentUser)await afterSignedIn();else setStatus('Cloud: sign in needed','warn');
+  supabase=createClient(url,anonKey);patchLocalStorage();
+  if(syncEmail&&syncKey){setStatus('Cloud: syncing','warn');await firstSync();await realtime();setStatus('Cloud: synced','ok')}else setStatus('Cloud: email needed','warn');
 }
 init();
