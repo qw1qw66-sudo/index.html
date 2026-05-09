@@ -84,6 +84,30 @@ create trigger bookings_set_updated_at before update on public.bookings for each
 drop trigger if exists app_settings_set_updated_at on public.app_settings;
 create trigger app_settings_set_updated_at before update on public.app_settings for each row execute function public.set_updated_at();
 
+create or replace function public.prevent_confirmed_booking_overlap()
+returns trigger language plpgsql as $$
+begin
+  if new.deleted_at is null and new.status = 'confirmed' then
+    if exists (
+      select 1 from public.bookings b
+      where b.user_id = new.user_id
+        and b.chalet_id = new.chalet_id
+        and b.id <> new.id
+        and b.deleted_at is null
+        and b.status = 'confirmed'
+        and b.check_in < new.check_out
+        and b.check_out > new.check_in
+    ) then
+      raise exception 'يوجد حجز مؤكد لنفس الشاليه في هذه الفترة. لا يمكن حفظ الحجز.';
+    end if;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists bookings_prevent_overlap on public.bookings;
+create trigger bookings_prevent_overlap before insert or update on public.bookings for each row execute function public.prevent_confirmed_booking_overlap();
+
 create or replace function public.handle_new_user()
 returns trigger language plpgsql security definer set search_path = public as $$
 begin
