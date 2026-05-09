@@ -10,7 +10,7 @@
 
 ## Cloud Sync Setup
 
-تم تنفيذ مزامنة سحابية آمنة باستخدام Supabase Auth + PostgreSQL + Row Level Security.
+تم تنفيذ مزامنة سحابية آمنة باستخدام Supabase Auth + PostgreSQL + Row Level Security، بدون الاعتماد على Netlify.
 
 ### ما تم اكتشافه في المشروع
 
@@ -23,7 +23,18 @@
   - `set{}`
   - `theme`
 
-### طريقة التشغيل على Supabase و Netlify
+### الملفات المهمة
+
+- `chalets-cloud-sync.js` نقطة تشغيل المزامنة.
+- `src/lib/supabaseClient.js` إعداد Supabase client.
+- `src/lib/localStore.js` قراءة/كتابة البيانات المحلية والنسخ الاحتياطي.
+- `src/lib/syncService.js` منطق تسجيل الدخول والمزامنة والـ offline queue.
+- `chalets-supabase-config.js` ملف إعدادات المتصفح النهائي.
+- `.github/workflows/pages.yml` يولّد إعدادات Supabase من GitHub Secrets وينشر على GitHub Pages.
+- `supabase/migrations/20260509_secure_cloud_sync.sql` يحتوي الجداول و RLS.
+- `.env.example` يوضح المتغيرات المطلوبة.
+
+### طريقة التشغيل على Supabase و GitHub Pages
 
 1. أنشئ مشروعًا جديدًا في Supabase.
 2. افتح Supabase SQL Editor.
@@ -34,25 +45,39 @@ supabase/migrations/20260509_secure_cloud_sync.sql
 ```
 
 4. من Supabase Auth فعّل Email OTP أو Magic Link.
-5. في Netlify افتح:
+5. في Supabase Auth URL Configuration أضف رابط الموقع في Site URL و Redirect URLs، مثل:
 
 ```txt
-Site settings -> Environment variables
+https://qw1qw66-sudo.github.io/index.html/cloud/
 ```
 
-6. أضف القيم التالية:
+6. في GitHub repository افتح:
+
+```txt
+Settings -> Secrets and variables -> Actions -> New repository secret
+```
+
+7. أضف السرّين:
 
 ```txt
 VITE_SUPABASE_URL=https://YOUR_PROJECT_ID.supabase.co
 VITE_SUPABASE_ANON_KEY=YOUR_SUPABASE_ANON_PUBLIC_KEY
 ```
 
-7. أعد النشر من Netlify.
-8. افتح التطبيق من جوالين.
-9. اضغط زر Cloud.
-10. أدخل الإيميل.
-11. افتح رابط الدخول من البريد أو أدخل رمز OTP.
-12. بعد التحقق أول مرة، تتم المزامنة تلقائيًا بدون تدخل يدوي.
+8. افتح:
+
+```txt
+Actions -> Deploy static site to GitHub Pages -> Run workflow
+```
+
+9. افتح التطبيق من جوالين:
+
+```txt
+https://qw1qw66-sudo.github.io/index.html/cloud/
+```
+
+10. اضغط زر Cloud، أدخل الإيميل، وافتح رابط الدخول من البريد أو أدخل رمز OTP.
+11. بعد التحقق أول مرة، تتم المزامنة تلقائيًا بدون تدخل يدوي.
 
 ### الأمان
 
@@ -62,14 +87,6 @@ VITE_SUPABASE_ANON_KEY=YOUR_SUPABASE_ANON_PUBLIC_KEY
 - كل مستخدم يستطيع قراءة وتعديل بياناته فقط.
 - لا تضع `service_role key` داخل ملفات الواجهة نهائيًا.
 
-### ملفات المزامنة
-
-- `chalets-cloud-sync.js` يحتوي منطق المزامنة.
-- `chalets-supabase-config.js` يتم توليده تلقائيًا في Netlify بواسطة `build-env.js`.
-- `netlify.toml` يحدد أمر البناء والنشر.
-- `.env.example` يوضح المتغيرات المطلوبة.
-- `supabase/migrations/20260509_secure_cloud_sync.sql` يحتوي جداول Supabase و RLS.
-
 ### اختبار سريع
 
 - مستخدم جديد يدخل الإيميل ويؤكد OTP أو Magic Link.
@@ -78,3 +95,4 @@ VITE_SUPABASE_ANON_KEY=YOUR_SUPABASE_ANON_PUBLIC_KEY
 - أي تعديل في جوال A يظهر في جوال B عبر Realtime أو pull sync.
 - إذا انقطع الإنترنت، يحفظ التطبيق محليًا ثم يزامن عند رجوع الاتصال.
 - تسجيل الخروج لا يحذف النسخة المحلية.
+- الرمز الخاطئ أو المنتهي يظهر رسالة عربية واضحة.
