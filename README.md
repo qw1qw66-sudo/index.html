@@ -1,98 +1,238 @@
 # نظام حجوزات الشاليهات
 
-تطبيق عربي لإدارة حجوزات الشاليهات على الآيفون.
+تطبيق عربي ثابت Static PWA لإدارة حجوزات الشاليهات والمنتجعات، يعمل محليًا أولًا ثم يزامن مع Supabase بعد تسجيل الدخول الحقيقي بالبريد.
 
-## ملاحظات مهمة
-
-- التطبيق يحفظ البيانات محليًا أولًا داخل نفس الجهاز.
-- تم دعم وضع ليلي ونهاري.
-- لتشغيله كتطبيق: افتحه من Safari ثم Share ثم Add to Home Screen.
-
-## Cloud Sync Setup
-
-تم تنفيذ مزامنة سحابية آمنة باستخدام Supabase Auth + PostgreSQL + Row Level Security، بدون الاعتماد على Netlify.
-
-### ما تم اكتشافه في المشروع
-
-- نوع المشروع: plain HTML / JavaScript بدون React أو Vite أو Next.
-- التخزين الحالي: `localStorage` و `IndexedDB`.
-- مفتاح بيانات التطبيق الحالي: `chalets_app_state_v3`.
-- شكل البيانات الأساسي:
-  - `chalets[]`
-  - `bookings[]`
-  - `set{}`
-  - `theme`
-
-### الملفات المهمة
-
-- `chalets-cloud-sync.js` نقطة تشغيل المزامنة.
-- `src/lib/supabaseClient.js` إعداد Supabase client.
-- `src/lib/localStore.js` قراءة/كتابة البيانات المحلية والنسخ الاحتياطي.
-- `src/lib/syncService.js` منطق تسجيل الدخول والمزامنة والـ offline queue.
-- `chalets-supabase-config.js` ملف إعدادات المتصفح النهائي.
-- `.github/workflows/pages.yml` يولّد إعدادات Supabase من GitHub Secrets وينشر على GitHub Pages.
-- `supabase/migrations/20260509_secure_cloud_sync.sql` يحتوي الجداول و RLS.
-- `.env.example` يوضح المتغيرات المطلوبة.
-
-### طريقة التشغيل على Supabase و GitHub Pages
-
-1. أنشئ مشروعًا جديدًا في Supabase.
-2. افتح Supabase SQL Editor.
-3. شغّل الملف التالي كاملًا:
+## الرابط
 
 ```txt
-supabase/migrations/20260509_secure_cloud_sync.sql
+https://qw1qw66-sudo.github.io/index.html/app.html
 ```
 
-4. من Supabase Auth فعّل Email OTP أو Magic Link.
-5. في Supabase Auth URL Configuration أضف رابط الموقع في Site URL و Redirect URLs، مثل:
+الرابط القديم/السحابي يحوّل إلى نفس التطبيق:
 
 ```txt
 https://qw1qw66-sudo.github.io/index.html/cloud/
 ```
 
-6. في GitHub repository افتح:
+## ما تم تنفيذه
+
+- إدارة شاليهات حقيقية: إضافة، تعديل، حذف آمن.
+- إدارة حجوزات حقيقية: إضافة، تعديل، حذف ناعم، سند حجز.
+- منع الحجز المؤكد المتعارض على نفس الشاليه ونفس الفترة.
+- حفظ محلي Local-first باستخدام `localStorage` و `IndexedDB`.
+- ترحيل بيانات النسخ القديمة من `chalets_app_state_v3` إلى النسخة الجديدة.
+- تصدير واستيراد نسخة احتياطية JSON.
+- تسجيل دخول حقيقي عبر Supabase Auth باستخدام Magic Link / OTP.
+- مزامنة Supabase حقيقية عبر الجداول: `chalets`, `bookings`, `app_settings`.
+- Realtime + مزامنة عند التشغيل، الرجوع للاتصال، التركيز على النافذة، وكل 30 ثانية.
+- واجهة عربية RTL مناسبة للآيفون و Add to Home Screen.
+
+## الملفات المهمة
 
 ```txt
-Settings -> Secrets and variables -> Actions -> New repository secret
+app.html                         واجهة التطبيق الإنتاجية
+src/main.js                      منطق التطبيق والحفظ والمزامنة
+cloud/index.html                 تحويل إلى app.html
+manifest.webmanifest             إعداد PWA
+database/supabase-schema.sql     قاعدة بيانات Supabase و RLS
+chalets-supabase-config.js       قيم Supabase الاختيارية العامة
+README.md                        هذا الدليل
 ```
 
-7. أضف السرّين:
+## طريقة إنشاء Supabase
+
+1. افتح Supabase وأنشئ مشروعًا جديدًا.
+2. افتح SQL Editor.
+3. شغّل الملف كاملًا:
 
 ```txt
-VITE_SUPABASE_URL=https://YOUR_PROJECT_ID.supabase.co
-VITE_SUPABASE_ANON_KEY=YOUR_SUPABASE_ANON_PUBLIC_KEY
+database/supabase-schema.sql
 ```
 
-8. افتح:
+هذا الملف ينشئ الجداول التالية:
 
 ```txt
-Actions -> Deploy static site to GitHub Pages -> Run workflow
+profiles
+chalets
+bookings
+app_settings
+sync_log
 ```
 
-9. افتح التطبيق من جوالين:
+ويفعّل RLS بحيث كل مستخدم يرى بياناته فقط عن طريق:
 
 ```txt
+auth.uid()
+```
+
+وليس عن طريق البريد المكتوب يدويًا.
+
+## تفعيل Email OTP / Magic Link
+
+من Supabase Dashboard:
+
+```txt
+Authentication > Providers > Email = Enabled
+```
+
+ثم من:
+
+```txt
+Authentication > URL Configuration
+```
+
+اضبط:
+
+```txt
+Site URL = https://qw1qw66-sudo.github.io/index.html/app.html
+Additional Redirect URLs:
+https://qw1qw66-sudo.github.io/index.html/app.html
 https://qw1qw66-sudo.github.io/index.html/cloud/
 ```
 
-10. اضغط زر Cloud، أدخل الإيميل، وافتح رابط الدخول من البريد أو أدخل رمز OTP.
-11. بعد التحقق أول مرة، تتم المزامنة تلقائيًا بدون تدخل يدوي.
+## إضافة Supabase URL و anon key
 
-### الأمان
+التطبيق لا يعتمد على Netlify ولا يحتاج build step.
 
-- لا يتم استخدام الإيميل وحده كهوية، لأن أي شخص يستطيع كتابة إيميل غيره.
-- المالك الحقيقي للبيانات هو `auth.uid()` القادم من Supabase Auth.
-- الجداول محمية بـ RLS.
-- كل مستخدم يستطيع قراءة وتعديل بياناته فقط.
-- لا تضع `service_role key` داخل ملفات الواجهة نهائيًا.
+افتح التطبيق ثم:
 
-### اختبار سريع
+```txt
+الإعدادات > المزامنة السحابية
+```
 
-- مستخدم جديد يدخل الإيميل ويؤكد OTP أو Magic Link.
-- البيانات المحلية ترفع للسحابة بعد أول دخول.
-- الجوال الثاني بنفس الإيميل بعد التحقق يحمل نفس البيانات.
-- أي تعديل في جوال A يظهر في جوال B عبر Realtime أو pull sync.
-- إذا انقطع الإنترنت، يحفظ التطبيق محليًا ثم يزامن عند رجوع الاتصال.
-- تسجيل الخروج لا يحذف النسخة المحلية.
-- الرمز الخاطئ أو المنتهي يظهر رسالة عربية واضحة.
+ضع:
+
+```txt
+Supabase URL
+Supabase anon public key
+```
+
+ثم اضغط:
+
+```txt
+حفظ إعدادات Supabase
+```
+
+مهم: استخدم `anon public key` فقط. لا تستخدم `service_role key` داخل الواجهة أبدًا.
+
+## تسجيل الدخول والمزامنة
+
+1. افتح التطبيق من الجوال الأول.
+2. ادخل Supabase URL و anon key من الإعدادات.
+3. أدخل بريدك واضغط “إرسال رابط الدخول”.
+4. لا تظهر رسالة النجاح إلا بعد قبول Supabase للطلب فعلًا.
+5. افتح رابط التحقق من البريد.
+6. بعد الدخول، يتم رفع البيانات المحلية للسحابة.
+7. افتح التطبيق من جوال آخر، استخدم نفس البريد بعد التحقق، وستظهر البيانات بعد المزامنة.
+
+## منع الحجز المتعارض
+
+الحجز المؤكد فقط يمنع التعارض. القاعدة المستخدمة:
+
+```txt
+existing.check_in < new.check_out
+AND existing.check_out > new.check_in
+AND same chalet
+AND status = confirmed
+AND deleted_at is null
+```
+
+إذا وجد تعارض، تظهر الرسالة:
+
+```txt
+يوجد حجز مؤكد لنفس الشاليه في هذه الفترة. لا يمكن حفظ الحجز.
+```
+
+الحجوزات المعلقة يمكن أن تتداخل.
+
+## حل مشكلة عدم وصول إيميل التحقق
+
+A. تأكد من:
+
+```txt
+Supabase Dashboard > Authentication > Providers > Email = Enabled
+```
+
+B. تأكد من إعداد الروابط:
+
+```txt
+Authentication > URL Configuration
+Site URL = رابط التطبيق الحقيقي
+Additional Redirect URLs = رابط التطبيق الحقيقي
+```
+
+C. تأكد من قوالب البريد:
+
+```txt
+Magic Link template يحتوي {{ .ConfirmationURL }}
+OTP template يحتوي {{ .Token }} إذا كنت تستخدم الرمز
+```
+
+D. افحص Spam / Junk.
+
+E. انتظر 60 ثانية قبل طلب رابط جديد.
+
+F. افتح Console في المتصفح وتأكد أن الطلب يذهب فعلًا إلى Supabase Auth. إذا ظهر خطأ، التطبيق يعرضه بدل رسالة نجاح وهمية.
+
+## اختبار سريع
+
+### Test A: الحفظ المحلي
+
+- افتح التطبيق.
+- أضف شاليه.
+- أضف حجز.
+- حدّث الصفحة.
+- يجب أن تبقى البيانات.
+
+### Test B: منع التعارض
+
+- أضف حجز مؤكد لشاليه من تاريخ X إلى Y.
+- حاول إضافة حجز مؤكد آخر لنفس الشاليه داخل نفس الفترة.
+- يجب أن يمنعه التطبيق.
+- الحجز المعلق يمكن أن يتداخل.
+
+### Test C: البريد الحقيقي
+
+- أدخل Supabase URL و anon key.
+- أدخل البريد.
+- اضغط إرسال رابط الدخول.
+- يجب أن يرسل Supabase الطلب الحقيقي.
+- لا تظهر رسالة النجاح إذا رجع Supabase بخطأ.
+
+### Test D: الجلسة
+
+- افتح رابط Magic Link من البريد.
+- يرجع التطبيق ويفحص الجلسة.
+- يظهر البريد في الإعدادات.
+- بعد تحديث الصفحة تبقى الجلسة.
+
+### Test E: جهازين
+
+- سجل دخول في الجوال A.
+- أضف حجزًا.
+- سجل دخول بنفس البريد في الجوال B.
+- يجب أن تظهر البيانات بعد المزامنة.
+
+### Test F: بدون إنترنت
+
+- افصل الإنترنت.
+- أضف حجزًا.
+- يجب أن يحفظ محليًا.
+- أعد الاتصال.
+- يجب أن تتم المزامنة تلقائيًا.
+
+### Test G: النسخ الاحتياطي
+
+- صدّر نسخة JSON.
+- احذف/غيّر بيانات محلية.
+- استورد النسخة.
+- يجب أن ترجع البيانات.
+
+## ملاحظات أمان
+
+- البريد وحده لا يفتح البيانات.
+- التحقق يتم عبر Supabase Auth.
+- المالك الحقيقي للبيانات هو `auth.uid()`.
+- `anon key` مسموح في الواجهة بشرط تفعيل RLS.
+- `service_role key` ممنوع في الواجهة.
+- يتم الهروب من النصوص المعروضة لتقليل خطر HTML injection.
