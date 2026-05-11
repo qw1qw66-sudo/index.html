@@ -23,6 +23,7 @@ async function loadAppWithState(page) {
 
 async function openBookingsView(page) {
   await page.locator('.tab [data-view="book"]').click();
+  await expect(page.locator('#v-book')).toHaveClass(/on/);
 }
 
 test.beforeEach(async ({ page }) => {
@@ -31,14 +32,14 @@ test.beforeEach(async ({ page }) => {
 
 test('app shell loads core Arabic UI', async ({ page }) => {
   await expect(page.locator('#brandName')).toContainText('Test Resort');
-  await expect(page.locator('text=لوحة التحكم')).toBeVisible();
-  await expect(page.locator('text=الحجوزات')).toBeVisible();
+  await expect(page.locator('#v-home .title')).toContainText('لوحة التحكم');
+  await expect(page.locator('.tab [data-view="book"]')).toContainText('الحجوزات');
 });
 
 test('editing an existing booking name does not create false duplicate conflict', async ({ page }) => {
   await openBookingsView(page);
-  await expect(page.locator('text=Ali')).toBeVisible();
-  await page.getByRole('button', { name: /تعديل/ }).first().click();
+  await expect(page.locator('#bookingList .name').first()).toContainText('Ali');
+  await page.locator('#bookingList').getByRole('button', { name: /تعديل/ }).first().click();
   await page.locator('#bkName').fill('Ali Updated');
   await page.locator('#saveBooking').click();
   await expect(page.locator('#toast')).toContainText('تم الحفظ');
@@ -49,7 +50,7 @@ test('editing an existing booking name does not create false duplicate conflict'
 
 test('new overlapping confirmed booking is rejected', async ({ page }) => {
   await openBookingsView(page);
-  await page.locator('[data-open-booking]').first().click();
+  await page.locator('#fab').click();
   await page.locator('#bkName').fill('Other Customer');
   await page.locator('#bkPhone').fill('0511111111');
   await page.locator('#bkChalet').selectOption('tulum');
