@@ -12,6 +12,7 @@
   },
   "devDependencies": {
     "@eslint/js": "latest",
+    "@playwright/test": "latest",
     "@testing-library/jest-dom": "latest",
     "@testing-library/react": "latest",
     "@vitest/ui": "latest",
