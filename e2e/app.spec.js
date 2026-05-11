@@ -12,13 +12,21 @@ const appState = {
   lastSync: null
 };
 
-test.beforeEach(async ({ page }) => {
-  await page.goto('/app.html');
-  await page.evaluate((state) => {
+async function loadAppWithState(page) {
+  await page.addInitScript((state) => {
     localStorage.setItem('chalets_app_state_v5', JSON.stringify(state));
     localStorage.removeItem('chalets_sync_queue_v2');
+    indexedDB.deleteDatabase('chaletsDB');
   }, appState);
-  await page.reload();
+  await page.goto('/app.html');
+}
+
+async function openBookingsView(page) {
+  await page.locator('.tab [data-view="book"]').click();
+}
+
+test.beforeEach(async ({ page }) => {
+  await loadAppWithState(page);
 });
 
 test('app shell loads core Arabic UI', async ({ page }) => {
@@ -28,7 +36,7 @@ test('app shell loads core Arabic UI', async ({ page }) => {
 });
 
 test('editing an existing booking name does not create false duplicate conflict', async ({ page }) => {
-  await page.locator('[data-view="book"]').click();
+  await openBookingsView(page);
   await expect(page.locator('text=Ali')).toBeVisible();
   await page.getByRole('button', { name: /تعديل/ }).first().click();
   await page.locator('#bkName').fill('Ali Updated');
@@ -40,7 +48,7 @@ test('editing an existing booking name does not create false duplicate conflict'
 });
 
 test('new overlapping confirmed booking is rejected', async ({ page }) => {
-  await page.locator('[data-view="book"]').click();
+  await openBookingsView(page);
   await page.locator('[data-open-booking]').first().click();
   await page.locator('#bkName').fill('Other Customer');
   await page.locator('#bkPhone').fill('0511111111');
