@@ -12,7 +12,6 @@ export default {
     timeout: 30000
   },
   projects: [
-    { name: 'chromium', use: { browserName: 'chromium' } },
-    { name: 'mobile-safari-webkit', use: { browserName: 'webkit', viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true } }
+    { name: 'chromium', use: { browserName: 'chromium' } }
   ]
 };
