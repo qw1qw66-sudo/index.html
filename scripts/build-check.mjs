@@ -8,6 +8,7 @@ const requiredFiles = [
   'src/main.js',
   'manifest.webmanifest',
   'chalets-supabase-config.js',
+  'sw.js',
   'sync-cloud/index.html'
 ];
 
@@ -19,7 +20,7 @@ for (const file of requiredFiles) {
 
 JSON.parse(readFileSync(resolve(root, 'manifest.webmanifest'), 'utf8'));
 
-for (const file of ['src/main.js', 'chalets-supabase-config.js']) {
+for (const file of ['src/main.js', 'chalets-supabase-config.js', 'sw.js']) {
   const source = readFileSync(resolve(root, file), 'utf8');
   new vm.Script(source, { filename: file });
 }
