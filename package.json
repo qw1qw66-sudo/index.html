@@ -17,6 +17,7 @@
     "@vitest/ui": "latest",
     "eslint": "latest",
     "globals": "latest",
+    "http-server": "latest",
     "jsdom": "latest",
     "playwright": "latest",
     "vitest": "latest"
