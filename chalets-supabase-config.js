@@ -40,8 +40,10 @@ window.CHALETS_PRODUCTION_URL = 'https://qw1qw66-sudo.github.io/index.html/app.h
 // if registration fails on a browser/private mode that restricts service workers.
 (function registerChaletsServiceWorker(){
   if (!('serviceWorker' in navigator)) return;
+  var scriptEl = document.currentScript;
+  var swUrl = scriptEl && scriptEl.src ? new URL('sw.js', scriptEl.src).href : new URL('sw.js', window.location.origin + window.location.pathname).href;
   window.addEventListener('load', function(){
-    navigator.serviceWorker.register('./sw.js').catch(function(error){
+    navigator.serviceWorker.register(swUrl).catch(function(error){
       console.warn('[chalets-pwa] service worker registration failed', error);
     });
   });
