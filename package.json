@@ -6,8 +6,8 @@
   "scripts": {
     "lint": "eslint .",
     "build": "node scripts/build-check.mjs",
-    "test": "vitest run",
-    "test:watch": "vitest",
+    "test": "vitest run tests",
+    "test:watch": "vitest tests",
     "e2e": "playwright test"
   },
   "devDependencies": {
