@@ -1,0 +1,368 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#0f1115">
+  <title>Sync Cloud - استرجاع ومزامنة الحجوزات</title>
+  <style>
+    :root{--bg:#0f1115;--panel:#1b212b;--panel2:#242c38;--txt:#f6efe5;--muted:#b8afa2;--line:#344052;--gold:#d4af5f;--gold2:#f0cf82;--red:#d46a5d;--ok:#73a76b;--blue:#6ea8fe;--shadow:0 14px 38px rgba(0,0,0,.25);color-scheme:dark}
+    *{box-sizing:border-box;-webkit-tap-highlight-color:transparent} body{margin:0;background:radial-gradient(circle at 50% -10%,rgba(212,175,95,.16),transparent 38%),var(--bg);color:var(--txt);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Tahoma,Arial,sans-serif;padding:16px 14px 40px} button,input,textarea{font:inherit;color:inherit} input,textarea{width:100%;background:var(--panel2);border:1px solid var(--line);border-radius:14px;padding:13px;outline:none;font-size:16px} textarea{min-height:160px;direction:ltr;text-align:left;white-space:pre;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}.wrap{max-width:900px;margin:auto}.hero{padding:18px 2px}.title{font-size:28px;margin:0 0 6px;font-weight:900}.sub{color:var(--muted);line-height:1.6;margin:0}.card{background:linear-gradient(180deg,var(--panel),color-mix(in srgb,var(--panel) 85%,var(--bg)));border:1px solid var(--line);border-radius:18px;box-shadow:var(--shadow);padding:16px;margin:12px 0}.row{display:grid;grid-template-columns:1fr 1fr;gap:10px}.btn{min-height:44px;border-radius:14px;padding:11px 15px;font-weight:900;border:1px solid transparent;display:inline-flex;align-items:center;justify-content:center;gap:7px;text-decoration:none;cursor:pointer}.btn:disabled{opacity:.55;cursor:not-allowed}.primary{background:linear-gradient(135deg,var(--gold2),var(--gold));color:#17120a}.outline{background:var(--panel);border-color:var(--line)}.danger{background:color-mix(in srgb,var(--red) 14%,transparent);border-color:color-mix(in srgb,var(--red) 35%,transparent);color:var(--red)}.okbtn{background:color-mix(in srgb,var(--ok) 14%,transparent);border-color:color-mix(in srgb,var(--ok) 35%,transparent);color:var(--ok)}.full{width:100%}.small{font-size:12px;color:var(--muted);line-height:1.6}.pill{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:6px 10px;background:color-mix(in srgb,var(--gold) 13%,transparent);border:1px solid color-mix(in srgb,var(--gold) 30%,transparent);color:var(--gold);font-size:12px;font-weight:900;margin:4px 4px 0 0}.bad{color:var(--red);background:color-mix(in srgb,var(--red) 12%,transparent);border-color:color-mix(in srgb,var(--red) 35%,transparent)}.good{color:var(--ok);background:color-mix(in srgb,var(--ok) 12%,transparent);border-color:color-mix(in srgb,var(--ok) 35%,transparent)}.item{border:1px solid var(--line);background:var(--panel2);border-radius:14px;padding:12px;margin:9px 0}.item label{display:block;cursor:pointer}.item b{word-break:break-all}.muted{color:var(--muted)}.ltr{direction:ltr;text-align:left}.sep{height:1px;background:var(--line);margin:14px 0}.toast{position:fixed;top:calc(12px + env(safe-area-inset-top));left:12px;right:12px;z-index:50;max-width:640px;margin:auto;background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:12px 14px;box-shadow:var(--shadow);display:none}.toast.on{display:block}.toplinks{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}.dangerText{color:var(--red);font-weight:900}@media(max-width:650px){.row{grid-template-columns:1fr}.title{font-size:24px}}
+  </style>
+</head>
+<body>
+  <div id="toast" class="toast"></div>
+  <div class="wrap">
+    <section class="hero">
+      <div class="pill good">نسخة آمنة منفصلة</div>
+      <h1 class="title">استرجاع ومزامنة بيانات الحجوزات</h1>
+      <p class="sub">هذه الصفحة تقرأ بيانات المستخدم من نفس المتصفح ونفس الدومين، ثم تسمح بتصديرها أو رفعها للسحابة بعد تأكيد واضح. لا تحذف بيانات التطبيق الأساسي.</p>
+      <div class="toplinks">
+        <a class="btn outline" href="../app.html">فتح التطبيق الأساسي</a>
+        <button class="btn outline" id="rescanBtn">فحص البيانات مرة أخرى</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>1) البيانات الموجودة في جهازك</h2>
+      <p class="small">سيتم البحث في مفاتيح التخزين القديمة والجديدة، ثم ترتيب النسخ حسب عدد الحجوزات ووجود تولوم/سكاي.</p>
+      <div id="summary"></div>
+      <div id="candidates"></div>
+      <div class="row">
+        <button class="btn primary" id="adoptBtn">اعتماد النسخة المختارة داخل التطبيق</button>
+        <button class="btn outline" id="exportBtn">تصدير JSON للنسخة المختارة</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>2) إعدادات Supabase</h2>
+      <p class="small">الصفحة تحاول قراءة إعدادات Supabase من بيانات التطبيق أو من ملف الإعدادات. لا ترفع أي شيء إلا بعد تسجيل الدخول والضغط على زر الرفع.</p>
+      <div class="row">
+        <div><label class="small">Supabase URL</label><input class="ltr" id="supabaseUrl" placeholder="https://xxxx.supabase.co"></div>
+        <div><label class="small">Supabase anon public key</label><input class="ltr" id="supabaseAnon" placeholder="eyJ..." type="password"></div>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <button class="btn outline" id="saveConfigBtn">حفظ الإعدادات محليًا</button>
+        <button class="btn outline" id="testConfigBtn">اختبار الاتصال</button>
+      </div>
+      <div class="sep"></div>
+      <div id="authArea">
+        <label class="small">البريد الإلكتروني</label>
+        <input class="ltr" id="email" type="email" placeholder="email@example.com">
+        <button class="btn primary full" id="loginBtn" style="margin-top:10px">إرسال رابط الدخول</button>
+      </div>
+      <div id="loggedArea" style="display:none">
+        <p>مسجل دخول: <b id="loggedEmail"></b></p>
+        <button class="btn danger" id="logoutBtn">تسجيل خروج</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>3) المزامنة اليدوية الآمنة</h2>
+      <p class="small">قبل الرفع سيتم حفظ Backup محلي باسم <span class="ltr">sync_cloud_backup_before_upload_...</span>. لا تستخدم هذا الزر إلا بعد التأكد أن النسخة المختارة هي الصحيحة.</p>
+      <div class="row">
+        <button class="btn okbtn" id="uploadBtn">رفع النسخة المختارة للسحابة</button>
+        <button class="btn outline" id="pullBtn">سحب من السحابة ودمج محلي آمن</button>
+      </div>
+      <p class="small dangerText">تنبيه: منع الحجز المزدوج النهائي يحتاج قاعدة بيانات/RPC في Supabase. هذه الصفحة تحمي من الرفع الخاطئ لكنها ليست بديلًا عن قيود قاعدة البيانات.</p>
+    </section>
+
+    <section class="card">
+      <h2>4) استيراد نسخة JSON</h2>
+      <p class="small">استخدمها فقط إذا عندك ملف نسخة احتياطية. سيتم اعتمادها في التطبيق بعد التأكيد.</p>
+      <input id="importFile" type="file" accept="application/json,.json">
+      <button class="btn outline full" id="importBtn" style="margin-top:10px">استيراد واعتماد النسخة</button>
+    </section>
+
+    <section class="card">
+      <h2>سجل العمليات</h2>
+      <textarea id="logBox" readonly></textarea>
+    </section>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="../chalets-supabase-config.js"></script>
+  <script>
+  (()=>{
+    'use strict';
+
+    const APP_KEY = 'chalets_app_state_v5';
+    const CONFIG_KEY = 'sync_cloud_config_v1';
+    const RECOVERY_KEYS = [
+      'chalets_app_state_v5','chalets_app_state_v4','chalets_app_state_v3',
+      'chalet_booking_sync_v6_state','chalet_booking_sync_v7_state','chalet_booking_sync_v8_state',
+      'chalets_booking_v2','chalets_booking_v1','chalets_booking_ready_v1',
+      'safe_backup_before_v9','v10_backup_before_recovery','v11_backup_before_local_restore',
+      'chalets_auto_backup_before_cloud'
+    ];
+    const DEFAULT_SETTINGS = {name:'شاليهات الفخامة',tag:'نظام متكامل',phone:'',checkIn:'15:00',checkOut:'12:00',terms:'',supabaseUrl:'',supabaseAnon:''};
+    const DEFAULT_STATE = {chalets:[],bookings:[],settings:{...DEFAULT_SETTINGS},theme:'dark',lastSync:null};
+    const $ = id => document.getElementById(id);
+    let candidates = [];
+    let supabase = null;
+    let user = null;
+
+    function now(){ return new Date().toISOString(); }
+    function uid(){ return crypto.randomUUID ? crypto.randomUUID() : (Date.now().toString(36)+Math.random().toString(36).slice(2,10)); }
+    function toast(msg,type='ok'){ const el=$('toast'); el.textContent=msg; el.className='toast on '+type; clearTimeout(toast._t); toast._t=setTimeout(()=>el.className='toast',3200); }
+    function log(msg){ $('logBox').value = `[${new Date().toLocaleTimeString('ar-SA')}] ${msg}\n` + $('logBox').value; }
+    function esc(s){ return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+    function activeCount(arr){ return (arr||[]).filter(x=>!x.deleted_at).length; }
+    function hasTulum(x){ return /تولوم|tulum/i.test(String(x||'')); }
+    function hasSky(x){ return /سكاي|sky/i.test(String(x||'')); }
+
+    function normalizeState(raw){
+      const old = raw?.state || raw?.data || raw || {};
+      const settings = old.settings || old.set || {};
+      const base = structuredClone(DEFAULT_STATE);
+      base.theme = old.theme || 'dark';
+      base.settings = {
+        ...DEFAULT_SETTINGS,
+        name: settings.name || DEFAULT_SETTINGS.name,
+        tag: settings.tag || DEFAULT_SETTINGS.tag,
+        phone: settings.phone || DEFAULT_SETTINGS.phone,
+        checkIn: settings.checkIn || settings.in || DEFAULT_SETTINGS.checkIn,
+        checkOut: settings.checkOut || settings.out || DEFAULT_SETTINGS.checkOut,
+        terms: settings.terms || DEFAULT_SETTINGS.terms,
+        supabaseUrl: settings.supabaseUrl || window.CHALETS_SUPABASE_URL || '',
+        supabaseAnon: settings.supabaseAnon || window.CHALETS_SUPABASE_ANON_KEY || ''
+      };
+      base.chalets = (old.chalets || []).map(c => ({
+        id:String(c.id||uid()), name:String(c.name||'شاليه'), capacity:Number(c.capacity??c.cap??1), price:Number(c.price||0),
+        description:String(c.description??c.desc??''), color:Number(c.color||0), is_active:c.is_active!==false,
+        created_at:c.created_at||now(), updated_at:c.updated_at||now(), deleted_at:c.deleted_at||null
+      }));
+      base.bookings = (old.bookings || []).map((b,i)=>({
+        id:String(b.id||uid()), booking_no:String(b.booking_no||b.no||`${new Date().getFullYear()}-${String(i+1).padStart(4,'0')}`),
+        chalet_id:String(b.chalet_id||b.ch||''), customer_name:String(b.customer_name||b.name||''), customer_phone:String(b.customer_phone||b.phone||''),
+        check_in:String(b.check_in||b.in||''), check_out:String(b.check_out||b.out||''), nights:Number(b.nights??b.n??1), guests:Number(b.guests??b.g??1),
+        total:Number(b.total||0), paid:Number(b.paid||0), status:String(b.status||'confirmed'), notes:String(b.notes||''),
+        created_at:b.created_at||now(), updated_at:b.updated_at||now(), deleted_at:b.deleted_at||null
+      })).filter(b=>b.chalet_id && b.check_in && b.check_out);
+      return base;
+    }
+
+    function score(st){
+      const names=(st.chalets||[]).map(c=>c.name||'').join(' ');
+      return activeCount(st.bookings)*10000 + activeCount(st.chalets)*100 + (hasTulum(names)?50000:0) + (hasSky(names)?50000:0);
+    }
+
+    function scan(){
+      const keys = new Set(RECOVERY_KEYS);
+      for(let i=0;i<localStorage.length;i++){
+        const k=localStorage.key(i);
+        if(k && /(chalet|chalets|booking|sync|backup|recovery|state|workspace|v\d+)/i.test(k)) keys.add(k);
+      }
+      candidates=[];
+      keys.forEach(key=>{
+        const raw = localStorage.getItem(key);
+        if(!raw) return;
+        try{
+          const parsed=JSON.parse(raw);
+          const st=normalizeState(parsed);
+          const names=(st.chalets||[]).map(c=>c.name||'').join(' ');
+          candidates.push({key,state:st,chalets:activeCount(st.chalets),bookings:activeCount(st.bookings),tulum:hasTulum(names),sky:hasSky(names),score:score(st)});
+        }catch(e){ }
+      });
+      candidates.sort((a,b)=>b.score-a.score);
+      renderCandidates();
+      loadConfigFromBest();
+      log(`تم فحص البيانات. عدد النسخ: ${candidates.length}`);
+    }
+
+    function selectedCandidate(){
+      const picked=document.querySelector('input[name="pick"]:checked');
+      if(!picked) return candidates[0] || null;
+      return candidates[Number(picked.value)] || null;
+    }
+
+    function renderCandidates(){
+      const best = candidates[0];
+      $('summary').innerHTML = best
+        ? `<div class="pill good">أفضل نسخة: ${esc(best.key)}</div><div class="pill">شاليهات: ${best.chalets}</div><div class="pill">حجوزات: ${best.bookings}</div>${best.tulum?'<div class="pill good">تولوم</div>':''}${best.sky?'<div class="pill good">سكاي</div>':''}`
+        : '<div class="pill bad">لا توجد بيانات قابلة للقراءة في هذا المتصفح</div>';
+      $('candidates').innerHTML = candidates.length ? candidates.map((c,i)=>`
+        <div class="item">
+          <label>
+            <input type="radio" name="pick" value="${i}" ${i===0?'checked':''}>
+            <b>${esc(c.key)}</b>
+            <div class="small">شاليهات: ${c.chalets} · حجوزات: ${c.bookings} ${c.tulum?'· تولوم':''} ${c.sky?'· سكاي':''}</div>
+          </label>
+        </div>`).join('') : '<div class="item muted">لا توجد نسخ. افتح التطبيق الأساسي أولاً أو استورد ملف JSON.</div>';
+    }
+
+    function loadConfigFromBest(){
+      let cfg={};
+      try{ cfg=JSON.parse(localStorage.getItem(CONFIG_KEY)||'{}'); }catch{}
+      const best = candidates[0]?.state?.settings || {};
+      $('supabaseUrl').value = cfg.supabaseUrl || best.supabaseUrl || window.CHALETS_SUPABASE_URL || '';
+      $('supabaseAnon').value = cfg.supabaseAnon || best.supabaseAnon || window.CHALETS_SUPABASE_ANON_KEY || '';
+    }
+
+    function initSupabase(){
+      const url=$('supabaseUrl').value.trim();
+      const anon=$('supabaseAnon').value.trim();
+      if(!url || !anon || !url.startsWith('https://')){ toast('تحقق من إعدادات Supabase','bad'); return false; }
+      if(!window.supabase?.createClient){ toast('تعذر تحميل مكتبة Supabase','bad'); return false; }
+      supabase=window.supabase.createClient(url,anon,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true,storage:localStorage}});
+      return true;
+    }
+
+    async function refreshAuth(){
+      if(!supabase && !initSupabase()) return;
+      const {data,error}=await supabase.auth.getSession();
+      if(error) log('خطأ في قراءة الجلسة: '+error.message);
+      user=data?.session?.user||null;
+      $('authArea').style.display=user?'none':'block';
+      $('loggedArea').style.display=user?'block':'none';
+      $('loggedEmail').textContent=user?.email||'';
+      log(user ? `متصل بالحساب: ${user.email}` : 'غير مسجل دخول');
+    }
+
+    function saveConfig(){
+      const cfg={supabaseUrl:$('supabaseUrl').value.trim(),supabaseAnon:$('supabaseAnon').value.trim(),saved_at:now()};
+      localStorage.setItem(CONFIG_KEY,JSON.stringify(cfg));
+      toast('تم حفظ إعدادات Supabase محليًا');
+      log('تم حفظ إعدادات Supabase محليًا');
+    }
+
+    function backupCurrent(tag){
+      const current=localStorage.getItem(APP_KEY);
+      if(current) localStorage.setItem(`sync_cloud_backup_${tag}_${Date.now()}`,current);
+    }
+
+    function adopt(){
+      const cand=selectedCandidate();
+      if(!cand) return toast('لا توجد نسخة مختارة','bad');
+      if(!confirm(`اعتماد النسخة المختارة داخل التطبيق؟\nالشاليهات: ${cand.chalets}\nالحجوزات: ${cand.bookings}`)) return;
+      backupCurrent('before_adopt');
+      localStorage.setItem(APP_KEY,JSON.stringify(cand.state));
+      toast('تم اعتماد النسخة داخل التطبيق');
+      log(`تم اعتماد النسخة: ${cand.key}`);
+    }
+
+    function exportSelected(){
+      const cand=selectedCandidate();
+      if(!cand) return toast('لا توجد نسخة مختارة','bad');
+      const blob=new Blob([JSON.stringify({exported_at:now(),source_key:cand.key,state:cand.state},null,2)],{type:'application/json'});
+      const a=document.createElement('a');
+      a.href=URL.createObjectURL(blob);
+      a.download=`chalets-sync-cloud-${new Date().toISOString().slice(0,10)}.json`;
+      a.click();
+      setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+      log('تم تصدير النسخة المختارة كملف JSON');
+    }
+
+    function rowChalet(c){ return {id:c.id,user_id:user.id,name:c.name,capacity:c.capacity,price:c.price,description:c.description||'',color:c.color||0,is_active:c.is_active!==false,created_at:c.created_at,updated_at:c.updated_at}; }
+    function rowBooking(b){ return {id:b.id,user_id:user.id,booking_no:b.booking_no,chalet_id:b.chalet_id,customer_name:b.customer_name,customer_phone:b.customer_phone,check_in:b.check_in,check_out:b.check_out,nights:b.nights,guests:b.guests,total:b.total,paid:b.paid,status:b.status,notes:b.notes||'',created_at:b.created_at,updated_at:b.updated_at,deleted_at:b.deleted_at}; }
+    function fromCloudChalet(c){ return {id:c.id,name:c.name,capacity:c.capacity,price:Number(c.price||0),description:c.description||'',color:c.color||0,is_active:c.is_active!==false,created_at:c.created_at,updated_at:c.updated_at,deleted_at:c.deleted_at||null}; }
+    function fromCloudBooking(b){ return {id:b.id,booking_no:b.booking_no,chalet_id:b.chalet_id,customer_name:b.customer_name,customer_phone:b.customer_phone,check_in:b.check_in,check_out:b.check_out,nights:b.nights,guests:b.guests,total:Number(b.total||0),paid:Number(b.paid||0),status:b.status,notes:b.notes||'',created_at:b.created_at,updated_at:b.updated_at,deleted_at:b.deleted_at||null}; }
+    function newer(a,b){ return new Date(a?.updated_at||0).getTime() >= new Date(b?.updated_at||0).getTime(); }
+    function mergeRows(localRows,cloudRows){ const m=new Map(); for(const r of localRows||[])m.set(r.id,r); for(const c of cloudRows||[]){ const old=m.get(c.id); if(!old||newer(c,old))m.set(c.id,c); } return [...m.values()]; }
+
+    async function uploadSelected(){
+      const cand=selectedCandidate();
+      if(!cand) return toast('لا توجد نسخة مختارة','bad');
+      if(!supabase && !initSupabase()) return;
+      await refreshAuth();
+      if(!user) return toast('سجل الدخول أولًا','bad');
+      if(cand.chalets + cand.bookings === 0) return toast('تم منع رفع نسخة فارغة','bad');
+      if(!confirm(`تأكيد رفع النسخة للسحابة؟\nالشاليهات: ${cand.chalets}\nالحجوزات: ${cand.bookings}`)) return;
+      backupCurrent('before_upload');
+      const st=cand.state;
+      const chalets=(st.chalets||[]).filter(c=>!c.deleted_at).map(rowChalet);
+      const bookings=(st.bookings||[]).map(rowBooking);
+      log('بدأ الرفع للسحابة...');
+      if(chalets.length){ const {error}=await supabase.from('chalets').upsert(chalets); if(error) throw error; }
+      if(bookings.length){ const {error}=await supabase.from('bookings').upsert(bookings); if(error) throw error; }
+      const {error:se}=await supabase.from('app_settings').upsert({user_id:user.id,data:st.settings||{},updated_at:now()});
+      if(se) throw se;
+      await supabase.from('sync_log').insert({user_id:user.id,action:'sync_cloud_manual_upload',details:{chalets:chalets.length,bookings:bookings.length,source:cand.key}}).catch(()=>{});
+      toast('تم رفع البيانات للسحابة');
+      log(`تم الرفع: شاليهات ${chalets.length}، حجوزات ${bookings.length}`);
+    }
+
+    async function pullCloud(){
+      if(!supabase && !initSupabase()) return;
+      await refreshAuth();
+      if(!user) return toast('سجل الدخول أولًا','bad');
+      const cand=selectedCandidate();
+      const localState=cand?.state || normalizeState(JSON.parse(localStorage.getItem(APP_KEY)||'{}'));
+      log('بدأ السحب من السحابة...');
+      const [ch,bo,se]=await Promise.all([
+        supabase.from('chalets').select('*').eq('user_id',user.id),
+        supabase.from('bookings').select('*').eq('user_id',user.id),
+        supabase.from('app_settings').select('data,updated_at').eq('user_id',user.id).maybeSingle()
+      ]);
+      if(ch.error||bo.error||se.error) throw (ch.error||bo.error||se.error);
+      const remoteCh=(ch.data||[]).map(fromCloudChalet);
+      const remoteB=(bo.data||[]).map(fromCloudBooking);
+      if(remoteCh.length+remoteB.length===0) return toast('تم تجاهل نسخة سحابية فارغة','bad');
+      if(remoteB.length < activeCount(localState.bookings) && !confirm('السحابة تحتوي حجوزات أقل من المحلية. هل تريد الدمج رغم ذلك؟')) return;
+      const merged={...localState};
+      merged.chalets=mergeRows(localState.chalets,remoteCh);
+      merged.bookings=mergeRows(localState.bookings,remoteB);
+      if(se.data?.data) merged.settings={...merged.settings,...se.data.data,updated_at:se.data.updated_at};
+      backupCurrent('before_cloud_pull');
+      localStorage.setItem(APP_KEY,JSON.stringify(merged));
+      toast('تم السحب والدمج داخل التطبيق');
+      log(`تم الدمج: شاليهات ${activeCount(merged.chalets)}، حجوزات ${activeCount(merged.bookings)}`);
+      scan();
+    }
+
+    async function login(){
+      if(!supabase && !initSupabase()) return;
+      const email=$('email').value.trim();
+      if(!/^\S+@\S+\.\S+$/.test(email)) return toast('أدخل بريد صحيح','bad');
+      const btn=$('loginBtn'); btn.disabled=true;
+      const {error}=await supabase.auth.signInWithOtp({email,options:{emailRedirectTo:location.origin+location.pathname,shouldCreateUser:true}});
+      btn.disabled=false;
+      if(error){ log('فشل إرسال رابط الدخول: '+error.message); return toast('فشل إرسال رابط الدخول','bad'); }
+      toast('تم إرسال رابط الدخول إلى بريدك');
+      log('تم إرسال رابط الدخول إلى البريد');
+    }
+
+    async function logout(){
+      if(!supabase && !initSupabase()) return;
+      await supabase.auth.signOut();
+      user=null;
+      await refreshAuth();
+      toast('تم تسجيل الخروج');
+    }
+
+    async function importJson(){
+      const file=$('importFile').files[0];
+      if(!file) return toast('اختر ملف JSON أولًا','bad');
+      const text=await file.text();
+      let obj;
+      try{ obj=JSON.parse(text); }catch{ return toast('ملف JSON غير صحيح','bad'); }
+      const st=normalizeState(obj);
+      if(activeCount(st.chalets)+activeCount(st.bookings)===0) return toast('الملف لا يحتوي بيانات حجوزات واضحة','bad');
+      if(!confirm(`استيراد واعتماد هذه النسخة؟\nالشاليهات: ${activeCount(st.chalets)}\nالحجوزات: ${activeCount(st.bookings)}`)) return;
+      backupCurrent('before_import');
+      localStorage.setItem(APP_KEY,JSON.stringify(st));
+      toast('تم الاستيراد والاعتماد');
+      log('تم استيراد واعتماد نسخة JSON');
+      scan();
+    }
+
+    async function safeRun(fn){ try{ await fn(); }catch(e){ console.error(e); log('خطأ: '+(e.message||e)); toast('حدث خطأ: '+(e.message||'تحقق من السجل'),'bad'); } }
+
+    $('rescanBtn').onclick=scan;
+    $('adoptBtn').onclick=adopt;
+    $('exportBtn').onclick=exportSelected;
+    $('saveConfigBtn').onclick=saveConfig;
+    $('testConfigBtn').onclick=()=>safeRun(async()=>{ if(initSupabase()){ await refreshAuth(); toast('تم اختبار الإعدادات'); } });
+    $('loginBtn').onclick=()=>safeRun(login);
+    $('logoutBtn').onclick=()=>safeRun(logout);
+    $('uploadBtn').onclick=()=>safeRun(uploadSelected);
+    $('pullBtn').onclick=()=>safeRun(pullCloud);
+    $('importBtn').onclick=()=>safeRun(importJson);
+
+    scan();
+    initSupabase();
+    refreshAuth().catch(()=>{});
+  })();
+  </script>
+</body>
+</html>
