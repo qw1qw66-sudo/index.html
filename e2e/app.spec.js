@@ -29,7 +29,8 @@ test('app shell loads core Arabic UI', async ({ page }) => {
 
 test('editing an existing booking name does not create false duplicate conflict', async ({ page }) => {
   await page.locator('[data-view="book"]').click();
-  await page.locator('[data-edit="booking-1"]').click();
+  await expect(page.locator('text=Ali')).toBeVisible();
+  await page.getByRole('button', { name: /تعديل/ }).first().click();
   await page.locator('#bkName').fill('Ali Updated');
   await page.locator('#saveBooking').click();
   await expect(page.locator('#toast')).toContainText('تم الحفظ');
