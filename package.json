@@ -1,0 +1,26 @@
+{
+  "name": "chalets-booking-pwa",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "lint": "eslint .",
+    "build": "node scripts/build-check.mjs",
+    "test": "vitest run tests",
+    "test:watch": "vitest tests",
+    "e2e": "playwright test"
+  },
+  "devDependencies": {
+    "@eslint/js": "latest",
+    "@playwright/test": "latest",
+    "@testing-library/jest-dom": "latest",
+    "@testing-library/react": "latest",
+    "@vitest/ui": "latest",
+    "eslint": "latest",
+    "globals": "latest",
+    "http-server": "latest",
+    "jsdom": "latest",
+    "playwright": "latest",
+    "vitest": "latest"
+  }
+}
