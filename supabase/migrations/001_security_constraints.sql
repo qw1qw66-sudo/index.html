@@ -13,16 +13,29 @@ alter table if exists public.chalets alter column user_id set not null;
 alter table if exists public.bookings alter column user_id set not null;
 alter table if exists public.app_settings alter column user_id set not null;
 
--- Basic validation constraints.
-alter table if exists public.bookings
-  add constraint if not exists bookings_valid_dates check (check_out > check_in),
-  add constraint if not exists bookings_valid_guests check (guests >= 1),
-  add constraint if not exists bookings_valid_money check (total >= 0 and paid >= 0),
-  add constraint if not exists bookings_status_allowed check (status in ('confirmed','pending','cancelled','completed'));
-
-alter table if exists public.chalets
-  add constraint if not exists chalets_valid_capacity check (capacity >= 1),
-  add constraint if not exists chalets_valid_price check (price >= 0);
+-- Basic validation constraints. PostgreSQL does not support ADD CONSTRAINT IF NOT EXISTS,
+-- so use DO blocks for safe/idempotent application.
+do $$
+begin
+  if to_regclass('public.bookings') is not null and not exists (select 1 from pg_constraint where conname = 'bookings_valid_dates') then
+    alter table public.bookings add constraint bookings_valid_dates check (check_out > check_in);
+  end if;
+  if to_regclass('public.bookings') is not null and not exists (select 1 from pg_constraint where conname = 'bookings_valid_guests') then
+    alter table public.bookings add constraint bookings_valid_guests check (guests >= 1);
+  end if;
+  if to_regclass('public.bookings') is not null and not exists (select 1 from pg_constraint where conname = 'bookings_valid_money') then
+    alter table public.bookings add constraint bookings_valid_money check (total >= 0 and paid >= 0);
+  end if;
+  if to_regclass('public.bookings') is not null and not exists (select 1 from pg_constraint where conname = 'bookings_status_allowed') then
+    alter table public.bookings add constraint bookings_status_allowed check (status in ('confirmed','pending','cancelled','completed'));
+  end if;
+  if to_regclass('public.chalets') is not null and not exists (select 1 from pg_constraint where conname = 'chalets_valid_capacity') then
+    alter table public.chalets add constraint chalets_valid_capacity check (capacity >= 1);
+  end if;
+  if to_regclass('public.chalets') is not null and not exists (select 1 from pg_constraint where conname = 'chalets_valid_price') then
+    alter table public.chalets add constraint chalets_valid_price check (price >= 0);
+  end if;
+end $$;
 
 -- Unique voucher/booking number per user. This prevents duplicate vouchers across devices.
 create unique index if not exists bookings_user_booking_no_unique
@@ -31,14 +44,19 @@ where deleted_at is null;
 
 -- Critical: database-level confirmed-booking overlap protection.
 -- This is the real protection against two devices booking the same chalet at the same time.
-alter table if exists public.bookings
-  add constraint bookings_no_confirmed_overlap
-  exclude using gist (
-    user_id with =,
-    chalet_id with =,
-    daterange(check_in, check_out, '[)') with &&
-  )
-  where (status = 'confirmed' and deleted_at is null);
+do $$
+begin
+  if to_regclass('public.bookings') is not null and not exists (select 1 from pg_constraint where conname = 'bookings_no_confirmed_overlap') then
+    alter table public.bookings
+      add constraint bookings_no_confirmed_overlap
+      exclude using gist (
+        user_id with =,
+        chalet_id with =,
+        daterange(check_in, check_out, '[)') with &&
+      )
+      where (status = 'confirmed' and deleted_at is null);
+  end if;
+end $$;
 
 -- RLS: users can only access their own rows.
 drop policy if exists chalets_select_own on public.chalets;
