@@ -78,13 +78,32 @@ if (!sql.includes('security definer')) throw new Error('RPC must use security de
 if (!sql.includes('revoke all on public.shared_workspaces from anon')) throw new Error('SQL must revoke direct anon table access');
 if (!sql.includes('grant execute on function public.get_shared_workspace')) throw new Error('SQL must grant RPC execute');
 if (!workflow.includes('cp -R app/* dist/app/')) throw new Error('Pages workflow must copy app into dist/app');
+if (!workflow.includes('cp 404.html dist/404.html')) throw new Error('Pages workflow must copy only 404 alongside app');
+const forbiddenWorkflowCopies = ['cp app-release', 'cp clean.html', 'cp stable.html', 'cp -R sync-cloud', 'cp sync-cloud', 'cp app.html', 'cp cloud.html'];
+for (const text of forbiddenWorkflowCopies) {
+  if (workflow.includes(text)) throw new Error(`Pages workflow must not copy old public surface: ${text}`);
+}
 if (!workflow.includes('path: dist')) throw new Error('Pages workflow must upload dist only');
 
 rmSync(resolve(root, 'dist'), { recursive: true, force: true });
 mkdirSync(resolve(root, 'dist/app'), { recursive: true });
 cpSync(resolve(root, 'app'), resolve(root, 'dist/app'), { recursive: true });
 cpSync(resolve(root, '404.html'), resolve(root, 'dist/404.html'));
-const forbiddenDist = ['app.html', 'cloud.html', 'sync-cloud', 'sync-v6', 'archive'];
+const forbiddenDist = [
+  'index.html',
+  'app.html',
+  'cloud.html',
+  'clean.html',
+  'stable.html',
+  'app-release',
+  'sync-cloud',
+  'sync-v6',
+  'archive',
+  'manifest.webmanifest',
+  'sw.js',
+  'chalets-cloud-sync.js',
+  'chalets-supabase-config.js'
+];
 for (const item of forbiddenDist) {
   if (existsSync(resolve(root, 'dist', item))) throw new Error(`Forbidden deployed artifact item exists: ${item}`);
 }

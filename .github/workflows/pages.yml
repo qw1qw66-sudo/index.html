@@ -23,20 +23,18 @@ jobs:
           rm -rf dist
           mkdir -p dist/app
           cp -R app/* dist/app/
-          cp app-release/index.html dist/app/index.html
-          cp clean.html dist/clean.html
-          cp stable.html dist/stable.html
           cp 404.html dist/404.html
-          find dist -maxdepth 3 -type f | sort
-          test -f dist/stable.html
-          test -f dist/clean.html
+          find dist -maxdepth 4 -type f | sort
           test -f dist/app/index.html
           test -f dist/app/manifest.webmanifest
           test -f dist/404.html
+          test ! -e dist/index.html
           test ! -e dist/app.html
           test ! -e dist/cloud.html
-          test ! -e dist/sync-cloud
+          test ! -e dist/clean.html
+          test ! -e dist/stable.html
           test ! -e dist/app-release
+          test ! -e dist/sync-cloud
           test ! -e dist/archive
 
       - name: Setup Pages
