@@ -77,9 +77,12 @@ async function mockSupabase(page, initial = makeCloudState()) {
     await route.fulfill({
       contentType: 'application/javascript',
       body: `
-        window.__rpcCalls = [];
-        window.__cloudState = ${JSON.stringify(initial)};
+        window.__rpcCalls = window.__rpcCalls || [];
         window.__wrongPin = false;
+        const initialCloudState = ${JSON.stringify(initial)};
+        const storedCloudState = sessionStorage.getItem('__qa_cloud_state');
+        window.__cloudState = storedCloudState ? JSON.parse(storedCloudState) : initialCloudState;
+        sessionStorage.setItem('__qa_cloud_state', JSON.stringify(window.__cloudState));
         window.supabase = {
           createClient: function(){
             return {
@@ -93,6 +96,7 @@ async function mockSupabase(page, initial = makeCloudState()) {
                   const data = JSON.parse(JSON.stringify(args.p_data));
                   data.updated_at = '2026-01-01T00:01:00.000Z';
                   window.__cloudState = data;
+                  sessionStorage.setItem('__qa_cloud_state', JSON.stringify(data));
                   return { data, error: null };
                 }
                 return { data: null, error: { message: 'unknown rpc' } };
@@ -214,7 +218,7 @@ test('T5/T6/T7/T16 push guards block failed credentials, empty overwrite, low-co
   await expect(page.locator('#toast')).toContainText('عبارة التأكيد غير صحيحة');
   await page.locator('#shade').click();
 
-  await page.evaluate(() => { window.__APP_TEST__.setState(window.__cloudState); window.__APP_TEST__.state.chalets[0].workerPhone = 'stale'; window.__APP_TEST__.forceDirty(); window.__cloudState.updated_at = '2026-01-01T00:05:00.000Z'; });
+  await page.evaluate(() => { window.__APP_TEST__.setState(window.__cloudState); window.__APP_TEST__.state.chalets[0].workerPhone = 'stale'; window.__APP_TEST__.forceDirty(); window.__cloudState.updated_at = '2026-01-01T00:05:00.000Z'; sessionStorage.setItem('__qa_cloud_state', JSON.stringify(window.__cloudState)); });
   await page.locator('#uploadBtn').click();
   await expect(page.locator('#toast')).toContainText('توجد نسخة أحدث في السحابة');
 });
