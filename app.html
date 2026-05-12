@@ -1,1 +1,384 @@
-<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>نظام الحجوزات</title><style>body{margin:0;background:#10141d;color:#fff7ec;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Tahoma,Arial,sans-serif;padding-bottom:80px}*{box-sizing:border-box}main{max-width:820px;margin:auto;padding:16px}.card{background:#1b2430;border:1px solid #3a495c;border-radius:18px;padding:16px;margin:12px 0}input,button,textarea{width:100%;border-radius:13px;border:1px solid #3a495c;background:#253142;color:#fff7ec;padding:13px;font:inherit;font-size:16px}button{font-weight:900;margin-top:8px}.gold{background:#d7b46a;color:#17120a;border:0}.row{display:grid;grid-template-columns:1fr 1fr;gap:10px}.muted{color:#c8b9aa;line-height:1.6}.hide{display:none!important}.tabs{position:fixed;bottom:0;left:0;right:0;display:grid;grid-template-columns:repeat(4,1fr);gap:4px;background:#10141d;border-top:1px solid #3a495c;padding:8px 6px max(12px,env(safe-area-inset-bottom))}.tabs button{font-size:12px;margin:0}.tab{display:none}.tab.on{display:block}.item{border:1px solid #3a495c;border-radius:14px;padding:12px;margin:8px 0;background:#17202b}.toast{position:fixed;top:12px;left:12px;right:12px;z-index:9;display:none;background:#1b2430;border:1px solid #3a495c;border-radius:14px;padding:12px}.toast.on{display:block}@media(max-width:650px){.row{grid-template-columns:1fr}}</style></head><body><div id="toast" class="toast"></div><main><section id="login" class="card"><h1>نظام الحجوزات</h1><p class="muted">رابط مباشر بدون تحويل. أدخل اليوزر/PIN.</p><div class="row"><input id="wk" placeholder="Workspace / اليوزر"><input id="pin" type="password" placeholder="PIN"></div><button class="gold" id="pullBtn">دخول / سحب البيانات</button><button id="newBtn">إنشاء مساحة جديدة فارغة</button><p id="msg" class="muted">إذا أول مرة استخدم إنشاء مساحة جديدة.</p></section><section id="app" class="hide"><div class="card"><h2 id="name">نظام الحجوزات</h2><p id="status" class="muted"></p><button class="gold" id="saveBtn">رفع التعديلات</button></div><section id="home" class="tab on"><div class="card"><h2>الرئيسية</h2><p id="count" class="muted"></p></div></section><section id="chalets" class="tab"><div class="card"><h2>الشاليهات</h2><input id="chName" placeholder="اسم الشاليه"><button id="addCh">إضافة شاليه</button><div id="chList"></div></div></section><section id="bookings" class="tab"><div class="card"><h2>الحجوزات</h2><input id="cuName" placeholder="اسم العميل"><input id="cuPhone" placeholder="الجوال"><button id="addBk">إضافة حجز سريع</button><div id="bkList"></div></div></section><section id="settings" class="tab"><div class="card"><h2>الإعدادات</h2><input id="facility" placeholder="اسم المنشأة"><button id="setBtn">حفظ الاسم</button><button id="outBtn">خروج</button></div></section></section></main><nav id="nav" class="tabs hide"><button data-t="home">الرئيسية</button><button data-t="bookings">الحجوزات</button><button data-t="chalets">الشاليهات</button><button data-t="settings">الإعدادات</button></nav><script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script><script>const URL='https://fkqidesfrtpwzjcimjoe.supabase.co',KEY='sb_publishable_Uks_PYr6aqY5wnNBjDjTgg_z2Ic6_al';let sb,ws='',pw='',data=blank(),loaded=false;function blank(){return{schema_version:3,updated_at:'',settings:{facility_name:'',tag:'',holidays:[]},chalets:[],bookings:[]}}function c(){if(!window.supabase)throw Error('Supabase لم يعمل. تأكد من الإنترنت.');return sb||(sb=supabase.createClient(URL,KEY))}function toast(x){toast.textContent=x;toast.className='toast on';setTimeout(()=>toast.className='toast',3000)}function clean(x){return String(x||'').trim().toUpperCase()}function read(){ws=clean(wk.value);pw=pin.value.trim();if(!ws||pw.length<4)throw Error('اكتب اليوزر وPIN من 4 خانات أو أكثر')}function norm(x){x=x||blank();x.settings=x.settings||{};x.chalets=Array.isArray(x.chalets)?x.chalets:[];x.bookings=Array.isArray(x.bookings)?x.bookings:[];return x}async function pull(){try{read();msg.textContent='جاري السحب...';let r=await c().rpc('get_shared_workspace',{p_workspace_key:ws,p_access_pin:pw});if(r.error)throw r.error;data=norm(r.data);openApp();toast('تم الدخول')}catch(e){msg.textContent='فشل: '+(e.message||e)}}async function create(){try{read();msg.textContent='جاري الإنشاء...';let r=await c().rpc('save_shared_workspace',{p_workspace_key:ws,p_access_pin:pw,p_data:blank()});if(r.error)throw r.error;data=norm(r.data);openApp();toast('تم إنشاء المساحة')}catch(e){msg.textContent='فشل الإنشاء: '+(e.message||e)}}async function save(){try{let r=await c().rpc('save_shared_workspace',{p_workspace_key:ws,p_access_pin:pw,p_data:data});if(r.error)throw r.error;data=norm(r.data);render();toast('تم الرفع')}catch(e){toast('فشل الرفع: '+(e.message||e))}}function openApp(){login.classList.add('hide');app.classList.remove('hide');nav.classList.remove('hide');loaded=true;render()}function render(){name.textContent=data.settings.facility_name||'نظام الحجوزات';status.textContent='متصل: '+ws;count.textContent='الشاليهات: '+data.chalets.length+' / الحجوزات: '+data.bookings.length;facility.value=data.settings.facility_name||'';chList.innerHTML=data.chalets.map((x,i)=>'<div class=item>'+x.name+' <button onclick="delCh('+i+')">حذف</button></div>').join('')||'<p class=muted>لا توجد شاليهات</p>';bkList.innerHTML=data.bookings.map((x,i)=>'<div class=item>'+x.customer_name+' - '+x.customer_phone+' <button onclick="delBk('+i+')">حذف</button></div>').join('')||'<p class=muted>لا توجد حجوزات</p>'}function id(){return Date.now().toString(36)+Math.random().toString(36).slice(2)}function addChalet(){if(!chName.value.trim())return toast('اكتب اسم الشاليه');data.chalets.push({id:id(),name:chName.value.trim(),capacity:0,description:'',contactPhone:'',workerPhone:'',workerName:'',mapUrl:'',terms:'',periods:[],deleted_at:null,updated_at:new Date().toISOString()});chName.value='';render()}function addBooking(){if(!cuName.value.trim())return toast('اكتب اسم العميل');data.bookings.push({id:id(),customer_name:cuName.value.trim(),customer_phone:cuPhone.value.trim(),chalet_id:data.chalets[0]?.id||'',booking_date:new Date().toISOString().slice(0,10),period_id:'',guests:1,total:0,paid:0,status:'confirmed',notes:'',deleted_at:null,created_at:new Date().toISOString(),updated_at:new Date().toISOString()});cuName.value='';cuPhone.value='';render()}function delCh(i){data.chalets.splice(i,1);render()}function delBk(i){data.bookings.splice(i,1);render()}pullBtn.onclick=pull;newBtn.onclick=create;saveBtn.onclick=save;addCh.onclick=addChalet;addBk.onclick=addBooking;setBtn.onclick=()=>{data.settings.facility_name=facility.value.trim();render()};outBtn.onclick=()=>location.reload();document.querySelectorAll('[data-t]').forEach(b=>b.onclick=()=>{document.querySelectorAll('.tab').forEach(x=>x.classList.remove('on'));document.getElementById(b.dataset.t).classList.add('on')});</script></body></html>
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <title>نظام الحجوزات</title>
+  <style>
+    :root{--bg:#10141d;--card:#1b2430;--card2:#253142;--line:#3a495c;--txt:#fff7ec;--muted:#c8b9aa;--gold:#d7b46a;--red:#e06b61;--ok:#77b26d}*{box-sizing:border-box}html,body{margin:0;direction:rtl;background:var(--bg);color:var(--txt);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Tahoma,Arial,sans-serif}body{padding-bottom:86px}main{max-width:860px;margin:auto;padding:16px}.card,.item{background:#1b2430;border:1px solid var(--line);border-radius:18px;padding:16px;margin:12px 0}input,button,select{width:100%;border-radius:13px;border:1px solid var(--line);background:var(--card2);color:var(--txt);padding:13px;font:inherit;font-size:16px}button{font-weight:900;margin-top:8px}.gold{background:var(--gold);color:#17120a;border:0}.danger{border-color:rgba(224,107,97,.55);color:var(--red)}.row{display:grid;grid-template-columns:1fr 1fr;gap:10px}.muted{color:var(--muted);line-height:1.6}.hide{display:none!important}.tabs{position:fixed;bottom:0;left:0;right:0;display:grid;grid-template-columns:repeat(4,1fr);gap:4px;background:#10141d;border-top:1px solid var(--line);padding:8px 6px max(12px,env(safe-area-inset-bottom));z-index:10}.tabs button{font-size:12px;margin:0}.tabs button.active{background:rgba(215,180,106,.18);border-color:var(--gold)}.tab{display:none}.tab.on{display:block}.toast{position:fixed;top:12px;left:12px;right:12px;z-index:20;display:none;background:#1b2430;border:1px solid var(--line);border-radius:14px;padding:12px}.toast.on{display:block}.ok{border-color:var(--ok)}.bad{border-color:var(--red)}.ltr{direction:ltr;text-align:left}.pill{display:inline-block;border:1px solid var(--line);border-radius:999px;padding:4px 9px;color:var(--muted);font-size:12px}.mini{width:auto;min-width:70px;padding:8px 10px;font-size:13px}.actions{display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap}@media(max-width:650px){.row{grid-template-columns:1fr}}
+  </style>
+</head>
+<body>
+  <div id="toastBox" class="toast"></div>
+  <main>
+    <section id="loginView" class="card">
+      <h1>نظام الحجوزات</h1>
+      <p class="muted">رابط مباشر بدون تحويل. أدخل اليوزر/PIN. هذه الصفحة لا تعتمد على تحويلات ولا أيقونات وهمية.</p>
+      <div class="row">
+        <input id="workspaceInput" class="ltr" placeholder="Workspace / اليوزر مثل ALI6" autocomplete="off">
+        <input id="pinInput" class="ltr" type="password" placeholder="PIN" autocomplete="off">
+      </div>
+      <button id="pullButton" class="gold">دخول / سحب البيانات</button>
+      <button id="createButton">إنشاء مساحة جديدة فارغة</button>
+      <p id="messageBox" class="muted">إذا أول مرة: اضغط إنشاء مساحة جديدة فارغة.</p>
+    </section>
+
+    <section id="appView" class="hide">
+      <div class="card">
+        <h2 id="facilityTitle">نظام الحجوزات</h2>
+        <p id="syncStatus" class="muted"></p>
+        <button id="uploadButton" class="gold">رفع التعديلات</button>
+      </div>
+
+      <section id="tab-home" class="tab on">
+        <div class="card">
+          <h2>الرئيسية</h2>
+          <p id="summaryText" class="muted"></p>
+          <div id="recentList"></div>
+        </div>
+      </section>
+
+      <section id="tab-bookings" class="tab">
+        <div class="card">
+          <h2>الحجوزات</h2>
+          <input id="customerNameInput" placeholder="اسم العميل">
+          <input id="customerPhoneInput" class="ltr" placeholder="الجوال">
+          <select id="bookingChaletSelect"></select>
+          <button id="addBookingButton">إضافة حجز سريع</button>
+          <div id="bookingList"></div>
+        </div>
+      </section>
+
+      <section id="tab-chalets" class="tab">
+        <div class="card">
+          <h2>الشاليهات</h2>
+          <input id="chaletNameInput" placeholder="اسم الشاليه">
+          <button id="addChaletButton">إضافة شاليه</button>
+          <div id="chaletList"></div>
+        </div>
+      </section>
+
+      <section id="tab-settings" class="tab">
+        <div class="card">
+          <h2>الإعدادات</h2>
+          <input id="facilityInput" placeholder="اسم المنشأة">
+          <button id="saveSettingsButton">حفظ الاسم محليًا</button>
+          <button id="logoutButton" class="danger">خروج</button>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <nav id="bottomNav" class="tabs hide">
+    <button type="button" class="active" data-tab="home">الرئيسية</button>
+    <button type="button" data-tab="bookings">الحجوزات</button>
+    <button type="button" data-tab="chalets">الشاليهات</button>
+    <button type="button" data-tab="settings">الإعدادات</button>
+  </nav>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script>
+  (() => {
+    'use strict';
+
+    const SUPABASE_URL = 'https://fkqidesfrtpwzjcimjoe.supabase.co';
+    const SUPABASE_KEY = 'sb_publishable_Uks_PYr6aqY5wnNBjDjTgg_z2Ic6_al';
+    const CREDENTIAL_KEY = 'direct_booking_credentials_v2';
+
+    const el = (id) => document.getElementById(id);
+    const els = {
+      toast: el('toastBox'), login: el('loginView'), app: el('appView'), nav: el('bottomNav'),
+      workspace: el('workspaceInput'), pin: el('pinInput'), msg: el('messageBox'),
+      pull: el('pullButton'), create: el('createButton'), upload: el('uploadButton'),
+      facilityTitle: el('facilityTitle'), status: el('syncStatus'), summary: el('summaryText'),
+      recent: el('recentList'), chName: el('chaletNameInput'), addCh: el('addChaletButton'), chList: el('chaletList'),
+      cuName: el('customerNameInput'), cuPhone: el('customerPhoneInput'), chaletSelect: el('bookingChaletSelect'), addBk: el('addBookingButton'), bkList: el('bookingList'),
+      facility: el('facilityInput'), saveSettings: el('saveSettingsButton'), logout: el('logoutButton')
+    };
+
+    let supabaseClient = null;
+    let workspaceKey = '';
+    let accessPin = '';
+    let dirty = false;
+    let data = blankDocument();
+
+    function blankDocument() {
+      return {
+        schema_version: 3,
+        updated_at: '',
+        settings: { facility_name: '', tag: '', holidays: [] },
+        chalets: [],
+        bookings: []
+      };
+    }
+
+    function uid() {
+      return (crypto.randomUUID && crypto.randomUUID()) || (Date.now().toString(36) + Math.random().toString(36).slice(2));
+    }
+
+    function client() {
+      if (!window.supabase || !window.supabase.createClient) {
+        throw new Error('مكتبة Supabase لم تعمل. تأكد من الإنترنت ثم حدث الصفحة.');
+      }
+      if (!supabaseClient) supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+      return supabaseClient;
+    }
+
+    function showToast(text, bad = false) {
+      els.toast.textContent = text;
+      els.toast.className = 'toast on ' + (bad ? 'bad' : 'ok');
+      clearTimeout(showToast.timer);
+      showToast.timer = setTimeout(() => { els.toast.className = 'toast'; }, 3200);
+    }
+
+    function setMessage(text, bad = false) {
+      els.msg.textContent = text;
+      els.msg.style.color = bad ? 'var(--red)' : 'var(--muted)';
+    }
+
+    function normalizeWorkspaceKey(value) {
+      return String(value || '').trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '');
+    }
+
+    function readInputs() {
+      workspaceKey = normalizeWorkspaceKey(els.workspace.value);
+      accessPin = String(els.pin.value || '').trim();
+      if (!workspaceKey || accessPin.length < 4) {
+        throw new Error('اكتب اليوزر وPIN من 4 خانات أو أكثر.');
+      }
+    }
+
+    function normalize(input) {
+      const source = input && typeof input === 'object' ? input : blankDocument();
+      return {
+        schema_version: 3,
+        updated_at: String(source.updated_at || ''),
+        settings: {
+          facility_name: String(source.settings?.facility_name || ''),
+          tag: String(source.settings?.tag || ''),
+          holidays: Array.isArray(source.settings?.holidays) ? source.settings.holidays : []
+        },
+        chalets: Array.isArray(source.chalets) ? source.chalets.map((c) => ({
+          id: String(c.id || uid()),
+          name: String(c.name || ''),
+          capacity: Number(c.capacity || 0),
+          description: String(c.description || ''),
+          contactPhone: String(c.contactPhone || ''),
+          workerPhone: String(c.workerPhone || ''),
+          workerName: String(c.workerName || ''),
+          mapUrl: String(c.mapUrl || ''),
+          terms: String(c.terms || ''),
+          periods: Array.isArray(c.periods) ? c.periods : [],
+          deleted_at: c.deleted_at || null,
+          updated_at: String(c.updated_at || new Date().toISOString())
+        })) : [],
+        bookings: Array.isArray(source.bookings) ? source.bookings.map((b) => ({
+          id: String(b.id || uid()),
+          customer_name: String(b.customer_name || ''),
+          customer_phone: String(b.customer_phone || ''),
+          chalet_id: String(b.chalet_id || ''),
+          booking_date: String(b.booking_date || new Date().toISOString().slice(0, 10)),
+          period_id: String(b.period_id || ''),
+          guests: Number(b.guests || 1),
+          total: Number(b.total || 0),
+          paid: Number(b.paid || 0),
+          status: String(b.status || 'confirmed'),
+          notes: String(b.notes || ''),
+          deleted_at: b.deleted_at || null,
+          created_at: String(b.created_at || new Date().toISOString()),
+          updated_at: String(b.updated_at || new Date().toISOString())
+        })) : []
+      };
+    }
+
+    function activeChalets() { return data.chalets.filter((x) => !x.deleted_at); }
+    function activeBookings() { return data.bookings.filter((x) => !x.deleted_at); }
+
+    async function pullWorkspace() {
+      try {
+        readInputs();
+        setMessage('جاري سحب البيانات...');
+        els.pull.disabled = true;
+        const response = await client().rpc('get_shared_workspace', {
+          p_workspace_key: workspaceKey,
+          p_access_pin: accessPin
+        });
+        if (response.error) throw response.error;
+        data = normalize(response.data);
+        localStorage.setItem(CREDENTIAL_KEY, JSON.stringify({ workspaceKey, accessPin }));
+        dirty = false;
+        openApp();
+        showToast('تم الدخول وسحب البيانات.');
+      } catch (error) {
+        setMessage('فشل الدخول: ' + friendlyError(error), true);
+      } finally {
+        els.pull.disabled = false;
+      }
+    }
+
+    async function createWorkspace() {
+      try {
+        readInputs();
+        setMessage('جاري إنشاء مساحة جديدة...');
+        els.create.disabled = true;
+        const response = await client().rpc('save_shared_workspace', {
+          p_workspace_key: workspaceKey,
+          p_access_pin: accessPin,
+          p_data: blankDocument()
+        });
+        if (response.error) throw response.error;
+        data = normalize(response.data || blankDocument());
+        localStorage.setItem(CREDENTIAL_KEY, JSON.stringify({ workspaceKey, accessPin }));
+        dirty = false;
+        openApp();
+        showToast('تم إنشاء مساحة جديدة فارغة.');
+      } catch (error) {
+        setMessage('فشل الإنشاء: ' + friendlyError(error), true);
+      } finally {
+        els.create.disabled = false;
+      }
+    }
+
+    function friendlyError(error) {
+      const message = String(error?.message || error || 'خطأ غير معروف');
+      if (message.includes('Could not find') || message.includes('get_shared_workspace') || message.includes('save_shared_workspace')) {
+        return 'دوال Supabase غير موجودة. شغّل ملف database/shared_workspace_sync.sql في Supabase.';
+      }
+      if (message.includes('WORKSPACE_NOT_FOUND_OR_PIN_INVALID')) {
+        return 'المساحة غير موجودة أو الرقم السري خطأ. إذا أول مرة اضغط إنشاء مساحة جديدة.';
+      }
+      return message;
+    }
+
+    function openApp() {
+      els.login.classList.add('hide');
+      els.app.classList.remove('hide');
+      els.nav.classList.remove('hide');
+      render();
+    }
+
+    async function uploadData() {
+      try {
+        if (!workspaceKey || !accessPin) throw new Error('لا توجد مساحة مرتبطة.');
+        els.upload.disabled = true;
+        const response = await client().rpc('save_shared_workspace', {
+          p_workspace_key: workspaceKey,
+          p_access_pin: accessPin,
+          p_data: data
+        });
+        if (response.error) throw response.error;
+        data = normalize(response.data || data);
+        dirty = false;
+        render();
+        showToast('تم رفع التعديلات.');
+      } catch (error) {
+        showToast('فشل الرفع: ' + friendlyError(error), true);
+      } finally {
+        els.upload.disabled = false;
+      }
+    }
+
+    function markDirty() {
+      dirty = true;
+      render();
+    }
+
+    function render() {
+      const chalets = activeChalets();
+      const bookings = activeBookings();
+      els.facilityTitle.textContent = data.settings.facility_name || 'نظام الحجوزات';
+      els.status.textContent = (dirty ? 'تعديلات غير مرفوعة · ' : 'متصل · ') + workspaceKey;
+      els.summary.textContent = 'الشاليهات: ' + chalets.length + ' / الحجوزات: ' + bookings.length;
+      els.facility.value = data.settings.facility_name || '';
+      els.upload.disabled = !dirty;
+
+      els.chaletSelect.innerHTML = chalets.map((c) => '<option value="' + escapeHtml(c.id) + '">' + escapeHtml(c.name) + '</option>').join('');
+      els.chList.innerHTML = chalets.length ? chalets.map((c) => renderChalet(c)).join('') : '<p class="muted">لا توجد شاليهات</p>';
+      els.bkList.innerHTML = bookings.length ? bookings.map((b) => renderBooking(b)).join('') : '<p class="muted">لا توجد حجوزات</p>';
+      els.recent.innerHTML = bookings.slice(0, 4).map((b) => renderBooking(b)).join('') || '<p class="muted">لا توجد حجوزات</p>';
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
+    }
+
+    function renderChalet(chalet) {
+      return '<div class="item"><div class="actions"><div><b>' + escapeHtml(chalet.name) + '</b><br><span class="pill">ID: ' + escapeHtml(chalet.id.slice(0, 8)) + '</span></div><button class="mini danger" data-delete-chalet="' + escapeHtml(chalet.id) + '">حذف</button></div></div>';
+    }
+
+    function renderBooking(booking) {
+      const chalet = data.chalets.find((c) => c.id === booking.chalet_id);
+      return '<div class="item"><div class="actions"><div><b>' + escapeHtml(booking.customer_name) + '</b><br><span class="pill">' + escapeHtml(chalet?.name || 'بدون شاليه') + '</span> <span class="pill">' + escapeHtml(booking.booking_date) + '</span></div><button class="mini danger" data-delete-booking="' + escapeHtml(booking.id) + '">حذف</button></div></div>';
+    }
+
+    function addChalet() {
+      const name = els.chName.value.trim();
+      if (!name) return showToast('اكتب اسم الشاليه.', true);
+      data.chalets.push({
+        id: uid(), name, capacity: 0, description: '', contactPhone: '', workerPhone: '', workerName: '', mapUrl: '', terms: '', periods: [], deleted_at: null, updated_at: new Date().toISOString()
+      });
+      els.chName.value = '';
+      markDirty();
+      showToast('تمت إضافة الشاليه محليًا.');
+    }
+
+    function addBooking() {
+      const customerName = els.cuName.value.trim();
+      if (!customerName) return showToast('اكتب اسم العميل.', true);
+      const chalets = activeChalets();
+      data.bookings.push({
+        id: uid(), customer_name: customerName, customer_phone: els.cuPhone.value.trim(), chalet_id: els.chaletSelect.value || chalets[0]?.id || '', booking_date: new Date().toISOString().slice(0, 10), period_id: '', guests: 1, total: 0, paid: 0, status: 'confirmed', notes: '', deleted_at: null, created_at: new Date().toISOString(), updated_at: new Date().toISOString()
+      });
+      els.cuName.value = '';
+      els.cuPhone.value = '';
+      markDirty();
+      showToast('تمت إضافة الحجز محليًا.');
+    }
+
+    function deleteChalet(id) {
+      data.chalets = data.chalets.filter((c) => c.id !== id);
+      data.bookings = data.bookings.filter((b) => b.chalet_id !== id);
+      markDirty();
+    }
+
+    function deleteBooking(id) {
+      data.bookings = data.bookings.filter((b) => b.id !== id);
+      markDirty();
+    }
+
+    function showTab(name) {
+      document.querySelectorAll('.tab').forEach((tab) => tab.classList.remove('on'));
+      const target = el('tab-' + name);
+      if (target) target.classList.add('on');
+      document.querySelectorAll('[data-tab]').forEach((button) => button.classList.toggle('active', button.dataset.tab === name));
+    }
+
+    els.pull.addEventListener('click', pullWorkspace);
+    els.create.addEventListener('click', createWorkspace);
+    els.upload.addEventListener('click', uploadData);
+    els.addCh.addEventListener('click', addChalet);
+    els.addBk.addEventListener('click', addBooking);
+    els.saveSettings.addEventListener('click', () => { data.settings.facility_name = els.facility.value.trim(); markDirty(); showToast('تم حفظ الاسم محليًا.'); });
+    els.logout.addEventListener('click', () => { localStorage.removeItem(CREDENTIAL_KEY); location.reload(); });
+
+    document.addEventListener('click', (event) => {
+      const tabButton = event.target.closest('[data-tab]');
+      if (tabButton) showTab(tabButton.dataset.tab);
+
+      const deleteChaletButton = event.target.closest('[data-delete-chalet]');
+      if (deleteChaletButton) deleteChalet(deleteChaletButton.dataset.deleteChalet);
+
+      const deleteBookingButton = event.target.closest('[data-delete-booking]');
+      if (deleteBookingButton) deleteBooking(deleteBookingButton.dataset.deleteBooking);
+    });
+
+    try {
+      const saved = JSON.parse(localStorage.getItem(CREDENTIAL_KEY) || '{}');
+      if (saved.workspaceKey) els.workspace.value = saved.workspaceKey;
+      if (saved.accessPin) els.pin.value = saved.accessPin;
+    } catch {}
+  })();
+  </script>
+</body>
+</html>
