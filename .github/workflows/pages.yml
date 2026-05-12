@@ -1,4 +1,4 @@
-name: Deploy app only
+name: Deploy clean root app
 
 on:
   push:
@@ -18,17 +18,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Build clean artifact
+      - name: Build clean root artifact
         run: |
           rm -rf dist
-          mkdir -p dist/app
-          cp -R app/* dist/app/
+          mkdir -p dist
+          cp index.html dist/index.html
           cp 404.html dist/404.html
           find dist -maxdepth 4 -type f | sort
-          test -f dist/app/index.html
-          test -f dist/app/manifest.webmanifest
+          test -f dist/index.html
           test -f dist/404.html
-          test ! -e dist/index.html
+          test ! -e dist/app
           test ! -e dist/app.html
           test ! -e dist/cloud.html
           test ! -e dist/clean.html
@@ -36,6 +35,8 @@ jobs:
           test ! -e dist/app-release
           test ! -e dist/sync-cloud
           test ! -e dist/archive
+          test ! -e dist/manifest.webmanifest
+          test ! -e dist/sw.js
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
