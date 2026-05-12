@@ -1,30 +1,69 @@
 # Data Safety Policy
 
-## Non-negotiable rules
+Final production route: `/app/`.
 
-1. No seed data before cloud pull.
-2. No automatic push on app boot.
-3. No push before a successful workspace pull.
-4. No email login, Magic Link, SMTP, or Supabase Auth session for the final app.
-5. No recovery page as the production user interface.
-6. No overwrite of existing cloud data with an empty local state.
-7. Backup local state before any cloud push.
-8. Backup local state before any JSON import.
-9. JSON import never pushes automatically.
-10. Old experimental links should not be given to users.
+The production app is intentionally conservative. The highest priority is preventing a browser page from overwriting real cloud data with empty, stale, or legacy local data.
 
-## Empty overwrite guard
+## R1 — No seed data
 
-Before calling `save_shared_workspace`, the app compares current local counts with the last cloud counts. If the current state has zero active chalets and zero active bookings while the last cloud state had data, the upload is blocked.
+The app never creates demo chalets, demo bookings, demo periods, or fallback customer data. If a workspace is empty, the UI remains empty and shows an Arabic message.
 
-## Large data reduction guard
+## R2 — No recovery UI in production
 
-If the current local booking count is much lower than the last cloud booking count, the app requires a typed confirmation before upload.
+The production route has no localStorage scanner, no recovery page, no restore page, and no "adopt best candidate" flow. Legacy recovery code is excluded from the Pages artifact.
 
-## What local cache means
+## R3 — No push before successful pull
 
-Local storage is cache only. The source of truth is the workspace JSON returned by Supabase RPC.
+`save_shared_workspace` may not be called unless all of these are true in the current browser session:
 
-## Import behavior
+- `workspaceKey` is set.
+- `accessPin` is set.
+- `workspaceLoaded === true`.
+- `lastCloudPullAt` is set from a successful pull.
+- `lastCloudCounts` is known.
 
-Importing a JSON file updates the screen/local cache only. It never uploads until the user explicitly clicks upload and passes the safety checks.
+If any condition is false, upload is blocked client-side with an Arabic message.
+
+## R4 — Empty overwrite guard
+
+Before upload, the app compares local counts against the most recent cloud counts. If local data has zero active chalets and zero active bookings while the last cloud pull had data, upload is blocked with:
+
+```text
+تم إيقاف الرفع: البيانات المحلية فارغة وستحذف بيانات السحابة.
+```
+
+## R5 — Low-count destructive guard
+
+If chalets drop by at least one, or bookings drop by at least 20% and at least three records, the user must type exactly:
+
+```text
+أؤكد استبدال بيانات السحابة
+```
+
+A normal browser confirm dialog is not used.
+
+## R6 — Backup before push
+
+Immediately before cloud upload, the app writes a local backup under:
+
+```text
+backup_before_cloud_push_<ISO timestamp>
+```
+
+The backup contains workspace key, counts, data, and timestamp. The app keeps the latest ten push backups.
+
+## R7 — Import never auto-pushes
+
+No JSON import path exists on the production landing route. If a future internal import tool is added, it must load to screen/cache only and must never upload without a separate post-review upload action.
+
+## R8 — No auto push on boot
+
+On load, the app either shows the connect screen or performs a pull only if saved credentials exist. It never pushes on boot, focus, visibility changes, reconnect, or timer. There is no periodic upload loop.
+
+## R9 — Concurrent edit safety
+
+Each pull captures the cloud `updated_at`. Immediately before upload, the app performs a fresh `get_shared_workspace` call. If cloud `updated_at` advanced, upload is blocked and the user must pull and review first.
+
+## Source of truth
+
+The source of truth is `shared_workspaces.data` returned by Supabase RPC. LocalStorage is only cache and safety backup.
