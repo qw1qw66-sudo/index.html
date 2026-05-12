@@ -111,9 +111,14 @@ async function loadApp(page, initial) {
 }
 
 async function connect(page, pin = '1234') {
+  await expect(page.locator('#connectView')).toBeVisible();
   await page.locator('#workspaceKey').fill('ALI6');
   await page.locator('#accessPin').fill(pin);
   await page.locator('#connectBtn').click();
+}
+
+async function openTab(page, name) {
+  await page.locator(`.tabs [data-view="${name}"]`).click();
 }
 
 test('T1 app opens on /app/ with no seed and no upload attempted', async ({ page }) => {
@@ -133,6 +138,7 @@ test('T2/T3 valid pull shows data and wrong pin leaks no partial data', async ({
   await expect(page.locator('body')).toContainText('Tulum');
   await expect(page.locator('body')).toContainText('Sky');
 
+  await page.evaluate(() => localStorage.clear());
   await page.goto('/app/');
   await connect(page, 'wrong');
   await expect(page.locator('#connectMsg')).toContainText('WORKSPACE_NOT_FOUND_OR_PIN_INVALID');
@@ -142,7 +148,7 @@ test('T2/T3 valid pull shows data and wrong pin leaks no partial data', async ({
 test('T4/T8/T9/T10 edits preserve names, per-chalet fields, period id and prices after push/pull', async ({ page }) => {
   await loadApp(page);
   await connect(page);
-  await page.locator('[data-view="chalets"]').click();
+  await openTab(page, 'chalets');
   await page.locator('[data-edit-chalet="tulum"]').click();
   await page.locator('#chWorkerPhone').fill('0555555555');
   await page.locator('[data-pweekday]').first().fill('777');
@@ -155,7 +161,7 @@ test('T4/T8/T9/T10 edits preserve names, per-chalet fields, period id and prices
   await page.locator('#uploadBtn').click();
   await expect(page.locator('#toast')).toContainText('تم رفع');
   await page.reload();
-  await connect(page);
+  await expect(page.locator('#appView')).toBeVisible();
   await expect(page.locator('body')).toContainText('Tulum');
   await expect(page.locator('body')).toContainText('Sky');
   const cloud = await page.evaluate(() => window.__cloudState);
@@ -206,6 +212,7 @@ test('T5/T6/T7/T16 push guards block failed credentials, empty overwrite, low-co
   await page.locator('#confirmPhrase').fill('wrong phrase');
   await page.locator('#confirmPushBtn').click();
   await expect(page.locator('#toast')).toContainText('عبارة التأكيد غير صحيحة');
+  await page.locator('#shade').click();
 
   await page.evaluate(() => { window.__APP_TEST__.setState(window.__cloudState); window.__APP_TEST__.state.chalets[0].workerPhone = 'stale'; window.__APP_TEST__.forceDirty(); window.__cloudState.updated_at = '2026-01-01T00:05:00.000Z'; });
   await page.locator('#uploadBtn').click();
@@ -215,7 +222,7 @@ test('T5/T6/T7/T16 push guards block failed credentials, empty overwrite, low-co
 test('T11/T12 conflict blocks overlap and allows non-overlap', async ({ page }) => {
   await loadApp(page);
   await connect(page);
-  await page.locator('[data-view="bookings"]').click();
+  await openTab(page, 'bookings');
   await page.locator('#fab').click();
   await page.locator('#bkName').fill('Other Customer');
   await page.locator('#bkPhone').fill('0511111111');
@@ -230,10 +237,13 @@ test('T11/T12 conflict blocks overlap and allows non-overlap', async ({ page }) 
 });
 
 test('T13/T14 voucher uses same chalet fields and share/copy fallback works', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'share', { value: undefined, configurable: true });
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText: async (text) => { window.__copiedVoucher = text; } }, configurable: true });
+  });
   await loadApp(page);
-  await page.addInitScript(() => { delete navigator.share; navigator.clipboard = { writeText: async (text) => { window.__copiedVoucher = text; } }; });
   await connect(page);
-  await page.locator('[data-view="bookings"]').click();
+  await openTab(page, 'bookings');
   await page.locator('#bookingList [data-voucher="booking-1"]').click();
   await expect(page.locator('#voucherBox')).toContainText('Tulum');
   await expect(page.locator('#voucherBox')).toContainText('Tulum Worker');
@@ -248,6 +258,7 @@ test('T13/T14 voucher uses same chalet fields and share/copy fallback works', as
 });
 
 test('T17/T18 static source and route checks', async ({ page }) => {
+  await mockSupabase(page);
   await page.goto('/app/');
   const html = await page.content();
   expect(html).not.toContain('service_role');
