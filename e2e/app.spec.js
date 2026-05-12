@@ -143,7 +143,7 @@ test('voucher hides booking id and internal notes while showing chalet-specific 
   await loadFinal(page);
   await connectWorkspace(page);
   await page.locator('.tab [data-view="bookings"]').click();
-  await page.locator('[data-voucher="booking-1"]').click();
+  await page.locator('#bookingList [data-voucher="booking-1"]').click();
   await expect(page.locator('#voucherBox')).toContainText('تولوم');
   await expect(page.locator('#voucherBox')).toContainText('عامل تولوم');
   await expect(page.locator('#voucherBox')).toContainText('https://maps.example/tulum');
