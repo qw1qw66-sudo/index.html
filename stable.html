@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>نظام الحجوزات المستقر</title>
+<style>
+:root{--bg:#10141d;--card:#1b2430;--card2:#253142;--line:#3a495c;--txt:#fff7ec;--muted:#c8b9aa;--gold:#d7b46a;--red:#e06b61;--ok:#77b26d}*{box-sizing:border-box}html,body{margin:0;direction:rtl;background:var(--bg);color:var(--txt);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Tahoma,Arial,sans-serif}body{padding:16px 16px 92px}main{max-width:820px;margin:auto}.card,.item{background:#1b2430;border:1px solid var(--line);border-radius:18px;padding:16px;margin:12px 0}h1,h2{margin:6px 0 10px}.muted{color:var(--muted);line-height:1.6}.row{display:grid;grid-template-columns:1fr 1fr;gap:10px}input,select,button,textarea{width:100%;border:1px solid var(--line);border-radius:14px;background:var(--card2);color:var(--txt);padding:13px;font:inherit;font-size:16px}button{font-weight:900;margin-top:8px}.primary{background:var(--gold);color:#17120a;border:0}.danger{border-color:rgba(224,107,97,.6);color:var(--red)}.ltr{direction:ltr;text-align:left}.hide{display:none!important}.tabs{position:fixed;bottom:0;left:0;right:0;display:grid;grid-template-columns:repeat(4,1fr);gap:4px;background:#10141d;border-top:1px solid var(--line);padding:8px 6px max(14px,env(safe-area-inset-bottom));z-index:10}.tabs button{font-size:12px;margin:0;min-height:48px}.tabs button.active{border-color:var(--gold);background:rgba(215,180,106,.16)}.tab{display:none}.tab.active{display:block}.toast{display:none;position:fixed;top:max(12px,env(safe-area-inset-top));left:12px;right:12px;z-index:30;border:1px solid var(--line);border-radius:14px;background:#1b2430;padding:12px}.toast.show{display:block}.toast.good{border-color:var(--ok)}.toast.bad{border-color:var(--red)}.actions{display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap}.mini{width:auto;min-width:70px;padding:8px 10px;font-size:13px}.pill{display:inline-block;border:1px solid var(--line);border-radius:999px;padding:4px 9px;color:var(--muted);font-size:12px}.empty{text-align:center;color:var(--muted);padding:22px 8px}@media(max-width:650px){.row{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div id="toast" class="toast"></div>
+<main>
+<section id="login" class="card">
+<h1>نظام الحجوزات المستقر</h1>
+<p class="muted">هذه الصفحة لا تستخدم تحويلات ولا مكتبة Supabase خارجية. الأزرار تعمل مباشرة، والربط يتم عبر fetch إلى RPC.</p>
+<div class="row">
+<input id="workspace" class="ltr" placeholder="Workspace / اليوزر مثل ALI6" autocomplete="off">
+<input id="pin" class="ltr" type="password" placeholder="PIN" autocomplete="off">
+</div>
+<button id="pullBtn" class="primary" type="button">دخول / سحب البيانات</button>
+<button id="createBtn" type="button">إنشاء مساحة جديدة فارغة</button>
+<p id="msg" class="muted">جاهز. إذا كانت أول مرة استخدم إنشاء مساحة جديدة فارغة.</p>
+</section>
+<section id="app" class="hide">
+<div class="card">
+<div class="actions"><div><h2 id="facilityTitle">نظام الحجوزات</h2><p id="status" class="muted">—</p></div><button id="uploadBtn" class="primary" type="button" disabled>رفع التعديلات</button></div>
+</div>
+<section id="tab-home" class="tab active"><div class="card"><h2>الرئيسية</h2><p id="summary" class="muted"></p><div id="recent"></div></div></section>
+<section id="tab-bookings" class="tab"><div class="card"><h2>الحجوزات</h2><input id="customerName" placeholder="اسم العميل"><input id="customerPhone" class="ltr" placeholder="جوال العميل"><select id="bookingChalet"></select><button id="addBookingBtn" type="button">إضافة حجز محلي</button><div id="bookingList"></div></div></section>
+<section id="tab-chalets" class="tab"><div class="card"><h2>الشاليهات</h2><input id="chaletName" placeholder="اسم الشاليه"><button id="addChaletBtn" type="button">إضافة شاليه محلي</button><div id="chaletList"></div></div></section>
+<section id="tab-settings" class="tab"><div class="card"><h2>الإعدادات</h2><input id="facilityName" placeholder="اسم المنشأة"><button id="saveSettingsBtn" type="button">حفظ الاسم محليًا</button><button id="logoutBtn" class="danger" type="button">خروج</button></div></section>
+</section>
+</main>
+<nav id="nav" class="tabs hide"><button class="active" type="button" data-tab="home">الرئيسية</button><button type="button" data-tab="bookings">الحجوزات</button><button type="button" data-tab="chalets">الشاليهات</button><button type="button" data-tab="settings">الإعدادات</button></nav>
+<script>
+(function(){
+'use strict';
+var SUPABASE_URL='https://fkqidesfrtpwzjcimjoe.supabase.co';
+var SUPABASE_KEY='sb_publishable_Uks_PYr6aqY5wnNBjDjTgg_z2Ic6_al';
+var STORAGE_KEY='stable_booking_credentials_v1';
+var workspace='',pin='',dirty=false,cloudUpdatedAt='',doc=blankDoc();
+function el(id){return document.getElementById(id)}
+function blankDoc(){return{schema_version:3,updated_at:'',settings:{facility_name:'',tag:'',holidays:[]},chalets:[],bookings:[]}}
+function uuid(){return (crypto&&crypto.randomUUID)?crypto.randomUUID():String(Date.now())+Math.random().toString(36).slice(2)}
+function clean(v){return String(v||'').trim().toUpperCase().replace(/[^A-Z0-9_-]/g,'')}
+function escapeHtml(v){return String(v==null?'':v).replace(/[&<>"']/g,function(c){return({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]})}
+function toast(text,bad){var t=el('toast');t.textContent=text;t.className='toast show '+(bad?'bad':'good');clearTimeout(toast.timer);toast.timer=setTimeout(function(){t.className='toast'},3500)}
+function message(text,bad){el('msg').textContent=text;el('msg').style.color=bad?'var(--red)':'var(--muted)'}
+function readCreds(){workspace=clean(el('workspace').value);pin=String(el('pin').value||'').trim();if(!workspace||pin.length<4)throw new Error('اكتب اليوزر وPIN من 4 خانات أو أكثر.')}
+async function rpc(functionName,payload){
+ var response=await fetch(SUPABASE_URL+'/rest/v1/rpc/'+functionName,{method:'POST',headers:{'apikey':SUPABASE_KEY,'Authorization':'Bearer '+SUPABASE_KEY,'Content-Type':'application/json'},body:JSON.stringify(payload)});
+ var text=await response.text();
+ var parsed=null;try{parsed=text?JSON.parse(text):null}catch(e){parsed=text}
+ if(!response.ok){var msg=(parsed&&parsed.message)||String(parsed||text||response.status);throw new Error(msg)}
+ return parsed;
+}
+function normalize(src){src=(src&&typeof src==='object')?src:blankDoc();return{schema_version:3,updated_at:String(src.updated_at||''),settings:{facility_name:String((src.settings&&src.settings.facility_name)||''),tag:String((src.settings&&src.settings.tag)||''),holidays:Array.isArray(src.settings&&src.settings.holidays)?src.settings.holidays:[]},chalets:Array.isArray(src.chalets)?src.chalets.map(function(c){return{id:String(c.id||uuid()),name:String(c.name||''),capacity:Number(c.capacity||0),description:String(c.description||''),contactPhone:String(c.contactPhone||''),workerPhone:String(c.workerPhone||''),workerName:String(c.workerName||''),mapUrl:String(c.mapUrl||''),terms:String(c.terms||''),periods:Array.isArray(c.periods)?c.periods:[],deleted_at:c.deleted_at||null,updated_at:String(c.updated_at||new Date().toISOString())}}):[],bookings:Array.isArray(src.bookings)?src.bookings.map(function(b){return{id:String(b.id||uuid()),customer_name:String(b.customer_name||''),customer_phone:String(b.customer_phone||''),chalet_id:String(b.chalet_id||''),booking_date:String(b.booking_date||new Date().toISOString().slice(0,10)),period_id:String(b.period_id||''),guests:Number(b.guests||1),total:Number(b.total||0),paid:Number(b.paid||0),status:String(b.status||'confirmed'),notes:String(b.notes||''),deleted_at:b.deleted_at||null,created_at:String(b.created_at||new Date().toISOString()),updated_at:String(b.updated_at||new Date().toISOString())}}):[]}}
+function friendly(e){var m=String((e&&e.message)||e||'خطأ');if(m.indexOf('Could not find')>=0||m.indexOf('get_shared_workspace')>=0||m.indexOf('save_shared_workspace')>=0)return'دوال Supabase غير موجودة. شغّل ملف database/shared_workspace_sync.sql في Supabase.';if(m.indexOf('WORKSPACE_NOT_FOUND')>=0)return'المساحة غير موجودة أو PIN خطأ. إذا أول مرة اضغط إنشاء مساحة جديدة.';if(m.indexOf('Failed to fetch')>=0)return'فشل الاتصال. تأكد من الإنترنت أو إعدادات Supabase.';return m}
+function activeChalets(){return doc.chalets.filter(function(x){return!x.deleted_at})}
+function activeBookings(){return doc.bookings.filter(function(x){return!x.deleted_at})}
+function openApp(){el('login').classList.add('hide');el('app').classList.remove('hide');el('nav').classList.remove('hide');render()}
+async function pullCloud(){try{readCreds();message('جاري السحب...');el('pullBtn').disabled=true;var data=await rpc('get_shared_workspace',{p_workspace_key:workspace,p_access_pin:pin});doc=normalize(data);cloudUpdatedAt=doc.updated_at||'';dirty=false;localStorage.setItem(STORAGE_KEY,JSON.stringify({workspace:workspace,pin:pin}));openApp();toast('تم الدخول وسحب البيانات.')}catch(e){message('فشل الدخول: '+friendly(e),true)}finally{el('pullBtn').disabled=false}}
+async function createCloud(){try{readCreds();message('جاري الإنشاء...');el('createBtn').disabled=true;var data=await rpc('save_shared_workspace',{p_workspace_key:workspace,p_access_pin:pin,p_data:blankDoc()});doc=normalize(data);cloudUpdatedAt=doc.updated_at||'';dirty=false;localStorage.setItem(STORAGE_KEY,JSON.stringify({workspace:workspace,pin:pin}));openApp();toast('تم إنشاء مساحة فارغة.')}catch(e){message('فشل الإنشاء: '+friendly(e),true)}finally{el('createBtn').disabled=false}}
+async function uploadCloud(){try{if(!workspace||!pin)throw new Error('لا توجد مساحة مرتبطة.');el('uploadBtn').disabled=true;var fresh=await rpc('get_shared_workspace',{p_workspace_key:workspace,p_access_pin:pin});var freshDoc=normalize(fresh);if(cloudUpdatedAt&&freshDoc.updated_at&&freshDoc.updated_at!==cloudUpdatedAt)throw new Error('توجد نسخة أحدث في السحابة. اسحب البيانات أولاً.');localStorage.setItem('backup_before_cloud_push_'+new Date().toISOString(),JSON.stringify({workspace_key:workspace,data:doc,timestamp:new Date().toISOString()}));var saved=await rpc('save_shared_workspace',{p_workspace_key:workspace,p_access_pin:pin,p_data:doc});doc=normalize(saved);cloudUpdatedAt=doc.updated_at||'';dirty=false;render();toast('تم رفع التعديلات.')}catch(e){toast('فشل الرفع: '+friendly(e),true)}finally{el('uploadBtn').disabled=false;render()}}
+function markDirty(){dirty=true;render()}
+function render(){var cs=activeChalets(),bs=activeBookings();el('facilityTitle').textContent=doc.settings.facility_name||'نظام الحجوزات';el('status').textContent=(dirty?'تعديلات غير مرفوعة · ':'متصل · ')+workspace;el('summary').textContent='الشاليهات: '+cs.length+' / الحجوزات: '+bs.length;el('facilityName').value=doc.settings.facility_name||'';el('uploadBtn').disabled=!dirty;el('bookingChalet').innerHTML=cs.map(function(c){return'<option value="'+escapeHtml(c.id)+'">'+escapeHtml(c.name)+'</option>'}).join('');el('chaletList').innerHTML=cs.length?cs.map(renderChalet).join(''):'<div class="empty">لا توجد شاليهات.</div>';el('bookingList').innerHTML=bs.length?bs.map(renderBooking).join(''):'<div class="empty">لا توجد حجوزات.</div>';el('recent').innerHTML=bs.length?bs.slice(0,4).map(renderBooking).join(''):'<div class="empty">لا توجد حجوزات.</div>'}
+function renderChalet(c){return'<div class="item"><div class="actions"><div><b>'+escapeHtml(c.name)+'</b><br><span class="pill">شاليه</span></div><button type="button" class="mini danger" data-delete-chalet="'+escapeHtml(c.id)+'">حذف</button></div></div>'}
+function renderBooking(b){var chalet=doc.chalets.find(function(c){return c.id===b.chalet_id});return'<div class="item"><div class="actions"><div><b>'+escapeHtml(b.customer_name)+'</b><br><span class="pill">'+escapeHtml(chalet?chalet.name:'بدون شاليه')+'</span> <span class="pill">'+escapeHtml(b.booking_date)+'</span></div><button type="button" class="mini danger" data-delete-booking="'+escapeHtml(b.id)+'">حذف</button></div></div>'}
+function addChalet(){var name=el('chaletName').value.trim();if(!name)return toast('اكتب اسم الشاليه.',true);doc.chalets.push({id:uuid(),name:name,capacity:0,description:'',contactPhone:'',workerPhone:'',workerName:'',mapUrl:'',terms:'',periods:[],deleted_at:null,updated_at:new Date().toISOString()});el('chaletName').value='';markDirty();toast('تمت إضافة الشاليه محليًا.')}
+function addBooking(){var name=el('customerName').value.trim();if(!name)return toast('اكتب اسم العميل.',true);doc.bookings.push({id:uuid(),customer_name:name,customer_phone:el('customerPhone').value.trim(),chalet_id:el('bookingChalet').value||'',booking_date:new Date().toISOString().slice(0,10),period_id:'',guests:1,total:0,paid:0,status:'confirmed',notes:'',deleted_at:null,created_at:new Date().toISOString(),updated_at:new Date().toISOString()});el('customerName').value='';el('customerPhone').value='';markDirty();toast('تمت إضافة الحجز محليًا.')}
+function showTab(name){document.querySelectorAll('.tab').forEach(function(tab){tab.classList.remove('active')});var target=el('tab-'+name);if(target)target.classList.add('active');document.querySelectorAll('[data-tab]').forEach(function(btn){btn.classList.toggle('active',btn.getAttribute('data-tab')===name)})}
+el('pullBtn').addEventListener('click',pullCloud);el('createBtn').addEventListener('click',createCloud);el('uploadBtn').addEventListener('click',uploadCloud);el('addChaletBtn').addEventListener('click',addChalet);el('addBookingBtn').addEventListener('click',addBooking);el('saveSettingsBtn').addEventListener('click',function(){doc.settings.facility_name=el('facilityName').value.trim();markDirty();toast('تم حفظ الاسم محليًا.')});el('logoutBtn').addEventListener('click',function(){localStorage.removeItem(STORAGE_KEY);location.reload()});document.addEventListener('click',function(event){var tabBtn=event.target.closest('[data-tab]');if(tabBtn)showTab(tabBtn.getAttribute('data-tab'));var dc=event.target.closest('[data-delete-chalet]');if(dc){var id=dc.getAttribute('data-delete-chalet');doc.chalets=doc.chalets.filter(function(c){return c.id!==id});doc.bookings=doc.bookings.filter(function(b){return b.chalet_id!==id});markDirty()}var db=event.target.closest('[data-delete-booking]');if(db){var bid=db.getAttribute('data-delete-booking');doc.bookings=doc.bookings.filter(function(b){return b.id!==bid});markDirty()}});try{var saved=JSON.parse(localStorage.getItem(STORAGE_KEY)||'{}');if(saved.workspace)el('workspace').value=saved.workspace;if(saved.pin)el('pin').value=saved.pin}catch(e){}
+})();
+</script>
+</body>
+</html>
