@@ -220,7 +220,7 @@
   <main class="page">
     <section id="connectScreen" class="card" aria-labelledby="mainTitle">
       <h1 id="mainTitle" class="title">نظام حجوزات الشاليهات</h1>
-      <p class="subtitle">أدخل رمز المساحة والرقم السري. لا توجد تحويلات، ولا Service Worker، ولا كاش PWA، ولا مكتبات خارجية.</p>
+      <p class="subtitle">أدخل رمز المساحة والرقم السري. هذه صفحة جذر نظيفة تعتمد على طلبات RPC فقط.</p>
 
       <div class="grid">
         <div>
@@ -386,6 +386,18 @@
         return parsedBody;
       }
 
+      function escapeText(value) {
+        return String(value || '').replace(/[&<>"']/g, function (character) {
+          return {
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            '"': '&quot;',
+            "'": '&#39;'
+          }[character];
+        });
+      }
+
       function openAppShell(result) {
         const elements = getElements();
         loadedWorkspace = result;
@@ -396,18 +408,6 @@
           workspace_key: result.workspace_key,
           updated_at: result.updated_at,
           data_shape: result.data ? Object.keys(result.data) : []
-        });
-      }
-
-      function escapeText(value) {
-        return String(value || '').replace(/[&<>"']/g, function (character) {
-          return {
-            '&': '&amp;',
-            '<': '&lt;',
-            '>': '&gt;',
-            '"': '&quot;',
-            "'": '&#39;'
-          }[character];
         });
       }
 
