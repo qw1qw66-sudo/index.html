@@ -1,0 +1,520 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>نظام حجوزات الشاليهات</title>
+  <style>
+    :root {
+      --bg: #10141d;
+      --panel: #1b2430;
+      --panel-2: #263241;
+      --text: #fff7ec;
+      --muted: #c8baaa;
+      --line: #3a495c;
+      --gold: #d7b46a;
+      --gold-2: #f2d08a;
+      --red: #e06b61;
+      --green: #77b26d;
+    }
+
+    * {
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    html,
+    body {
+      margin: 0;
+      min-height: 100%;
+      background: radial-gradient(circle at top, rgba(215, 180, 106, 0.12), transparent 34%), var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Tahoma, Arial, sans-serif;
+    }
+
+    body {
+      padding: 18px;
+    }
+
+    button,
+    input {
+      font: inherit;
+    }
+
+    input {
+      width: 100%;
+      min-height: 48px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--panel-2);
+      color: var(--text);
+      padding: 12px 14px;
+      font-size: 16px;
+      outline: none;
+    }
+
+    input:focus {
+      border-color: var(--gold);
+    }
+
+    label {
+      display: block;
+      margin: 0 0 7px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    button {
+      min-height: 48px;
+      border: 0;
+      border-radius: 14px;
+      padding: 11px 14px;
+      font-weight: 900;
+      cursor: pointer;
+    }
+
+    button:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+
+    .page {
+      width: min(100%, 760px);
+      margin: 0 auto;
+    }
+
+    .card {
+      background: linear-gradient(180deg, var(--panel), #151b25);
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      padding: 18px;
+      margin: 12px 0;
+      box-shadow: 0 16px 36px rgba(0, 0, 0, 0.24);
+    }
+
+    .title {
+      margin: 0 0 8px;
+      font-size: 28px;
+      font-weight: 900;
+      line-height: 1.25;
+    }
+
+    .subtitle {
+      margin: 0 0 18px;
+      color: var(--muted);
+      line-height: 1.7;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    .actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-top: 14px;
+    }
+
+    .primary {
+      background: linear-gradient(135deg, var(--gold-2), var(--gold));
+      color: #17120a;
+    }
+
+    .secondary {
+      background: var(--panel-2);
+      color: var(--text);
+      border: 1px solid var(--line);
+    }
+
+    .debug {
+      direction: ltr;
+      text-align: left;
+      white-space: pre-wrap;
+      overflow: auto;
+      min-height: 180px;
+      max-height: 320px;
+      padding: 13px;
+      border-radius: 16px;
+      background: #0b0f16;
+      border: 1px solid var(--line);
+      color: #dce6f3;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    .tabs {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .tab-button {
+      background: var(--panel-2);
+      color: var(--muted);
+      border: 1px solid var(--line);
+      font-size: 13px;
+    }
+
+    .tab-button.active {
+      color: #17120a;
+      background: linear-gradient(135deg, var(--gold-2), var(--gold));
+      border-color: transparent;
+    }
+
+    .shell-section {
+      display: none;
+      margin-top: 14px;
+    }
+
+    .shell-section.active {
+      display: block;
+    }
+
+    .status-ok {
+      color: var(--green);
+      font-weight: 900;
+    }
+
+    .status-bad {
+      color: var(--red);
+      font-weight: 900;
+    }
+
+    .muted {
+      color: var(--muted);
+    }
+
+    .ltr {
+      direction: ltr;
+      text-align: left;
+    }
+
+    @media (max-width: 640px) {
+      body {
+        padding: 14px;
+      }
+
+      .grid,
+      .actions,
+      .tabs {
+        grid-template-columns: 1fr;
+      }
+
+      .title {
+        font-size: 25px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section id="connectScreen" class="card" aria-labelledby="mainTitle">
+      <h1 id="mainTitle" class="title">نظام حجوزات الشاليهات</h1>
+      <p class="subtitle">أدخل رمز المساحة والرقم السري. لا توجد تحويلات، ولا Service Worker، ولا كاش PWA، ولا مكتبات خارجية.</p>
+
+      <div class="grid">
+        <div>
+          <label for="workspaceInput">Workspace</label>
+          <input id="workspaceInput" class="ltr" type="text" autocomplete="off" inputmode="text" placeholder="ALI6">
+        </div>
+        <div>
+          <label for="pinInput">PIN</label>
+          <input id="pinInput" class="ltr" type="password" autocomplete="off" inputmode="numeric" placeholder="••••">
+        </div>
+      </div>
+
+      <div class="actions">
+        <button id="pullButton" class="primary" type="button">Pull</button>
+        <button id="createButton" class="secondary" type="button">Create empty workspace</button>
+      </div>
+    </section>
+
+    <section class="card" aria-labelledby="debugTitle">
+      <h2 id="debugTitle" class="title">Debug Log</h2>
+      <div id="debugLog" class="debug" role="log" aria-live="polite"></div>
+    </section>
+
+    <section id="appShell" class="card hidden" aria-labelledby="shellTitle">
+      <h2 id="shellTitle" class="title">نظام حجوزات الشاليهات</h2>
+      <p id="shellStatus" class="subtitle">تم فتح هيكل التطبيق فقط. لم يتم بناء CRUD بعد.</p>
+
+      <nav class="tabs" aria-label="App tabs">
+        <button class="tab-button active" type="button" data-tab="home">الرئيسية</button>
+        <button class="tab-button" type="button" data-tab="bookings">الحجوزات</button>
+        <button class="tab-button" type="button" data-tab="chalets">الشاليهات</button>
+        <button class="tab-button" type="button" data-tab="settings">الإعدادات</button>
+      </nav>
+
+      <section id="tab-home" class="shell-section active">
+        <h3>الرئيسية</h3>
+        <p class="muted">App shell جاهز. البيانات محملة من RPC أو تم إنشاء مساحة فارغة.</p>
+      </section>
+      <section id="tab-bookings" class="shell-section">
+        <h3>الحجوزات</h3>
+        <p class="muted">لا يوجد CRUD في هذه المرحلة.</p>
+      </section>
+      <section id="tab-chalets" class="shell-section">
+        <h3>الشاليهات</h3>
+        <p class="muted">لا يوجد CRUD في هذه المرحلة.</p>
+      </section>
+      <section id="tab-settings" class="shell-section">
+        <h3>الإعدادات</h3>
+        <p class="muted">لا يوجد CRUD في هذه المرحلة.</p>
+      </section>
+    </section>
+  </main>
+
+  <script>
+    (function () {
+      'use strict';
+
+      const SUPABASE_URL = 'https://fkqidesfrtpwzjcimjoe.supabase.co';
+      const SUPABASE_ANON_KEY = 'sb_publishable_Uks_PYr6aqY5wnNBjDjTgg_z2Ic6_al';
+
+      let loadedWorkspace = null;
+
+      function canonicalEmptyDataModel() {
+        return {
+          schema_version: 1,
+          settings: {
+            facility_name: '',
+            tag: '',
+            holidays: []
+          },
+          chalets: [],
+          bookings: []
+        };
+      }
+
+      function timestamp() {
+        return new Date().toISOString();
+      }
+
+      function normalizeWorkspaceKey(value) {
+        return String(value || '')
+          .trim()
+          .toUpperCase()
+          .replace(/[^A-Z0-9_-]/g, '');
+      }
+
+      function getElements() {
+        return {
+          connectScreen: document.getElementById('connectScreen'),
+          workspaceInput: document.getElementById('workspaceInput'),
+          pinInput: document.getElementById('pinInput'),
+          pullButton: document.getElementById('pullButton'),
+          createButton: document.getElementById('createButton'),
+          debugLog: document.getElementById('debugLog'),
+          appShell: document.getElementById('appShell'),
+          shellStatus: document.getElementById('shellStatus'),
+          tabButtons: Array.from(document.querySelectorAll('.tab-button')),
+          shellSections: Array.from(document.querySelectorAll('.shell-section'))
+        };
+      }
+
+      function log(message, detail) {
+        const debugLog = document.getElementById('debugLog');
+        if (!debugLog) return;
+
+        const line = '[' + timestamp() + '] ' + message;
+        const extra = detail === undefined ? '' : '\n' + JSON.stringify(detail, null, 2);
+        debugLog.textContent = line + extra + '\n\n' + debugLog.textContent;
+      }
+
+      function setBusy(isBusy) {
+        const elements = getElements();
+        elements.pullButton.disabled = isBusy;
+        elements.createButton.disabled = isBusy;
+      }
+
+      function readCredentials() {
+        const elements = getElements();
+        const workspaceKey = normalizeWorkspaceKey(elements.workspaceInput.value);
+        const pin = String(elements.pinInput.value || '').trim();
+
+        elements.workspaceInput.value = workspaceKey;
+
+        if (!workspaceKey || workspaceKey.length < 3) {
+          throw new Error('INVALID_WORKSPACE_KEY');
+        }
+
+        if (!pin || pin.length < 4) {
+          throw new Error('INVALID_PIN_LENGTH');
+        }
+
+        return { workspaceKey, pin };
+      }
+
+      async function callRpc(functionName, payload) {
+        const response = await fetch(SUPABASE_URL + '/rest/v1/rpc/' + functionName, {
+          method: 'POST',
+          headers: {
+            apikey: SUPABASE_ANON_KEY,
+            Authorization: 'Bearer ' + SUPABASE_ANON_KEY,
+            'Content-Type': 'application/json',
+            Accept: 'application/json'
+          },
+          body: JSON.stringify(payload)
+        });
+
+        const responseText = await response.text();
+        let parsedBody = null;
+
+        try {
+          parsedBody = responseText ? JSON.parse(responseText) : null;
+        } catch (parseError) {
+          parsedBody = { raw: responseText };
+        }
+
+        if (!response.ok) {
+          const error = new Error((parsedBody && parsedBody.message) || 'RPC_FAILED');
+          error.status = response.status;
+          error.body = parsedBody;
+          throw error;
+        }
+
+        return parsedBody;
+      }
+
+      function openAppShell(result) {
+        const elements = getElements();
+        loadedWorkspace = result;
+        elements.connectScreen.classList.add('hidden');
+        elements.appShell.classList.remove('hidden');
+        elements.shellStatus.innerHTML = '<span class="status-ok">متصل</span> · Workspace: <span class="ltr">' + escapeText(result.workspace_key || '') + '</span> · Updated: <span class="ltr">' + escapeText(result.updated_at || '') + '</span>';
+        log('App shell opened', {
+          workspace_key: result.workspace_key,
+          updated_at: result.updated_at,
+          data_shape: result.data ? Object.keys(result.data) : []
+        });
+      }
+
+      function escapeText(value) {
+        return String(value || '').replace(/[&<>"']/g, function (character) {
+          return {
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            '"': '&quot;',
+            "'": '&#39;'
+          }[character];
+        });
+      }
+
+      async function handlePull() {
+        log('Pull button clicked');
+        setBusy(true);
+
+        try {
+          const credentials = readCredentials();
+          log('Calling get_shared_workspace', { workspace_key: credentials.workspaceKey });
+
+          const result = await callRpc('get_shared_workspace', {
+            p_workspace_key: credentials.workspaceKey,
+            p_access_pin: credentials.pin
+          });
+
+          if (!result || result.ok !== true) {
+            throw new Error('RPC_RESPONSE_NOT_OK');
+          }
+
+          log('Pull succeeded', {
+            workspace_key: result.workspace_key,
+            updated_at: result.updated_at
+          });
+          openAppShell(result);
+        } catch (error) {
+          loadedWorkspace = null;
+          log('Pull failed; app shell remains closed', {
+            message: error.message,
+            status: error.status || null,
+            body: error.body || null
+          });
+        } finally {
+          setBusy(false);
+        }
+      }
+
+      async function handleCreate() {
+        log('Create empty workspace button clicked');
+        setBusy(true);
+
+        try {
+          const credentials = readCredentials();
+          const emptyData = canonicalEmptyDataModel();
+          log('Calling save_shared_workspace with canonical empty model', {
+            workspace_key: credentials.workspaceKey,
+            data: emptyData
+          });
+
+          const result = await callRpc('save_shared_workspace', {
+            p_workspace_key: credentials.workspaceKey,
+            p_access_pin: credentials.pin,
+            p_data: emptyData
+          });
+
+          if (!result || result.ok !== true) {
+            throw new Error('RPC_RESPONSE_NOT_OK');
+          }
+
+          log('Create empty workspace succeeded', {
+            workspace_key: result.workspace_key,
+            updated_at: result.updated_at
+          });
+          openAppShell(result);
+        } catch (error) {
+          loadedWorkspace = null;
+          log('Create failed; app shell remains closed', {
+            message: error.message,
+            status: error.status || null,
+            body: error.body || null
+          });
+        } finally {
+          setBusy(false);
+        }
+      }
+
+      function handleTabClick(event) {
+        const button = event.currentTarget;
+        const tabName = button.dataset.tab;
+        const elements = getElements();
+
+        log('Tab clicked', { tab: tabName, workspace_loaded: Boolean(loadedWorkspace) });
+
+        elements.tabButtons.forEach(function (item) {
+          item.classList.toggle('active', item === button);
+        });
+
+        elements.shellSections.forEach(function (section) {
+          section.classList.toggle('active', section.id === 'tab-' + tabName);
+        });
+      }
+
+      document.addEventListener('DOMContentLoaded', function () {
+        const elements = getElements();
+
+        log('DOMContentLoaded: attaching event listeners');
+
+        elements.pullButton.addEventListener('click', handlePull);
+        elements.createButton.addEventListener('click', handleCreate);
+
+        elements.tabButtons.forEach(function (button) {
+          button.addEventListener('click', handleTabClick);
+        });
+
+        log('Ready');
+      });
+    })();
+  </script>
+</body>
+</html>
