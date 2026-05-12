@@ -1,146 +1,79 @@
 # Manual Test Checklist
 
 ## T1 - فتح الصفحة
+Expected: شاشة دخول فقط، Debug Log، و Ready.
+Result: Not manually checked in this chat.
 
-Steps:
-1. افتح `/index.html`.
+## T2 - دخول بدون بيانات
+Expected: لا يفتح التطبيق وتظهر رسالة خطأ.
+Result: Not manually checked in this chat.
 
-Expected:
-- تظهر شاشة الربط فقط.
-- يظهر Debug Log.
-- يظهر Ready في Debug Log.
+## T3 - إنشاء حساب/مساحة فارغة
+Expected: حساب جديد ببيانات canonical empty ولا توجد seed data.
+Result: Not manually checked in this chat.
 
-Result: Not run in this environment.
+## T4 - إضافة شاليه
+Expected: إضافة شاليه بدون بيانات وهمية وزر رفع التعديلات يتفعل.
+Result: Not manually checked in this chat.
 
-## T2 - Pull بدون بيانات
-
-Steps:
-1. اضغط Pull بدون Workspace/PIN.
-
-Expected:
-- يظهر click في Debug Log فورًا.
-- تظهر رسالة خطأ.
-- لا يفتح التطبيق.
-
-Result: Not run in this environment.
-
-## T3 - إنشاء مساحة فارغة
-
-Steps:
-1. أدخل Workspace جديد.
-2. أدخل PIN صحيح.
-3. اضغط Create empty workspace.
-
-Expected:
-- يتم استدعاء `save_shared_workspace`.
-- تفتح التبويبات.
-- لا توجد seed data.
-
-Result: Not run in this environment.
-
-## T4 - إضافة شاليه وفترة
-
-Steps:
-1. افتح تبويب الشاليهات.
-2. أضف شاليه.
-3. أضف فترة.
-4. احفظ.
-
-Expected:
-- ID ثابت للشاليه والفترة.
-- زر رفع التعديلات يصبح enabled.
-- يظهر feedback و Debug Log.
-
-Result: Not run in this environment.
-
-## T5 - تعديل شاليه وفترة
-
-Steps:
-1. عدّل الشاليه والفترة.
-2. احفظ.
-
-Expected:
-- لا يتغير ID.
-- لا يتم إنشاء نسخة جديدة.
-- يظهر feedback و Debug Log.
-
-Result: Not run in this environment.
+## T5 - تعديل شاليه
+Expected: لا يتغير chalet ID ولا booking IDs.
+Result: Not manually checked in this chat.
 
 ## T6 - إضافة حجز مؤكد
-
-Steps:
-1. افتح الحجوزات.
-2. أضف حجز مؤكد.
-3. احفظ.
-
-Expected:
-- يظهر الحجز في القائمة.
-- زر السند يظهر.
-- زر رفع التعديلات يصبح enabled.
-
-Result: Not run in this environment.
+Expected: يظهر في القائمة وزر السند يظهر.
+Result: Not manually checked in this chat.
 
 ## T7 - منع تعارض الحجز المؤكد
+Expected: تظهر رسالة: يوجد حجز مؤكد متعارض في نفس الشاليه والفترة.
+Result: Not manually checked in this chat.
 
-Steps:
-1. أضف حجز مؤكد لنفس الشاليه والفترة.
-2. حاول إضافة حجز مؤكد آخر بنفس الفترة المتداخلة.
-
-Expected:
-- يتم منع الحفظ.
-- تظهر الرسالة: `يوجد حجز مؤكد متعارض في نفس الشاليه والفترة.`
-
-Result: Not run in this environment.
-
-## T8 - الحجز غير المؤكد لا يمنع التعارض
-
-Steps:
-1. أضف حجز pending في فترة متداخلة.
-
-Expected:
-- لا يتم منع الحفظ لأن المنع للحجوزات المؤكدة فقط.
-
-Result: Not run in this environment.
+## T8 - pending لا يمنع التعارض
+Expected: الحجز المعلق لا يمنع حفظ حجز آخر.
+Result: Not manually checked in this chat.
 
 ## T9 - السند والتقارير
-
-Steps:
-1. افتح سند الحجز.
-2. تأكد من الحقول المعروضة.
-3. افتح التقارير.
-4. اختر شهر وشاليه.
-5. انسخ التقرير.
-
-Expected:
-- السند لا يعرض booking id أو notes أو day-type أو بيانات شاليه آخر.
-- التقرير يعرض count/total/paid/remaining/best chalet.
-- عند نقص البيانات تظهر: `البيانات غير كافية لحكم دقيق.`
-
-Result: Not run in this environment.
+Expected: السند والتقرير يعرضان البيانات الصحيحة فقط.
+Result: Not manually checked in this chat.
 
 ## T10 - الرفع الآمن وفحص المصدر
+Expected: لا رفع إلا بزر رفع التعديلات ولا تظهر بقايا auth/redirect/sync القديمة.
+Result: Not manually checked in this chat.
 
-Steps:
-1. لا تضغط رفع التعديلات.
-2. بدّل التبويبات.
-3. أعد فتح الصفحة.
-4. اضغط رفع التعديلات بعد وجود تغييرات.
-5. افحص View Source.
-
+## T11 - Create new account
 Expected:
-- لا يحدث رفع عند page load.
-- لا يحدث رفع عند tab switch.
-- لا يحدث رفع عند reconnect.
-- الرفع فقط من زر `رفع التعديلات`.
-- يتم إنشاء backup_before_cloud_push_<ISO> قبل الرفع.
-- يحتفظ النظام بآخر 10 backups فقط.
-- لا تظهر بقايا المصدر التالية داخل الملفات المنشورة:
-  - signInWithOtp
-  - Magic Link
-  - email login
-  - service_role
-  - serviceWorker
-  - sync-cloud
-  - redirect scripts
+- username + password required
+- account created with empty canonical data
+- app opens
+- no seed data
+Result: Not manually checked in this chat.
 
-Result: Not run in this environment.
+## T12 - Edit chalet
+Expected:
+- edit form opens
+- fields update
+- same chalet ID remains
+- success message appears: تم تحديث بيانات الشاليه.
+Result: Not manually checked in this chat.
+
+## T13 - Edit six periods
+Expected:
+- each chalet has 6 periods
+- all 6 can be edited
+- period IDs remain stable after edit
+- inactive periods disappear from booking dropdown
+Result: Not manually checked in this chat.
+
+## T14 - Booking period dropdown
+Expected:
+- selecting chalet shows only that chalet’s active periods
+- no periods from other chalets appear
+- if no active periods: لا توجد فترات مفعلة لهذا الشاليه.
+Result: Not manually checked in this chat.
+
+## T15 - Voucher period accuracy
+Expected:
+- voucher shows correct chalet
+- voucher shows correct period label
+- voucher shows correct entry and exit time
+Result: Not manually checked in this chat.
