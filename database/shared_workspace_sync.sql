@@ -8,6 +8,7 @@ create table if not exists public.shared_workspaces (
 
 alter table public.shared_workspaces enable row level security;
 
+revoke all on public.shared_workspaces from public;
 revoke all on public.shared_workspaces from anon;
 revoke all on public.shared_workspaces from authenticated;
 
@@ -58,6 +59,11 @@ begin
   return stamped_data;
 end;
 $$;
+
+revoke execute on function public.get_shared_workspace(text, text) from public;
+revoke execute on function public.save_shared_workspace(text, text, jsonb) from public;
+revoke execute on function public.get_shared_workspace(text, text) from anon;
+revoke execute on function public.save_shared_workspace(text, text, jsonb) from anon;
 
 grant execute on function public.get_shared_workspace(text, text) to anon;
 grant execute on function public.save_shared_workspace(text, text, jsonb) to anon;
