@@ -483,11 +483,12 @@
           <div class="card">
             <div class="actions between">
               <h3>الحجوزات</h3>
-              <button class="primary" data-action="new-booking">
+              <button id="newBookingButton" class="primary" data-action="new-booking">
                 + حجز جديد
               </button>
             </div>
             <div id="bookingList"></div>
+            <div id="bookingEditorParking" class="hidden"></div>
           </div>
           <div id="bookingEditor" class="card editor hidden">
             <h3 id="bookingEditorTitle">حجز</h3>
@@ -663,6 +664,8 @@
           currentVoucherText = "",
           currentReportText = "",
           state = emptyData();
+        const SESSION_SNAPSHOT_KEY = "active_workspace_session";
+        const SESSION_PIN_KEY = "active_session_pin";
         // ========================= JS: utility helpers =========================
         function emptyData() {
           return {
@@ -780,6 +783,63 @@
             : "لا توجد تغييرات";
           $("dirtyBadge").className = "badge " + (dirty ? "gold" : "");
           if (r) log("Dirty state changed", { dirty, reason: r });
+          persistSessionSnapshot();
+        }
+        function persistSessionSnapshot() {
+          if (!loadedWorkspace || !workspaceKey) return;
+          try {
+            const snapshot = {
+              workspaceKey,
+              state,
+              lastCloudCounts,
+              lastCloudUpdatedAt,
+              dirty,
+            };
+            sessionStorage.setItem(
+              SESSION_SNAPSHOT_KEY,
+              JSON.stringify(snapshot),
+            );
+            // Temporary for same-tab refresh only; do not persist across tabs/sessions.
+            sessionStorage.setItem(SESSION_PIN_KEY, accessPin || "");
+          } catch (e) {
+            log("Session snapshot save failed", { message: e.message });
+          }
+        }
+        function clearSessionSnapshot() {
+          sessionStorage.removeItem(SESSION_SNAPSHOT_KEY);
+          sessionStorage.removeItem(SESSION_PIN_KEY);
+        }
+        function restoreSessionFromStorage() {
+          try {
+            const raw = sessionStorage.getItem(SESSION_SNAPSHOT_KEY);
+            const pin = String(sessionStorage.getItem(SESSION_PIN_KEY) || "");
+            if (!raw || pin.length < 4) return false;
+            const snap = JSON.parse(raw);
+            if (!snap || !snap.workspaceKey || !snap.state) return false;
+            workspaceKey = normalizeWorkspaceKey(snap.workspaceKey);
+            accessPin = pin;
+            state = normalizeData(snap.state);
+            loadedWorkspace = { workspace_key: workspaceKey, data: state };
+            const restoredLastCloudCounts = snap.lastCloudCounts || counts(state);
+            const restoredLastCloudUpdatedAt = String(snap.lastCloudUpdatedAt || "");
+            const restoredDirty = Boolean(snap.dirty);
+            $("workspaceInput").value = workspaceKey;
+            $("pinInput").value = "";
+            openApp({
+              workspace_key: workspaceKey,
+              data: state,
+              updated_at: restoredLastCloudUpdatedAt,
+            });
+            lastCloudCounts = restoredLastCloudCounts;
+            lastCloudUpdatedAt = restoredLastCloudUpdatedAt;
+            setDirty(restoredDirty, "restored session");
+            feedback("تم استرجاع الجلسة الحالية في نفس التبويب.", "good");
+            return true;
+          } catch (e) {
+            log("Session restore failed", { message: e.message });
+            clearSessionSnapshot();
+            return false;
+          }
         }
         function readCredentials() {
           workspaceKey = normalizeWorkspaceKey($("workspaceInput").value);
@@ -952,6 +1012,7 @@
             lastCloudCounts,
             lastCloudUpdatedAt,
           });
+          persistSessionSnapshot();
         }
         async function pullWorkspace() {
           log("Login clicked");
@@ -1115,7 +1176,9 @@
         }
         function bookingCard(b) {
           return (
-            '<div class="item"><div class="actions between"><div><b>' +
+            '<div class="item" data-booking-card-id="' +
+            esc(b.id) +
+            '"><div class="actions between"><div><b>' +
             esc(b.customer_name || "بدون اسم") +
             '</b><div class="muted">' +
             esc(chaletName(b.chalet_id)) +
@@ -1184,12 +1247,21 @@
               .join("") || '<div class="empty">لا توجد شاليهات</div>';
         }
         function renderBookings() {
+          parkBookingEditor();
           $("bookingList").innerHTML =
             activeBookings()
               .slice()
               .sort((a, b) => b.booking_date.localeCompare(a.booking_date))
               .map(bookingCard)
               .join("") || '<div class="empty">لا توجد حجوزات</div>';
+        }
+        function parkBookingEditor() {
+          const editor = $("bookingEditor");
+          const parking = $("bookingEditorParking");
+          if (editor && parking) {
+            editor.classList.add("hidden");
+            parking.appendChild(editor);
+          }
         }
         function renderReports() {
           $("reportChalet").innerHTML = [
@@ -1440,6 +1512,9 @@
           $("bookingNotes").value = "";
           $("deleteBookingButton").classList.add("hidden");
           $("bookingEditorTitle").textContent = "حجز جديد";
+          const list = $("bookingList");
+          const editor = $("bookingEditor");
+          if (list && list.parentNode) list.parentNode.insertBefore(editor, list);
           $("bookingEditor").classList.remove("hidden");
           feedback("تم فتح نموذج حجز جديد");
         }
@@ -1462,7 +1537,14 @@
           $("bookingNotes").value = b.notes;
           $("deleteBookingButton").classList.remove("hidden");
           $("bookingEditorTitle").textContent = "تعديل حجز";
+          const card = Array.from(
+            document.querySelectorAll("[data-booking-card-id]"),
+          ).find((el) => el.dataset.bookingCardId === id);
+          const editor = $("bookingEditor");
+          if (card && card.parentNode) card.insertAdjacentElement("afterend", editor);
           $("bookingEditor").classList.remove("hidden");
+          if (card && card.scrollIntoView)
+            card.scrollIntoView({ behavior: "smooth", block: "start" });
           feedback("تم فتح تعديل الحجز");
         }
         function saveBooking() {
@@ -1750,6 +1832,7 @@
           });
           $("reportMonth").addEventListener("change", () => runReport(false));
           $("reportChalet").addEventListener("change", () => runReport(false));
+          if (!restoreSessionFromStorage()) clearSessionSnapshot();
           log("Ready");
         });
       })();
