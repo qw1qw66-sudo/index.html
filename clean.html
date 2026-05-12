@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>نظام الحجوزات الصافي</title>
+<style>
+body{margin:0;background:#10141d;color:#fff7ec;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Tahoma,Arial,sans-serif;padding:16px}main{max-width:760px;margin:auto}.card{background:#1b2430;border:1px solid #3a495c;border-radius:18px;padding:16px;margin:12px 0}input,button,textarea{width:100%;box-sizing:border-box;border-radius:13px;border:1px solid #3a495c;background:#253142;color:#fff7ec;padding:13px;font:inherit;font-size:16px}textarea{min-height:330px;direction:ltr;text-align:left}button{font-weight:900;margin-top:8px}.gold{background:#d7b46a;color:#17120a;border:0}.row{display:grid;grid-template-columns:1fr 1fr;gap:10px}.muted{color:#c8b9aa;line-height:1.6}.hide{display:none}.ok{color:#77b26d}.bad{color:#e06b61}@media(max-width:650px){.row{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<main>
+<section id="login" class="card">
+<h1>نظام الحجوزات الصافي</h1>
+<p class="muted">رابط مباشر بدون تحويل. هذه الصفحة هدفها تثبيت اليوزر/PIN والربط بالسحابة فقط.</p>
+<div class="row">
+<input id="workspace" placeholder="Workspace / اليوزر مثل ALI6" autocomplete="off">
+<input id="pin" type="password" placeholder="PIN" autocomplete="off">
+</div>
+<button id="pull" class="gold" type="button">دخول / سحب البيانات</button>
+<button id="create" type="button">إنشاء مساحة جديدة فارغة</button>
+<p id="msg" class="muted">إذا أول مرة: اضغط إنشاء مساحة جديدة فارغة.</p>
+</section>
+<section id="app" class="card hide">
+<h2 id="title">المساحة</h2>
+<p class="muted">عدّل البيانات هنا بصيغة JSON ثم اضغط رفع. بعد إثبات الربط نركب واجهة الحجوزات فوق نفس الصفحة.</p>
+<button id="save" class="gold" type="button">رفع التعديلات</button>
+<button id="addChalet" type="button">إضافة شاليه فارغ للبيانات</button>
+<textarea id="data"></textarea>
+<p id="status" class="muted"></p>
+</section>
+</main>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+(function(){
+'use strict';
+var SUPABASE_URL='https://fkqidesfrtpwzjcimjoe.supabase.co';
+var SUPABASE_KEY='sb_publishable_Uks_PYr6aqY5wnNBjDjTgg_z2Ic6_al';
+var db=null;
+var workspace='';
+var pin='';
+var lastUpdated='';
+function el(id){return document.getElementById(id)}
+function blank(){return{schema_version:3,updated_at:'',settings:{facility_name:'',tag:'',holidays:[]},chalets:[],bookings:[]}}
+function client(){if(!window.supabase||!window.supabase.createClient){throw new Error('Supabase لم يتم تحميله. تأكد من الإنترنت.')}if(!db){db=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY)}return db}
+function clean(v){return String(v||'').trim().toUpperCase().replace(/[^A-Z0-9_-]/g,'')}
+function read(){workspace=clean(el('workspace').value);pin=String(el('pin').value||'').trim();if(!workspace||pin.length<4){throw new Error('اكتب اليوزر وPIN من 4 خانات أو أكثر')}}
+function showApp(obj){el('login').classList.add('hide');el('app').classList.remove('hide');el('title').textContent='المساحة: '+workspace;el('data').value=JSON.stringify(obj||blank(),null,2);lastUpdated=(obj&&obj.updated_at)||'';el('status').textContent='جاهز'}
+function fail(e){var m=String((e&&e.message)||e||'خطأ');if(m.indexOf('Could not find')>=0||m.indexOf('get_shared_workspace')>=0||m.indexOf('save_shared_workspace')>=0){m='دوال Supabase غير موجودة. شغّل ملف database/shared_workspace_sync.sql في Supabase.'}if(m.indexOf('WORKSPACE_NOT_FOUND')>=0){m='المساحة غير موجودة أو PIN خطأ. إذا أول مرة اضغط إنشاء مساحة جديدة.'}el('msg').textContent='فشل: '+m;el('msg').className='bad'}
+el('pull').addEventListener('click',async function(){try{read();el('msg').textContent='جاري السحب...';var r=await client().rpc('get_shared_workspace',{p_workspace_key:workspace,p_access_pin:pin});if(r.error){throw r.error}showApp(r.data||blank())}catch(e){fail(e)}});
+el('create').addEventListener('click',async function(){try{read();el('msg').textContent='جاري الإنشاء...';var r=await client().rpc('save_shared_workspace',{p_workspace_key:workspace,p_access_pin:pin,p_data:blank()});if(r.error){throw r.error}showApp(r.data||blank())}catch(e){fail(e)}});
+el('save').addEventListener('click',async function(){try{var obj=JSON.parse(el('data').value);el('status').textContent='جاري الرفع...';var fresh=await client().rpc('get_shared_workspace',{p_workspace_key:workspace,p_access_pin:pin});if(fresh.error){throw fresh.error}if(lastUpdated&&fresh.data&&fresh.data.updated_at&&fresh.data.updated_at!==lastUpdated){throw new Error('توجد نسخة أحدث في السحابة. اسحب البيانات أولاً.')}var r=await client().rpc('save_shared_workspace',{p_workspace_key:workspace,p_access_pin:pin,p_data:obj});if(r.error){throw r.error}showApp(r.data||obj);el('status').textContent='تم الرفع بنجاح'}catch(e){el('status').textContent='فشل الرفع: '+((e&&e.message)||e);el('status').className='bad'}});
+el('addChalet').addEventListener('click',function(){try{var obj=JSON.parse(el('data').value||'{}');if(!Array.isArray(obj.chalets)){obj.chalets=[]}obj.chalets.push({id:String(Date.now()),name:'',capacity:0,description:'',contactPhone:'',workerPhone:'',workerName:'',mapUrl:'',terms:'',periods:[],deleted_at:null,updated_at:new Date().toISOString()});el('data').value=JSON.stringify(obj,null,2)}catch(e){el('status').textContent='JSON غير صحيح'}});
+})();
+</script>
+</body>
+</html>
