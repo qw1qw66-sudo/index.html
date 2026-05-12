@@ -1514,7 +1514,9 @@
           $("bookingEditorTitle").textContent = "حجز جديد";
           const list = $("bookingList");
           const editor = $("bookingEditor");
-          if (list && list.parentNode) list.parentNode.insertBefore(editor, list);
+          const newBookingButton = $("newBookingButton");
+          if (newBookingButton) newBookingButton.insertAdjacentElement("afterend", editor);
+          else if (list && list.parentNode) list.parentNode.insertBefore(editor, list);
           $("bookingEditor").classList.remove("hidden");
           feedback("تم فتح نموذج حجز جديد");
         }
@@ -1543,8 +1545,11 @@
           const editor = $("bookingEditor");
           if (card && card.parentNode) card.insertAdjacentElement("afterend", editor);
           $("bookingEditor").classList.remove("hidden");
-          if (card && card.scrollIntoView)
-            card.scrollIntoView({ behavior: "smooth", block: "start" });
+          if (editor && editor.scrollIntoView) {
+            editor.scrollIntoView({ behavior: "smooth", block: "start" });
+          } else if (card) {
+            window.scrollTo(0, Math.max(0, card.getBoundingClientRect().top + window.scrollY - 12));
+          }
           feedback("تم فتح تعديل الحجز");
         }
         function saveBooking() {
