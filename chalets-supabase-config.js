@@ -1,8 +1,8 @@
 // Supabase connection values for Chalet Booking System cloud sync.
-// Public anon key only. Never put service_role key in frontend code.
+// Public publishable/anon key only. Never put service_role or secret key in frontend code.
 
 window.CHALETS_SUPABASE_URL = 'https://fkqidesfrtpwzjcimjoe.supabase.co';
-window.CHALETS_SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZrcWlkZXNmcnRwd3pqY2ltam9lIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgzMzg1NzMsImV4cCI6MjA5MzkxNDU3M30.SkBzDQcimh43fz2g4Gkt8gL52dQF-2oU7_rF_uI-sus';
+window.CHALETS_SUPABASE_ANON_KEY = 'sb_publishable_Uks_PYr6aqY5wnNBjDjTgg_z2Ic6_al';
 
 // Safety patch: never let Magic Link redirect to localhost in production emails.
 // If the app is opened from Gmail or a local preview, the auth redirect is forced to GitHub Pages.
