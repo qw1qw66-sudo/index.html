@@ -819,17 +819,19 @@
             accessPin = pin;
             state = normalizeData(snap.state);
             loadedWorkspace = { workspace_key: workspaceKey, data: state };
-            lastCloudCounts = snap.lastCloudCounts || counts(state);
-            lastCloudUpdatedAt = String(snap.lastCloudUpdatedAt || "");
-            dirty = Boolean(snap.dirty);
+            const restoredLastCloudCounts = snap.lastCloudCounts || counts(state);
+            const restoredLastCloudUpdatedAt = String(snap.lastCloudUpdatedAt || "");
+            const restoredDirty = Boolean(snap.dirty);
             $("workspaceInput").value = workspaceKey;
             $("pinInput").value = "";
             openApp({
               workspace_key: workspaceKey,
               data: state,
-              updated_at: lastCloudUpdatedAt,
+              updated_at: restoredLastCloudUpdatedAt,
             });
-            setDirty(dirty, "restored session");
+            lastCloudCounts = restoredLastCloudCounts;
+            lastCloudUpdatedAt = restoredLastCloudUpdatedAt;
+            setDirty(restoredDirty, "restored session");
             feedback("تم استرجاع الجلسة الحالية في نفس التبويب.", "good");
             return true;
           } catch (e) {
