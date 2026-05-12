@@ -3,7 +3,7 @@
   "short_name": "حجوزات",
   "lang": "ar",
   "dir": "rtl",
-  "start_url": "./app.html",
+  "start_url": "./sync-cloud/final.html",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",

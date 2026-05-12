@@ -5,11 +5,9 @@ import vm from 'node:vm';
 const root = process.cwd();
 const requiredFiles = [
   'app.html',
-  'src/main.js',
   'manifest.webmanifest',
-  'chalets-supabase-config.js',
   'sw.js',
-  'sync-cloud/index.html'
+  'sync-cloud/final.html'
 ];
 
 for (const file of requiredFiles) {
@@ -20,23 +18,44 @@ for (const file of requiredFiles) {
 
 JSON.parse(readFileSync(resolve(root, 'manifest.webmanifest'), 'utf8'));
 
-for (const file of ['src/main.js', 'chalets-supabase-config.js', 'sw.js']) {
+for (const file of ['sw.js']) {
   const source = readFileSync(resolve(root, file), 'utf8');
   new vm.Script(source, { filename: file });
 }
 
 const appHtml = readFileSync(resolve(root, 'app.html'), 'utf8');
+if (!appHtml.includes('sync-cloud/final.html')) throw new Error('app.html must redirect to sync-cloud/final.html');
+
+const finalHtml = readFileSync(resolve(root, 'sync-cloud/final.html'), 'utf8');
 const requiredIds = [
-  'saveBooking', 'bookingSheet', 'bkName', 'bkPhone', 'bkChalet', 'bkIn', 'bkOut',
-  'bkGuests', 'bkTotal', 'bkPaid', 'bkStatus', 'bkNotes', 'syncNow', 'sendLogin'
+  'workspaceKey', 'accessPin', 'connectBtn', 'appView', 'pushBtn',
+  'chaletSheet', 'bookingSheet', 'bkName', 'bkPhone', 'bkChalet', 'bkDate',
+  'bkPeriod', 'bkGuests', 'bkTotal', 'bkPaid', 'bkStatus', 'bkNotes'
 ];
 for (const id of requiredIds) {
-  if (!appHtml.includes(`id="${id}"`)) {
-    throw new Error(`app.html is missing required id: ${id}`);
+  if (!finalHtml.includes(`id="${id}"`)) {
+    throw new Error(`sync-cloud/final.html is missing required id: ${id}`);
   }
 }
 
-if (!appHtml.includes('manifest.webmanifest')) throw new Error('PWA manifest link missing');
-if (!appHtml.includes('@supabase/supabase-js@2')) throw new Error('Supabase client import missing');
+const forbidden = [
+  'email@example.com',
+  'إرسال رابط الدخول',
+  'Magic Link',
+  'Supabase URL',
+  'استرجاع ومزامنة',
+  'شاليه الواحة',
+  'شاليه الياسمين'
+];
+for (const text of forbidden) {
+  if (finalHtml.includes(text)) {
+    throw new Error(`Forbidden legacy/seed text found in final app: ${text}`);
+  }
+}
 
-console.log('Static build check passed');
+if (!finalHtml.includes('get_shared_workspace')) throw new Error('Final app must call get_shared_workspace RPC');
+if (!finalHtml.includes('save_shared_workspace')) throw new Error('Final app must call save_shared_workspace RPC');
+if (!finalHtml.includes('تم منع رفع نسخة فارغة')) throw new Error('Empty overwrite guard text missing');
+if (!finalHtml.includes('لا يتم الرفع عند فتح التطبيق')) throw new Error('No-auto-push safety message missing');
+
+console.log('Static build check passed for final sync-cloud app');
