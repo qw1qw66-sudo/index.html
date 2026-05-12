@@ -3,10 +3,7 @@ import { resolve } from 'node:path';
 
 const root = process.cwd();
 const requiredFiles = [
-  'app/index.html',
-  'app/manifest.webmanifest',
-  'app/icons/icon.svg',
-  'app/icons/apple-touch-icon.png',
+  'index.html',
   'database/shared_workspace_sync.sql',
   '404.html',
   '.github/workflows/pages.yml'
@@ -16,8 +13,7 @@ for (const file of requiredFiles) {
   if (!existsSync(resolve(root, file))) throw new Error(`Missing required file: ${file}`);
 }
 
-const appHtml = readFileSync(resolve(root, 'app/index.html'), 'utf8');
-const manifest = JSON.parse(readFileSync(resolve(root, 'app/manifest.webmanifest'), 'utf8'));
+const indexHtml = readFileSync(resolve(root, 'index.html'), 'utf8');
 const sql = readFileSync(resolve(root, 'database/shared_workspace_sync.sql'), 'utf8');
 const page404 = readFileSync(resolve(root, '404.html'), 'utf8');
 const workflow = readFileSync(resolve(root, '.github/workflows/pages.yml'), 'utf8');
@@ -25,72 +21,68 @@ const workflow = readFileSync(resolve(root, '.github/workflows/pages.yml'), 'utf
 const mustContain = [
   'lang="ar"',
   'dir="rtl"',
-  'viewport-fit=cover',
-  'apple-mobile-web-app-capable',
-  '/app/manifest.webmanifest',
-  '/app/icons/apple-touch-icon.png',
-  'function riyadhTs',
-  'Date.UTC',
+  'نظام حجوزات الشاليهات',
+  'Debug Log',
+  'DOMContentLoaded',
+  'addEventListener',
   'get_shared_workspace',
   'save_shared_workspace',
-  'backup_before_cloud_push_',
-  'تم إيقاف الرفع: البيانات المحلية فارغة وستحذف بيانات السحابة.',
-  'أؤكد استبدال بيانات السحابة',
-  'توجد نسخة أحدث في السحابة',
-  'navigator.share',
-  'navigator.clipboard.writeText'
+  'canonicalEmptyDataModel',
+  'fetch(',
+  '/rest/v1/rpc/',
+  'Pull button clicked',
+  'Create empty workspace button clicked',
+  'app shell remains closed'
 ];
 for (const text of mustContain) {
-  if (!appHtml.includes(text)) throw new Error(`app/index.html missing required text: ${text}`);
+  if (!indexHtml.includes(text)) throw new Error(`index.html missing required text: ${text}`);
 }
 
-const forbiddenApp = [
-  'signInWithOtp',
-  'email@example.com',
-  'Magic Link',
-  'SMTP',
-  'auth.uid',
-  'auth.getSession',
-  '.from(\'chalets\')',
-  '.from("chalets")',
-  'app_settings',
-  'sync_log',
+const forbiddenIndex = [
+  'onclick=',
+  'onchange=',
+  'onsubmit=',
+  'serviceWorker',
+  'manifest.webmanifest',
+  'supabase-js',
+  'createClient',
+  'location.replace',
+  'http-equiv="refresh"',
+  '<script src=',
+  '<link rel="stylesheet"',
   'setInterval(',
-  'visibilitychange',
-  'Realtime',
-  'chalet_booking_sync_v6_state',
-  'chalets_app_state_v3',
-  'restore',
-  'recovery'
+  'localStorage',
+  'indexedDB'
 ];
-for (const text of forbiddenApp) {
-  if (appHtml.includes(text)) throw new Error(`Forbidden production app text found: ${text}`);
+for (const text of forbiddenIndex) {
+  if (indexHtml.includes(text)) throw new Error(`Forbidden root index text found: ${text}`);
 }
 
-if (manifest.start_url !== '/app/') throw new Error('Manifest start_url must be /app/');
-if (manifest.scope !== '/app/') throw new Error('Manifest scope must be /app/');
+if (!sql.includes('pin_hash')) throw new Error('SQL must store pin_hash');
+if (!sql.includes('crypt(')) throw new Error('SQL must use pgcrypto crypt');
+if (!sql.includes('security definer')) throw new Error('RPC must use security definer');
+if (!sql.includes('set search_path = public')) throw new Error('RPC must set search_path');
+if (!sql.includes('revoke all on table public.shared_workspaces from anon')) throw new Error('SQL must revoke direct anon table access');
+if (!sql.includes('grant execute on function public.get_shared_workspace')) throw new Error('SQL must grant get RPC execute');
+if (!sql.includes('grant execute on function public.save_shared_workspace')) throw new Error('SQL must grant save RPC execute');
+
 if (page404.includes('http-equiv="refresh"') || page404.includes('location.replace') || page404.includes('localStorage')) {
   throw new Error('404 must not redirect or scan localStorage');
 }
-if (!page404.includes('/app/')) throw new Error('404 must link to /app/');
-if (!sql.includes('shared_workspaces')) throw new Error('SQL must create shared_workspaces');
-if (!sql.includes('security definer')) throw new Error('RPC must use security definer');
-if (!sql.includes('revoke all on public.shared_workspaces from anon')) throw new Error('SQL must revoke direct anon table access');
-if (!sql.includes('grant execute on function public.get_shared_workspace')) throw new Error('SQL must grant RPC execute');
-if (!workflow.includes('cp -R app/* dist/app/')) throw new Error('Pages workflow must copy app into dist/app');
-if (!workflow.includes('cp 404.html dist/404.html')) throw new Error('Pages workflow must copy only 404 alongside app');
-const forbiddenWorkflowCopies = ['cp app-release', 'cp clean.html', 'cp stable.html', 'cp -R sync-cloud', 'cp sync-cloud', 'cp app.html', 'cp cloud.html'];
-for (const text of forbiddenWorkflowCopies) {
-  if (workflow.includes(text)) throw new Error(`Pages workflow must not copy old public surface: ${text}`);
+
+if (!workflow.includes('cp index.html dist/index.html')) throw new Error('Pages workflow must copy root index into dist');
+if (!workflow.includes('cp 404.html dist/404.html')) throw new Error('Pages workflow must copy 404 alongside index');
+if (workflow.includes('cp -R app') || workflow.includes('cp app-release') || workflow.includes('cp clean.html') || workflow.includes('cp stable.html') || workflow.includes('cp sync-cloud')) {
+  throw new Error('Pages workflow must not copy old public surfaces');
 }
 if (!workflow.includes('path: dist')) throw new Error('Pages workflow must upload dist only');
 
 rmSync(resolve(root, 'dist'), { recursive: true, force: true });
-mkdirSync(resolve(root, 'dist/app'), { recursive: true });
-cpSync(resolve(root, 'app'), resolve(root, 'dist/app'), { recursive: true });
+mkdirSync(resolve(root, 'dist'), { recursive: true });
+cpSync(resolve(root, 'index.html'), resolve(root, 'dist/index.html'));
 cpSync(resolve(root, '404.html'), resolve(root, 'dist/404.html'));
 const forbiddenDist = [
-  'index.html',
+  'app',
   'app.html',
   'cloud.html',
   'clean.html',
@@ -108,4 +100,4 @@ for (const item of forbiddenDist) {
   if (existsSync(resolve(root, 'dist', item))) throw new Error(`Forbidden deployed artifact item exists: ${item}`);
 }
 
-console.log('Static build check passed for canonical /app/ surface');
+console.log('Static build check passed for clean root /index.html surface');
