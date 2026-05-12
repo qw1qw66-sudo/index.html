@@ -13,6 +13,25 @@ for (const file of requiredFiles) {
   if (!existsSync(resolve(root, file))) throw new Error(`Missing required file: ${file}`);
 }
 
+const forbiddenRepoPaths = [
+  'app',
+  'app.html',
+  'cloud.html',
+  'clean.html',
+  'stable.html',
+  'app-release',
+  'sync-cloud',
+  'sync-v6',
+  'manifest.webmanifest',
+  'sw.js',
+  'chalets-cloud-sync.js',
+  'chalets-supabase-config.js'
+];
+
+for (const item of forbiddenRepoPaths) {
+  if (existsSync(resolve(root, item))) throw new Error(`Forbidden public repository surface exists: ${item}`);
+}
+
 const indexHtml = readFileSync(resolve(root, 'index.html'), 'utf8');
 const sql = readFileSync(resolve(root, 'database/shared_workspace_sync.sql'), 'utf8');
 const page404 = readFileSync(resolve(root, '404.html'), 'utf8');
@@ -43,6 +62,8 @@ const forbiddenIndex = [
   'onchange=',
   'onsubmit=',
   'serviceWorker',
+  'Service Worker',
+  'PWA',
   'manifest.webmanifest',
   'supabase-js',
   'createClient',
@@ -66,8 +87,13 @@ if (!sql.includes('revoke all on table public.shared_workspaces from anon')) thr
 if (!sql.includes('grant execute on function public.get_shared_workspace')) throw new Error('SQL must grant get RPC execute');
 if (!sql.includes('grant execute on function public.save_shared_workspace')) throw new Error('SQL must grant save RPC execute');
 
-if (page404.includes('http-equiv="refresh"') || page404.includes('location.replace') || page404.includes('localStorage')) {
-  throw new Error('404 must not redirect or scan localStorage');
+if (
+  page404.includes('http-equiv="refresh"') ||
+  page404.includes('location.replace') ||
+  page404.includes('localStorage') ||
+  page404.includes('/app/')
+) {
+  throw new Error('404 must not redirect, scan localStorage, or link to old /app/ surface');
 }
 
 if (!workflow.includes('cp index.html dist/index.html')) throw new Error('Pages workflow must copy root index into dist');
@@ -100,4 +126,4 @@ for (const item of forbiddenDist) {
   if (existsSync(resolve(root, 'dist', item))) throw new Error(`Forbidden deployed artifact item exists: ${item}`);
 }
 
-console.log('Static build check passed for clean root /index.html surface');
+console.log('Static build check passed for clean root /index.html only surface');
