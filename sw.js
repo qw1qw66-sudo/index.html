@@ -1,13 +1,11 @@
-const CACHE_NAME = 'chalets-booking-pwa-v2';
+const CACHE_NAME = 'chalets-booking-pwa-v3-final';
 const APP_SHELL = [
   './',
   './index.html',
   './app.html',
   './manifest.webmanifest',
   './icon.svg',
-  './chalets-supabase-config.js',
-  './src/main.js',
-  './sync-cloud/index.html'
+  './sync-cloud/final.html'
 ];
 
 self.addEventListener('install', (event) => {
@@ -28,19 +26,10 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
-
   const requestUrl = new URL(event.request.url);
 
   if (requestUrl.origin !== self.location.origin) {
-    event.respondWith(
-      fetch(event.request)
-        .then((response) => {
-          const copy = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy)).catch(() => {});
-          return response;
-        })
-        .catch(() => caches.match(event.request))
-    );
+    event.respondWith(fetch(event.request).catch(() => caches.match(event.request)));
     return;
   }
 
@@ -52,7 +41,7 @@ self.addEventListener('fetch', (event) => {
           caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy)).catch(() => {});
           return response;
         })
-        .catch(() => cached || caches.match('./app.html'));
+        .catch(() => cached || caches.match('./sync-cloud/final.html'));
       return cached || network;
     })
   );
