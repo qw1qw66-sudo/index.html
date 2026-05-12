@@ -18,25 +18,54 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Build clean root artifact
+      - name: Build Pages artifact
         run: |
+          set -euo pipefail
           rm -rf dist
-          mkdir -p dist
+          mkdir -p dist/database
           cp index.html dist/index.html
           cp 404.html dist/404.html
-          find dist -maxdepth 4 -type f | sort
+          cp database/shared_workspace_sync.sql dist/database/shared_workspace_sync.sql
+
           test -f dist/index.html
           test -f dist/404.html
-          test ! -e dist/app
+          test -f dist/database/shared_workspace_sync.sql
+
           test ! -e dist/app.html
-          test ! -e dist/cloud.html
+          test ! -e dist/app-release
           test ! -e dist/clean.html
           test ! -e dist/stable.html
-          test ! -e dist/app-release
           test ! -e dist/sync-cloud
-          test ! -e dist/archive
-          test ! -e dist/manifest.webmanifest
+          test ! -e dist/cloud.html
           test ! -e dist/sw.js
+          test ! -e dist/archive
+          test ! -e dist/app
+          test ! -e dist/manifest.webmanifest
+
+          find dist -maxdepth 4 -type f | sort
+
+      - name: Source inspection
+        run: |
+          set -euo pipefail
+          files="dist/index.html dist/404.html dist/database/shared_workspace_sync.sql"
+          forbidden=(
+            "signInWithOtp"
+            "Magic Link"
+            "email login"
+            "service_role"
+            "serviceWorker"
+            "sync-cloud"
+            "location.replace"
+            "window.location"
+            "document.location"
+            "http-equiv=\"refresh\""
+          )
+          for pattern in "${forbidden[@]}"; do
+            if grep -RInF -- "$pattern" $files; then
+              echo "Forbidden source pattern found: $pattern"
+              exit 1
+            fi
+          done
 
       - name: Setup Pages
         uses: actions/configure-pages@v5

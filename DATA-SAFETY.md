@@ -1,69 +1,47 @@
-# Data Safety Policy
+# Data Safety
 
-Final production route: `/app/`.
+## مبادئ السلامة
 
-The production app is intentionally conservative. The highest priority is preventing a browser page from overwriting real cloud data with empty, stale, or legacy local data.
+1. لا يوجد رفع تلقائي عند فتح الصفحة.
+2. لا يوجد رفع عند تغيير التبويب.
+3. لا يوجد رفع عند إعادة الاتصال.
+4. الرفع يحدث فقط من زر `رفع التعديلات`.
+5. لا يمكن الرفع إلا بعد Pull/Create ناجح في نفس الجلسة.
 
-## R1 — No seed data
+## حواجز الرفع
 
-The app never creates demo chalets, demo bookings, demo periods, or fallback customer data. If a workspace is empty, the UI remains empty and shows an Arabic message.
-
-## R2 — No recovery UI in production
-
-The production route has no localStorage scanner, no recovery page, no restore page, and no "adopt best candidate" flow. Legacy recovery code is excluded from the Pages artifact.
-
-## R3 — No push before successful pull
-
-`save_shared_workspace` may not be called unless all of these are true in the current browser session:
-
-- `workspaceKey` is set.
-- `accessPin` is set.
-- `workspaceLoaded === true`.
-- `lastCloudPullAt` is set from a successful pull.
-- `lastCloudCounts` is known.
-
-If any condition is false, upload is blocked client-side with an Arabic message.
-
-## R4 — Empty overwrite guard
-
-Before upload, the app compares local counts against the most recent cloud counts. If local data has zero active chalets and zero active bookings while the last cloud pull had data, upload is blocked with:
+قبل رفع البيانات يتحقق التطبيق من:
 
 ```text
-تم إيقاف الرفع: البيانات المحلية فارغة وستحذف بيانات السحابة.
+current session pull/create
+lastCloudCounts
+lastCloudUpdatedAt
+empty overwrite guard
+concurrent edit guard
 ```
 
-## R5 — Low-count destructive guard
+## منع الاستبدال الفارغ
 
-If chalets drop by at least one, or bookings drop by at least 20% and at least three records, the user must type exactly:
+إذا كانت البيانات المحلية فارغة بينما آخر نسخة سحابية تحتوي بيانات، يتم منع الرفع.
+
+## منع تعارض النسخ
+
+قبل الرفع يتم سحب آخر `updated_at` من السحابة. إذا تغيّر عن `lastCloudUpdatedAt` يتم إيقاف الرفع حتى لا يتم استبدال تعديل أحدث.
+
+## النسخ الاحتياطية المحلية
+
+قبل أي رفع فعلي يتم إنشاء نسخة محلية باسم:
 
 ```text
-أؤكد استبدال بيانات السحابة
+backup_before_cloud_push_<ISO>
 ```
 
-A normal browser confirm dialog is not used.
+ويتم الاحتفاظ بآخر 10 نسخ فقط.
 
-## R6 — Backup before push
+## PIN
 
-Immediately before cloud upload, the app writes a local backup under:
+الـ PIN لا يتم تخزينه كنص صريح في قاعدة البيانات. ملف SQL يستخدم `pgcrypto` للحفظ كـ hash.
 
-```text
-backup_before_cloud_push_<ISO timestamp>
-```
+## وصول قاعدة البيانات
 
-The backup contains workspace key, counts, data, and timestamp. The app keeps the latest ten push backups.
-
-## R7 — Import never auto-pushes
-
-No JSON import path exists on the production landing route. If a future internal import tool is added, it must load to screen/cache only and must never upload without a separate post-review upload action.
-
-## R8 — No auto push on boot
-
-On load, the app either shows the connect screen or performs a pull only if saved credentials exist. It never pushes on boot, focus, visibility changes, reconnect, or timer. There is no periodic upload loop.
-
-## R9 — Concurrent edit safety
-
-Each pull captures the cloud `updated_at`. Immediately before upload, the app performs a fresh `get_shared_workspace` call. If cloud `updated_at` advanced, upload is blocked and the user must pull and review first.
-
-## Source of truth
-
-The source of truth is `shared_workspaces.data` returned by Supabase RPC. LocalStorage is only cache and safety backup.
+الجدول لا يعطي وصول مباشر لـ anon/authenticated. الوصول من خلال RPC فقط.

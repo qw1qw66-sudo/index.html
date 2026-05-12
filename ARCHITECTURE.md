@@ -1,58 +1,66 @@
 # Architecture
 
-## Final public surface
+## هدف التصميم
 
-The only production entry point is:
+إزالة تعدد الصفحات والتجارب السابقة وبناء سطح واحد واضح وقابل للاختبار.
 
-```text
-/app/
-```
-
-All legacy surfaces are excluded from the GitHub Pages artifact by `.github/workflows/pages.yml`.
-
-## Sync flow
+## الملفات العامة
 
 ```text
-Browser /app/
-  → Supabase JS v2 with anon public key
-  → RPC get_shared_workspace(workspace_key, pin)
-  → one JSON document from shared_workspaces.data
-  → local screen/cache
-  → explicit user upload only
-  → fresh RPC get_shared_workspace for updated_at check
-  → RPC save_shared_workspace(workspace_key, pin, data)
+/index.html
+/404.html
+/database/shared_workspace_sync.sql
 ```
 
-There is no Supabase Auth session, no Magic Link, no OTP, no SMTP, and no `auth.uid()` tenancy.
+## طبقات النظام
 
-## Database source of truth
+### 1. الواجهة
+
+- ملف واحد: `/index.html`
+- HTML/CSS/JS فقط
+- عربي RTL
+- لا frameworks
+- لا external JS
+- لا external CSS
+
+### 2. البيانات
+
+البيانات تحفظ كسند JSON داخل جدول `shared_workspaces` عبر RPC فقط.
+
+### 3. الاتصال بالسحابة
+
+الاتصال من المتصفح يتم فقط إلى:
 
 ```text
-shared_workspaces (
-  workspace_key text primary key,
-  access_pin text not null,
-  data jsonb not null default '{}'::jsonb,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
-)
+/rest/v1/rpc/get_shared_workspace
+/rest/v1/rpc/save_shared_workspace
 ```
 
-The browser does not directly read or write `chalets`, `bookings`, `app_settings`, or `sync_log`.
-
-## Canonical JSON model
+### 4. نموذج البيانات
 
 ```text
-data.schema_version = 3
-data.settings.facility_name
-data.settings.tag
-data.settings.holidays[]
-data.chalets[]
-data.chalets[].periods[]
-data.bookings[]
+settings
+chalets
+chalets.periods
+bookings
 ```
 
-Bookings use `booking_date + period_id`. `check_in`, `check_out`, and `nights` are not primary fields.
+### 5. قواعد الحجز
 
-## Safety model
+يمنع تعارض الحجوزات المؤكدة فقط عندما تتحقق الشروط:
 
-The app requires a successful pull before upload, blocks empty overwrites, requires typed confirmation for destructive count drops, writes local backup before upload, and checks cloud `updated_at` immediately before save.
+```text
+same chalet
+status confirmed
+not deleted
+different booking id
+time intervals overlap
+```
+
+### 6. الرفع الآمن
+
+الرفع لا يحدث إلا من زر `رفع التعديلات` وبعد Pull/Create ناجح في نفس الجلسة.
+
+### 7. الأرشيف
+
+`/archive` موجود فقط للمرجع داخل الريبو ولا يدخل في `dist` ولا Pages artifact.

@@ -1,126 +1,42 @@
-# نظام حجوزات الشاليهات - الإصدار الإنتاجي
+# نظام حجوزات الشاليهات
 
-هذا الإصدار يثبت سطحًا عامًا واحدًا فقط للتطبيق:
+تطبيق حجز عربي بسيط يعمل من ملف جذر واحد: `/index.html`.
 
-```text
-/app/
-```
+## السطح الرسمي
 
-رابط GitHub Pages المتوقع لهذا المستودع:
-
-```text
-https://qw1qw66-sudo.github.io/index.html/app/
-```
-
-> ملاحظة تشغيل: التطبيق نفسه يستخدم المسار القانوني `/app/` وملف manifest على `/app/manifest.webmanifest` حسب متطلبات الإصدار. إذا بقي الموقع منشورًا كـ project page تحت `/index.html/`، قد تحتاج إعداد Pages أو custom domain بحيث يكون `/app/` متاحًا من جذر النطاق.
-
-## ما الذي تم إيقافه
-
-لا يستخدم الإصدار النهائي أيًا من التالي:
-
-- بريد إلكتروني.
-- Magic Link.
-- OTP.
-- SMTP.
-- Supabase Auth للمستخدم النهائي.
-- `auth.uid()` للتقسيم بين المستخدمين.
-- صفحات recovery / restore / scanner كواجهة إنتاجية.
-- بيانات seed أو demo.
-- رفع تلقائي عند الفتح أو التركيز أو الرجوع للاتصال.
-
-## طريقة الربط والمزامنة
-
-الربط يتم فقط عبر:
-
-```text
-Workspace Code + PIN
-```
-
-المتصفح يتصل بـ Supabase باستخدام anon public key ويستدعي RPC فقط:
-
-```text
-get_shared_workspace(p_workspace_key, p_access_pin)
-save_shared_workspace(p_workspace_key, p_access_pin, p_data)
-```
-
-لا يقرأ المتصفح ولا يكتب مباشرة في جداول `chalets` أو `bookings` أو `app_settings` أو `sync_log`.
-
-## إعداد Supabase
-
-افتح:
-
-```text
-Supabase → SQL Editor → New query
-```
-
-ثم شغّل الملف:
-
-```text
-database/shared_workspace_sync.sql
-```
-
-هذا الملف ينشئ جدول المصدر الوحيد:
-
-```text
-shared_workspaces
-```
-
-ويضيف دوال RPC ويمنع direct table access من المتصفح.
-
-## نموذج البيانات
-
-كل بيانات المساحة محفوظة داخل `shared_workspaces.data` كـ JSON واحد:
-
-```json
-{
-  "schema_version": 3,
-  "updated_at": "server timestamp",
-  "settings": {
-    "facility_name": "",
-    "tag": "",
-    "holidays": []
-  },
-  "chalets": [],
-  "bookings": []
-}
-```
-
-كل شاليه يحتفظ ببياناته الخاصة للسند:
-
-- `contactPhone`
-- `workerPhone`
-- `workerName`
-- `mapUrl`
-- `terms`
-- `periods[]`
-
-## حماية البيانات
-
-قبل أي رفع للسحابة يجب أن يكون هناك سحب ناجح في نفس الجلسة. التطبيق يطبّق:
-
-- منع الرفع قبل Pull ناجح.
-- منع رفع نسخة محلية فارغة فوق سحابة فيها بيانات.
-- طلب عبارة تأكيد مكتوبة عند انخفاض عدد الشاليهات أو الحجوزات بشكل خطر.
-- Backup محلي قبل كل رفع.
-- فحص `updated_at` من السحابة قبل الرفع لمنع overwrite من جهاز قديم.
-
-## الاختبار المحلي
-
-```text
-npm install
-npm run lint
-npm run build
-npm test
-npm run e2e
-```
+- الصفحة الوحيدة للتطبيق: `/index.html`
+- صفحة الخطأ: `/404.html`
+- ملف قاعدة البيانات: `/database/shared_workspace_sync.sql`
 
 ## النشر
 
-النشر يتم عبر `.github/workflows/pages.yml`، وهو يبني artifact نظيف يحتوي فقط:
+GitHub Pages workflow يبني مجلد `dist` وينشر فقط:
 
 ```text
-/app/
-/404.html
+dist/index.html
+dist/404.html
+dist/database/shared_workspace_sync.sql
 ```
 
-ولا ينشر `/archive/` أو `/sync-cloud/` أو أي صفحات قديمة.
+ولا ينشر أي أسطح قديمة أو ملفات أرشيف.
+
+## قاعدة التشغيل
+
+- لا يوجد تسجيل دخول بالبريد.
+- لا توجد روابط تحقق بالبريد.
+- لا توجد مكتبات خارجية.
+- الاتصال بالسحابة يتم فقط عبر `fetch` إلى Supabase RPC.
+- لا يحدث رفع تلقائي عند فتح الصفحة أو تغيير التبويبات.
+- الرفع يتم فقط من زر: `رفع التعديلات`.
+
+## الفرع الحالي للعمل
+
+```text
+rebuild/clean-root-app
+```
+
+## النسخة الاحتياطية
+
+```text
+backup-before-full-clean-rebuild
+```
