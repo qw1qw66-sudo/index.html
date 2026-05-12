@@ -1,12 +1,7 @@
-// Supabase connection values for Chalet Booking System cloud sync.
-// Public publishable/anon key only. Never put service_role or secret key in frontend code.
-
 window.CHALETS_SUPABASE_URL = 'https://fkqidesfrtpwzjcimjoe.supabase.co';
 window.CHALETS_SUPABASE_ANON_KEY = 'sb_publishable_Uks_PYr6aqY5wnNBjDjTgg_z2Ic6_al';
-
-// Safety patch: never let Magic Link redirect to localhost in production emails.
-// If the app is opened from Gmail or a local preview, the auth redirect is forced to GitHub Pages.
 window.CHALETS_PRODUCTION_URL = 'https://qw1qw66-sudo.github.io/index.html/app.html';
+
 (function patchSupabaseRedirect(){
   function getRedirectUrl(){
     var host = window.location.hostname;
@@ -36,8 +31,6 @@ window.CHALETS_PRODUCTION_URL = 'https://qw1qw66-sudo.github.io/index.html/app.h
   patch();
 })();
 
-// Register the PWA service worker. This is intentionally non-blocking; the booking app must still work
-// if registration fails on a browser/private mode that restricts service workers.
 (function registerChaletsServiceWorker(){
   if (!('serviceWorker' in navigator)) return;
   var scriptEl = document.currentScript;
@@ -49,10 +42,6 @@ window.CHALETS_PRODUCTION_URL = 'https://qw1qw66-sudo.github.io/index.html/app.h
   });
 })();
 
-// Hotfix guard for booking edit conflict false positives.
-// The current app keeps core functions inside src/main.js IIFE. Until they are extracted into modules,
-// this guard intercepts only EDIT saves, preserves the edited booking identity, and ignores the same
-// booking by id or booking_no during local/cloud conflict checks.
 (function installBookingEditConflictGuard(){
   var APP_KEY = 'chalets_app_state_v5';
   var QUEUE_KEY = 'chalets_sync_queue_v2';
@@ -64,10 +53,7 @@ window.CHALETS_PRODUCTION_URL = 'https://qw1qw66-sudo.github.io/index.html/app.h
   function uid(){ return (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now().toString(36) + Math.random().toString(36).slice(2, 10)); }
   function toNumber(v){ return Number(v || 0); }
   function parseDate(s){ return new Date(String(s || '') + 'T00:00:00'); }
-  function nights(a,b){
-    if(!a || !b) return 0;
-    return Math.round((parseDate(b) - parseDate(a)) / 86400000);
-  }
+  function nights(a,b){ if(!a || !b) return 0; return Math.round((parseDate(b) - parseDate(a)) / 86400000); }
   function activeBookings(state){ return (state.bookings || []).filter(function(b){ return !b.deleted_at; }); }
   function showToast(msg, type){
     var el = $('toast');
@@ -86,25 +72,20 @@ window.CHALETS_PRODUCTION_URL = 'https://qw1qw66-sudo.github.io/index.html/app.h
       parsed.bookings = parsed.bookings || [];
       parsed.settings = parsed.settings || {};
       return parsed;
-    } catch(e){
-      console.error('[booking-edit-guard] failed to read state', e);
+    } catch(error){
+      console.error('[booking-edit-guard] failed to read state', error);
       return {chalets:[], bookings:[], settings:{}, theme:'dark'};
     }
   }
   function writeState(state){ localStorage.setItem(APP_KEY, JSON.stringify(state)); }
-  function readQueue(){
-    try { return JSON.parse(localStorage.getItem(QUEUE_KEY) || '[]'); }
-    catch(e){ return []; }
-  }
+  function readQueue(){ try { return JSON.parse(localStorage.getItem(QUEUE_KEY) || '[]'); } catch { return []; } }
   function writeQueue(q){ localStorage.setItem(QUEUE_KEY, JSON.stringify(q)); }
-  function enqueueBooking(id, action){
+  function enqueueBooking(id){
     var q = readQueue();
-    q.push({type:'booking', id:id, action:action || 'upsert', created_at:now(), retry:0});
+    q.push({type:'booking', id:id, action:'upsert', created_at:now(), retry:0});
     writeQueue(q.slice(-200));
   }
-  function bookingNo(state){
-    return String(new Date().getFullYear()) + '-' + String(activeBookings(state).length + 1).padStart(4, '0');
-  }
+  function bookingNo(state){ return String(new Date().getFullYear()) + '-' + String(activeBookings(state).length + 1).padStart(4, '0'); }
   function formBooking(existingId){
     var state = readState();
     var old = activeBookings(state).find(function(b){ return String(b.id) === String(existingId); }) || {};
@@ -151,10 +132,7 @@ window.CHALETS_PRODUCTION_URL = 'https://qw1qw66-sudo.github.io/index.html/app.h
   function localConflict(state, booking){
     if(booking.status !== 'confirmed') return false;
     return activeBookings(state).some(function(b){
-      return !sameBooking(b, booking) &&
-        b.chalet_id === booking.chalet_id &&
-        b.status === 'confirmed' &&
-        overlaps(b, booking);
+      return !sameBooking(b, booking) && b.chalet_id === booking.chalet_id && b.status === 'confirmed' && overlaps(b, booking);
     });
   }
   function inferEditingSnapshot(){
@@ -171,18 +149,9 @@ window.CHALETS_PRODUCTION_URL = 'https://qw1qw66-sudo.github.io/index.html/app.h
       paid: toNumber($('bkPaid') ? $('bkPaid').value : 0)
     };
     var found = activeBookings(state).find(function(b){
-      return b.chalet_id === current.chalet_id &&
-        b.customer_phone === current.customer_phone &&
-        b.check_in === current.check_in &&
-        b.check_out === current.check_out &&
-        toNumber(b.total) === current.total &&
-        toNumber(b.paid) === current.paid;
+      return b.chalet_id === current.chalet_id && b.customer_phone === current.customer_phone && b.check_in === current.check_in && b.check_out === current.check_out && toNumber(b.total) === current.total && toNumber(b.paid) === current.paid;
     }) || activeBookings(state).find(function(b){
-      return b.chalet_id === current.chalet_id &&
-        b.customer_name === current.customer_name &&
-        b.customer_phone === current.customer_phone &&
-        b.check_in === current.check_in &&
-        b.check_out === current.check_out;
+      return b.chalet_id === current.chalet_id && b.customer_name === current.customer_name && b.customer_phone === current.customer_phone && b.check_in === current.check_in && b.check_out === current.check_out;
     });
     return found ? {id: found.id, booking_no: found.booking_no} : null;
   }
@@ -193,41 +162,27 @@ window.CHALETS_PRODUCTION_URL = 'https://qw1qw66-sudo.github.io/index.html/app.h
     var sessionResult = await client.auth.getSession();
     var authUser = sessionResult && sessionResult.data && sessionResult.data.session && sessionResult.data.session.user;
     if(!authUser) return false;
-    var result = await client
-      .from('bookings')
-      .select('id, booking_no, check_in, check_out')
-      .eq('user_id', authUser.id)
-      .eq('chalet_id', booking.chalet_id)
-      .eq('status', 'confirmed')
-      .is('deleted_at', null)
-      .lt('check_in', booking.check_out)
-      .gt('check_out', booking.check_in);
-    if(result.error){
-      console.error('[booking-edit-guard] cloud conflict check failed', result.error);
-      return false;
-    }
+    var result = await client.from('bookings').select('id, booking_no').eq('user_id', authUser.id).eq('chalet_id', booking.chalet_id).eq('status', 'confirmed').is('deleted_at', null).lt('check_in', booking.check_out).gt('check_out', booking.check_in);
+    if(result.error){ console.error('[booking-edit-guard] cloud conflict check failed', result.error); return false; }
     return (result.data || []).some(function(row){ return !sameBooking(row, booking); });
   }
   async function saveFromGuard(event){
     if(!event.target || event.target.id !== 'saveBooking') return;
     if(!editingSnapshot) return;
-
     event.preventDefault();
     event.stopPropagation();
     event.stopImmediatePropagation();
-
     var state = readState();
     var booking = formBooking(editingSnapshot.id);
     var validation = validateBooking(booking);
     if(validation) return showToast(validation, 'bad');
     if(localConflict(state, booking)) return showToast('يوجد حجز مؤكد لنفس الشاليه في هذه الفترة. لا يمكن حفظ الحجز.', 'bad');
     if(await cloudConflict(booking)) return showToast('يوجد حجز مؤكد لنفس الشاليه في هذه الفترة. لا يمكن حفظ الحجز.', 'bad');
-
     var idx = state.bookings.findIndex(function(b){ return sameBooking(b, booking); });
     if(idx >= 0) state.bookings[idx] = booking;
     else state.bookings.push(booking);
     writeState(state);
-    enqueueBooking(booking.id, 'upsert');
+    enqueueBooking(booking.id);
     showToast('تم الحفظ');
     setTimeout(function(){ window.location.reload(); }, 350);
   }
@@ -235,11 +190,8 @@ window.CHALETS_PRODUCTION_URL = 'https://qw1qw66-sudo.github.io/index.html/app.h
     var sheet = $('bookingSheet');
     if(!sheet) return;
     var update = function(){
-      if(sheet.classList.contains('on')){
-        setTimeout(function(){ editingSnapshot = inferEditingSnapshot(); }, 80);
-      } else {
-        editingSnapshot = null;
-      }
+      if(sheet.classList.contains('on')) setTimeout(function(){ editingSnapshot = inferEditingSnapshot(); }, 80);
+      else editingSnapshot = null;
     };
     new MutationObserver(update).observe(sheet, {attributes:true, attributeFilter:['class']});
     update();
@@ -249,7 +201,149 @@ window.CHALETS_PRODUCTION_URL = 'https://qw1qw66-sudo.github.io/index.html/app.h
     guardInstalled = true;
     watchBookingSheet();
     document.addEventListener('click', saveFromGuard, true);
-    console.info('[booking-edit-guard] installed');
+  }
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', install);
+  else install();
+})();
+
+(function installWorkspaceCodeSync(){
+  var APP_KEY = 'chalets_app_state_v5';
+  var DB_NAME = 'chaletsDB';
+  var STORE = 'kv';
+  var CODE_KEY = 'chalets_workspace_code_v1';
+  var lastRendered = '';
+
+  function $(id){ return document.getElementById(id); }
+  function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  function normalizeCode(value){ return String(value || '').trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '').slice(0, 32); }
+  function normalizeAccess(value){ return String(value || '').trim().slice(0, 32); }
+  function toast(message, type){
+    var el = $('toast');
+    if(!el){ alert(message); return; }
+    el.textContent = message;
+    el.className = 'toast on ' + (type || 'ok');
+    clearTimeout(toast._timer);
+    toast._timer = setTimeout(function(){ el.className = 'toast'; }, 3200);
+  }
+  function readState(){ try{ var raw = localStorage.getItem(APP_KEY); return raw ? JSON.parse(raw) : null; }catch(error){ console.error('[workspace-sync] read failed', error); return null; } }
+  function writeState(state){
+    localStorage.setItem(APP_KEY, JSON.stringify(state));
+    if(!('indexedDB' in window)) return Promise.resolve();
+    return new Promise(function(resolve){
+      var req = indexedDB.open(DB_NAME, 1);
+      req.onupgradeneeded = function(){ if(!req.result.objectStoreNames.contains(STORE)) req.result.createObjectStore(STORE); };
+      req.onerror = function(){ resolve(); };
+      req.onsuccess = function(){
+        var db = req.result;
+        var tx = db.transaction(STORE, 'readwrite');
+        tx.objectStore(STORE).put(state, APP_KEY);
+        tx.oncomplete = function(){ resolve(); };
+        tx.onerror = function(){ resolve(); };
+      };
+    });
+  }
+  function createClient(){
+    if(!window.supabase || !window.supabase.createClient) throw new Error('تعذر تحميل مكتبة Supabase');
+    return window.supabase.createClient(window.CHALETS_SUPABASE_URL, window.CHALETS_SUPABASE_ANON_KEY, {auth:{persistSession:false,autoRefreshToken:false,detectSessionInUrl:false}});
+  }
+  function summary(state){
+    var chalets = ((state && state.chalets) || []).filter(function(x){ return !x.deleted_at; }).length;
+    var bookings = ((state && state.bookings) || []).filter(function(x){ return !x.deleted_at; }).length;
+    return chalets + ' شاليه / ' + bookings + ' حجز';
+  }
+  function setStatus(text, bad){
+    var cloud = $('cloudStatusText');
+    var status = $('workspaceStatus');
+    var top = $('cloudTop');
+    if(cloud) cloud.textContent = text;
+    if(status){ status.textContent = text; status.style.color = bad ? 'var(--red)' : 'var(--muted)'; }
+    if(top) top.title = text;
+  }
+  function inputs(){
+    var code = normalizeCode($('workspaceCode') && $('workspaceCode').value);
+    var accessCode = normalizeAccess($('workspaceAccessCode') && $('workspaceAccessCode').value);
+    if(!code || code.length < 3) throw new Error('رمز المزامنة يجب أن يكون 3 أحرف أو أكثر');
+    if(!accessCode || accessCode.length < 4) throw new Error('الرقم السري يجب أن يكون 4 أحرف/أرقام أو أكثر');
+    localStorage.setItem(CODE_KEY, code);
+    return {code:code, accessCode:accessCode};
+  }
+  function render(force){
+    var card = document.querySelector('#v-settings .cloud-card');
+    if(!card) return false;
+    if(!force && card.querySelector('#workspaceCode')) return true;
+    var savedCode = normalizeCode(localStorage.getItem(CODE_KEY) || 'ALI6');
+    var state = readState();
+    var html = '<h3>المزامنة السحابية ☁️</h3>'+
+      '<p class="small">اربط الأجهزة بنفس رمز المزامنة والرقم السري. الرقم السري لا يُحفظ في الجهاز.</p>'+
+      '<p class="small" id="workspaceStatus">'+(savedCode ? 'متصل: '+esc(savedCode) : 'محلي فقط')+'</p>'+
+      '<div class="f"><label>رمز المزامنة</label><input id="workspaceCode" class="ltr" value="'+esc(savedCode)+'" placeholder="ALI6" autocomplete="off"></div>'+
+      '<div class="f"><label>الرقم السري</label><input id="workspaceAccessCode" class="ltr" placeholder="••••" type="password" autocomplete="off"></div>'+
+      '<button class="btn primary full" id="workspaceConnect">تحميل / ربط المساحة</button>'+
+      '<div class="row" style="margin-top:10px"><button class="btn outline" id="workspacePull">تحميل من السحابة</button><button class="btn outline" id="workspacePush">رفع التعديلات</button></div>'+
+      '<p class="small" id="workspaceSummary">آخر تحميل محلي: '+esc(summary(state))+'</p>'+
+      '<div style="display:none"><input id="supabaseUrl" value="'+esc(window.CHALETS_SUPABASE_URL || '')+'"><input id="supabaseAnon" value="'+esc(window.CHALETS_SUPABASE_ANON_KEY || '')+'"><button id="saveCloudConfig" type="button"></button><div id="authBox"><input id="loginEmail"><button id="sendLogin" type="button"></button><p id="authMessage"></p></div><div id="loggedBox"><b id="loggedEmail"></b><button id="syncNow" type="button"></button><button id="logoutBtn" type="button"></button></div></div>';
+    if(html === lastRendered && !force) return true;
+    lastRendered = html;
+    card.innerHTML = html;
+    $('workspaceConnect').addEventListener('click', connectWorkspace);
+    $('workspacePull').addEventListener('click', pullWorkspace);
+    $('workspacePush').addEventListener('click', pushWorkspace);
+    setStatus(savedCode ? 'متصل: '+savedCode : 'محلي فقط');
+    return true;
+  }
+  async function pullWorkspace(){
+    try{
+      var input = inputs();
+      setStatus('جاري التحميل من السحابة...');
+      var response = await createClient().rpc('workspace_pull_state', {p_code: input.code, p_access_code: input.accessCode});
+      if(response.error) throw response.error;
+      if(!response.data || !response.data.ok || response.data.not_found){
+        toast('المساحة غير موجودة. استخدم رفع التعديلات لإنشائها.', 'bad');
+        setStatus('المساحة غير موجودة', true);
+        return null;
+      }
+      await writeState(response.data.state);
+      setStatus('متصل: '+input.code);
+      toast('تم تحميل بيانات المساحة');
+      setTimeout(function(){ window.location.reload(); }, 500);
+      return response.data.state;
+    }catch(error){
+      console.error(error);
+      var msg = String(error.message || error);
+      toast(msg.indexOf('INVALID_ACCESS_CODE') >= 0 ? 'الرقم السري غير صحيح' : 'فشل التحميل: '+msg, 'bad');
+      setStatus('فشل التحميل', true);
+      return null;
+    }
+  }
+  async function pushWorkspace(){
+    try{
+      var input = inputs();
+      var state = readState();
+      if(!state) throw new Error('لا توجد بيانات محلية للرفع');
+      if(!confirm('سيتم رفع بيانات هذا الجهاز إلى المساحة '+input.code+'. هل تريد المتابعة؟')) return;
+      setStatus('جاري رفع التعديلات...');
+      var response = await createClient().rpc('workspace_push_state', {p_code: input.code, p_access_code: input.accessCode, p_state: state});
+      if(response.error) throw response.error;
+      if(!response.data || !response.data.ok) throw new Error('لم يتم تأكيد الرفع من Supabase');
+      setStatus('متصل: '+input.code);
+      toast(response.data.created ? 'تم إنشاء المساحة ورفع البيانات' : 'تم رفع التعديلات');
+    }catch(error){
+      console.error(error);
+      var msg = String(error.message || error);
+      toast(msg.indexOf('INVALID_ACCESS_CODE') >= 0 ? 'الرقم السري غير صحيح' : 'فشل الرفع: '+msg, 'bad');
+      setStatus('فشل الرفع', true);
+    }
+  }
+  async function connectWorkspace(){
+    var state = await pullWorkspace();
+    if(!state && confirm('هل تريد إنشاء المساحة من بيانات هذا الجهاز؟')) await pushWorkspace();
+  }
+  function install(){
+    if(!render(true)) return setTimeout(install, 300);
+    setInterval(function(){
+      var card = document.querySelector('#v-settings .cloud-card');
+      if(card && !card.querySelector('#workspaceCode')) render(true);
+    }, 800);
   }
   if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', install);
   else install();
