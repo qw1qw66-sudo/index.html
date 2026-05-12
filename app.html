@@ -3,15 +3,19 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta http-equiv="refresh" content="0; url=sync-cloud/final.html">
+  <meta http-equiv="refresh" content="0; url=app-release/">
   <title>نظام حجوزات الشاليهات</title>
-  <script>location.replace('sync-cloud/final.html'+location.search);</script>
+  <script>
+    // GitHub Pages project site runs under /index.html/.
+    // Use a relative path so app.html always opens the working app beside it.
+    location.replace('app-release/' + location.search + location.hash);
+  </script>
 </head>
-<body style="margin:0;background:#0f1115;color:#f6efe5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Tahoma,Arial,sans-serif;display:grid;place-items:center;min-height:100vh;text-align:center;padding:20px">
+<body style="margin:0;background:#10141d;color:#fff7ec;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Tahoma,Arial,sans-serif;display:grid;place-items:center;min-height:100vh;text-align:center;padding:20px">
   <main>
-    <h1>جاري فتح النسخة النهائية الآمنة...</h1>
+    <h1>جاري فتح نظام الحجوزات...</h1>
     <p>إذا لم يتم التحويل تلقائيًا اضغط الرابط التالي:</p>
-    <p><a style="color:#d4af5f" href="sync-cloud/final.html">فتح النظام النهائي</a></p>
+    <p><a style="color:#d7b46a" href="app-release/">فتح النظام</a></p>
   </main>
 </body>
 </html>
