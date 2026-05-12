@@ -29,7 +29,8 @@ const mustContain = [
   'apple-mobile-web-app-capable',
   '/app/manifest.webmanifest',
   '/app/icons/apple-touch-icon.png',
-  'Asia/Riyadh',
+  'function riyadhTs',
+  'Date.UTC',
   'get_shared_workspace',
   'save_shared_workspace',
   'backup_before_cloud_push_',
@@ -57,8 +58,8 @@ const forbiddenApp = [
   'setInterval(',
   'visibilitychange',
   'Realtime',
-  'localStorage.length',
-  'adopt',
+  'chalet_booking_sync_v6_state',
+  'chalets_app_state_v3',
   'restore',
   'recovery'
 ];
