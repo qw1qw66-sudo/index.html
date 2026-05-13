@@ -1274,7 +1274,7 @@
             .filter((b) => b.status !== "cancelled" && b.booking_date >= t)
             .sort((a, b) => a.booking_date.localeCompare(b.booking_date));
           const past = bs
-            .filter((b) => b.booking_date < t)
+            .filter((b) => b.status !== "cancelled" && b.booking_date < t)
             .sort((a, b) => b.booking_date.localeCompare(a.booking_date));
           $("homeChalets").textContent = activeChalets().length;
           $("homeBookings").textContent = bs.length;
@@ -1325,7 +1325,7 @@
               .map((b) => bookingCard(b, "upcoming"))
               .join("") || '<div class="empty">لا توجد حجوزات</div>';
           const past = activeBookings()
-            .filter((b) => b.booking_date < today())
+            .filter((b) => b.status !== "cancelled" && b.booking_date < today())
             .slice()
             .sort((a, b) => b.booking_date.localeCompare(a.booking_date));
           $("bookingPastList").innerHTML =
