@@ -769,6 +769,7 @@
         }
         function log(m, d) {
           const e = $("debugLog");
+          if (!e) return;
           e.textContent =
             "[" +
             now() +
@@ -1538,7 +1539,15 @@
         }
         function fillBookingSelects() {
           const old = $("bookingChaletId").value;
-          $("bookingChaletId").innerHTML = activeChalets()
+          const active = activeChalets();
+          if (!active.length) {
+            $("bookingChaletId").innerHTML =
+              '<option value="">لا توجد شاليهات متاحة.</option>';
+            $("bookingPeriodId").innerHTML =
+              '<option value="">لا توجد فترات متاحة.</option>';
+            return;
+          }
+          $("bookingChaletId").innerHTML = active
             .map(
               (c) =>
                 '<option value="' +
@@ -1606,18 +1615,22 @@
           feedback("تم فتح نموذج حجز جديد");
         }
         function findBookingCardForAction(id, sourceEl) {
+          const targetId = String(id || "");
           const fromSource = sourceEl && sourceEl.closest("[data-booking-card-id]");
-          if (fromSource && fromSource.dataset.bookingCardId === id) return fromSource;
+          if (fromSource && fromSource.dataset.bookingCardId === targetId)
+            return fromSource;
 
           const activeView = document.querySelector(".view.active");
           const visibleCards = activeView
             ? Array.from(activeView.querySelectorAll("[data-booking-card-id]"))
             : [];
-          const inActiveView = visibleCards.find((el) => el.dataset.bookingCardId === id);
+          const inActiveView = visibleCards.find(
+            (el) => el.dataset.bookingCardId === targetId,
+          );
           if (inActiveView) return inActiveView;
 
           return Array.from(document.querySelectorAll("[data-booking-card-id]")).find(
-            (el) => el.dataset.bookingCardId === id,
+            (el) => el.dataset.bookingCardId === targetId,
           );
         }
         function editBooking(id, sourceEl) {
@@ -1627,8 +1640,24 @@
           $("bookingCustomerName").value = b.customer_name;
           $("bookingCustomerPhone").value = b.customer_phone;
           fillBookingSelects();
+          if (!$("bookingChaletId").querySelector('option[value="' + esc(b.chalet_id) + '"]')) {
+            $("bookingChaletId").insertAdjacentHTML(
+              "beforeend",
+              '<option value="' +
+                esc(b.chalet_id) +
+                '">شاليه محذوف/غير مفعّل</option>',
+            );
+          }
           $("bookingChaletId").value = b.chalet_id;
           fillPeriodSelect();
+          if (!$("bookingPeriodId").querySelector('option[value="' + esc(b.period_id) + '"]')) {
+            $("bookingPeriodId").insertAdjacentHTML(
+              "beforeend",
+              '<option value="' +
+                esc(b.period_id) +
+                '">فترة محذوفة/غير مفعّلة</option>',
+            );
+          }
           $("bookingPeriodId").value = b.period_id;
           $("bookingDate").value = b.booking_date;
           $("bookingGuests").value = b.guests;
@@ -1896,6 +1925,7 @@
           if (a === "delete-booking")
             return softDeleteBooking($("bookingId").value);
           if (a === "voucher") return showVoucher(id, sourceEl);
+          if (a === "show-voucher") return showVoucher(id, sourceEl);
           if (a === "copy-voucher") return copyVoucher();
           if (a === "send-whatsapp-voucher") return sendVoucherToWhatsapp();
           if (a === "share-voucher") return shareVoucher();
