@@ -580,6 +580,7 @@
               </button>
             </div>
           </div>
+          <div id="voucherPanelParking" class="hidden"></div>
         </section>
         <!-- ========================= HTML: reports tab ========================= -->
         <section id="tab-reports" class="view">
@@ -1248,6 +1249,7 @@
         }
         function renderBookings() {
           parkBookingEditor();
+          parkVoucherPanel();
           $("bookingList").innerHTML =
             activeBookings()
               .slice()
@@ -1261,6 +1263,14 @@
           if (editor && parking) {
             editor.classList.add("hidden");
             parking.appendChild(editor);
+          }
+        }
+        function parkVoucherPanel() {
+          const panel = $("voucherPanel");
+          const parking = $("voucherPanelParking");
+          if (panel && parking) {
+            panel.classList.add("hidden");
+            parking.appendChild(panel);
           }
         }
         function renderReports() {
@@ -1661,8 +1671,15 @@
           currentVoucherText = voucherText(b);
           $("voucherTextarea").value = currentVoucherText;
           renderVoucherPreview(currentVoucherText);
-          $("voucherPanel").dataset.bookingId = b.id;
-          $("voucherPanel").classList.remove("hidden");
+          const card = Array.from(
+            document.querySelectorAll("[data-booking-card-id]"),
+          ).find((el) => el.dataset.bookingCardId === b.id);
+          const panel = $("voucherPanel");
+          if (card && card.parentNode) card.insertAdjacentElement("afterend", panel);
+          panel.dataset.bookingId = b.id;
+          panel.classList.remove("hidden");
+          if (panel.scrollIntoView)
+            panel.scrollIntoView({ behavior: "smooth", block: "start" });
           feedback("تم عرض السند", "good");
         }
         async function copyVoucher() {
@@ -1715,6 +1732,7 @@
           $("voucherPanel").dataset.bookingId = "";
           $("voucherTextarea").value = "";
           $("voucherBox").innerHTML = "";
+          parkVoucherPanel();
         }
         // ========================= JS: report logic =========================
         function runReport(showMsg) {
