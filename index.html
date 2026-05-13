@@ -1351,11 +1351,13 @@
           }
         }
         function renderReports() {
+          const previous = $("reportChalet").value;
+          const options = activeChalets();
           $("reportChalet").innerHTML = [
             '<option value="">كل الشاليهات</option>',
           ]
             .concat(
-              activeChalets().map(
+              options.map(
                 (c) =>
                   '<option value="' +
                   esc(c.id) +
@@ -1365,6 +1367,9 @@
               ),
             )
             .join("");
+          if (previous && options.some((c) => c.id === previous)) {
+            $("reportChalet").value = previous;
+          }
           if (!$("reportMonth").value) $("reportMonth").value = monthNow();
           runReport(false);
         }
@@ -1538,7 +1543,8 @@
         }
         function fillBookingSelects() {
           const old = $("bookingChaletId").value;
-          $("bookingChaletId").innerHTML = activeChalets()
+          const chalets = activeChalets();
+          $("bookingChaletId").innerHTML = chalets
             .map(
               (c) =>
                 '<option value="' +
@@ -1548,7 +1554,7 @@
                 "</option>",
             )
             .join("");
-          if (old) $("bookingChaletId").value = old;
+          if (old && chalets.some((c) => c.id === old)) $("bookingChaletId").value = old;
           fillPeriodSelect();
         }
         function fillPeriodSelect() {
@@ -1669,6 +1675,17 @@
           if (!b.customer_name) return feedback("اسم العميل مطلوب", "bad");
           if (!b.chalet_id || !b.period_id)
             return feedback("اختر الشاليه والفترة", "bad");
+          if (!b.booking_date) return feedback("التاريخ مطلوب", "bad");
+          const selectedChalet = getChalet(b.chalet_id);
+          const selectedPeriod = getPeriod(selectedChalet, b.period_id);
+          if (!selectedChalet || !selectedPeriod)
+            return feedback("الفترة المختارة غير متاحة لهذا الشاليه.", "bad");
+          if (b.guests < 1)
+            return feedback("عدد الضيوف يجب أن يكون 1 على الأقل.", "bad");
+          if (b.total < 0 || b.paid < 0)
+            return feedback("لا يمكن إدخال مبالغ سالبة.", "bad");
+          if (b.paid > b.total)
+            return feedback("المدفوع لا يمكن أن يتجاوز الإجمالي.", "bad");
           if (findConflict(b))
             return feedback(
               "يوجد حجز مؤكد متعارض في نفس الشاليه والفترة.",
