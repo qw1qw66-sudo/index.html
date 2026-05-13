@@ -1605,7 +1605,22 @@
           $("bookingEditor").classList.remove("hidden");
           feedback("تم فتح نموذج حجز جديد");
         }
-        function editBooking(id) {
+        function findBookingCardForAction(id, sourceEl) {
+          const fromSource = sourceEl && sourceEl.closest("[data-booking-card-id]");
+          if (fromSource && fromSource.dataset.bookingCardId === id) return fromSource;
+
+          const activeView = document.querySelector(".view.active");
+          const visibleCards = activeView
+            ? Array.from(activeView.querySelectorAll("[data-booking-card-id]"))
+            : [];
+          const inActiveView = visibleCards.find((el) => el.dataset.bookingCardId === id);
+          if (inActiveView) return inActiveView;
+
+          return Array.from(document.querySelectorAll("[data-booking-card-id]")).find(
+            (el) => el.dataset.bookingCardId === id,
+          );
+        }
+        function editBooking(id, sourceEl) {
           const b = state.bookings.find((x) => x.id === id);
           if (!b) return feedback("الحجز غير موجود", "bad");
           $("bookingId").value = b.id;
@@ -1624,9 +1639,7 @@
           $("bookingNotes").value = b.notes;
           $("deleteBookingButton").classList.remove("hidden");
           $("bookingEditorTitle").textContent = "تعديل حجز";
-          const card = Array.from(
-            document.querySelectorAll("[data-booking-card-id]"),
-          ).find((el) => el.dataset.bookingCardId === id);
+          const card = findBookingCardForAction(id, sourceEl);
           const editor = $("bookingEditor");
           if (card && card.parentNode) card.insertAdjacentElement("afterend", editor);
           $("bookingEditor").classList.remove("hidden");
@@ -1742,15 +1755,13 @@
           if (/^05\d{8}$/.test(digits)) return "966" + digits.slice(1);
           return digits;
         }
-        function showVoucher(id) {
+        function showVoucher(id, sourceEl) {
           const b = activeBookings().find((x) => x.id === id);
           if (!b) return feedback("الحجز غير موجود", "bad");
           currentVoucherText = voucherText(b);
           $("voucherTextarea").value = currentVoucherText;
           renderVoucherPreview(currentVoucherText);
-          const card = Array.from(
-            document.querySelectorAll("[data-booking-card-id]"),
-          ).find((el) => el.dataset.bookingCardId === b.id);
+          const card = findBookingCardForAction(b.id, sourceEl);
           const panel = $("voucherPanel");
           if (card && card.parentNode) card.insertAdjacentElement("afterend", panel);
           panel.dataset.bookingId = b.id;
@@ -1866,7 +1877,7 @@
             feedback("تعذر نسخ التقرير: " + e.message, "bad");
           }
         }
-        function handleAction(a, id) {
+        function handleAction(a, id, sourceEl) {
           if (a === "upload") return uploadChanges();
           if (!loadedWorkspace)
             return feedback("سجّل الدخول أو أنشئ حسابًا أولًا", "bad");
@@ -1878,13 +1889,13 @@
           if (a === "delete-chalet")
             return softDeleteChalet($("chaletId").value);
           if (a === "new-booking") return newBooking();
-          if (a === "edit-booking") return editBooking(id);
+          if (a === "edit-booking") return editBooking(id, sourceEl);
           if (a === "soft-delete-booking") return softDeleteBooking(id);
           if (a === "save-booking") return saveBooking();
           if (a === "cancel-booking") return cancelBooking();
           if (a === "delete-booking")
             return softDeleteBooking($("bookingId").value);
-          if (a === "voucher") return showVoucher(id);
+          if (a === "voucher") return showVoucher(id, sourceEl);
           if (a === "copy-voucher") return copyVoucher();
           if (a === "send-whatsapp-voucher") return sendVoucherToWhatsapp();
           if (a === "share-voucher") return shareVoucher();
@@ -1916,7 +1927,7 @@
           );
           document.addEventListener("click", (e) => {
             const b = e.target.closest("[data-action]");
-            if (b) handleAction(b.dataset.action, b.dataset.id || "");
+            if (b) handleAction(b.dataset.action, b.dataset.id || "", b);
           });
           $("bookingChaletId").addEventListener("change", fillPeriodSelect);
           $("bookingTotal").addEventListener("input", updateBookingRemaining);
