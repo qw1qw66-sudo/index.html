@@ -342,6 +342,23 @@
         color: var(--m);
         padding: 22px;
       }
+      .dashboard-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+        gap: 10px;
+      }
+      .dashboard-note {
+        font-size: 12px;
+        color: var(--m);
+        margin-top: 4px;
+      }
+      .list-tight {
+        margin: 8px 0 0;
+        padding-inline-start: 18px;
+      }
+      .list-tight li {
+        margin: 4px 0;
+      }
       /* ========================= CSS: responsive mobile rules ========================= */
       @media (max-width: 780px) {
         .grid,
@@ -442,6 +459,60 @@
             <div class="kpi">
               <div class="muted">المتبقي</div>
               <div id="homeDue" class="stat">0</div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="actions between">
+              <h3>مؤشرات الأداء</h3>
+              <button class="secondary tiny" data-action="copy-dashboard-summary">
+                نسخ ملخص الداشبورد
+              </button>
+            </div>
+            <div id="dashboardKpis" class="dashboard-grid"></div>
+            <div class="dashboard-note">
+              العدّ يعتمد على الحجوزات غير المحذوفة، مع توضيح الحالات عند الحاجة.
+            </div>
+          </div>
+          <div class="card">
+            <h3>تحليلات العملاء</h3>
+            <div id="repeatCustomersBox"></div>
+          </div>
+          <div class="card">
+            <h3>رسائل العروض للعملاء</h3>
+            <div class="grid3">
+              <div>
+                <label>الفلتر</label>
+                <select id="offerFilter">
+                  <option value="all">كل العملاء</option>
+                  <option value="repeat">العملاء المتكررون فقط</option>
+                  <option value="recent">عملاء آخر 90 يوم</option>
+                </select>
+              </div>
+              <div>
+                <label>العميل</label>
+                <select id="offerCustomer"></select>
+              </div>
+              <div>
+                <label>تنبيه</label>
+                <div class="muted">
+                  أرسل العروض فقط للعملاء الذين وافقوا على استقبال الرسائل.
+                </div>
+              </div>
+            </div>
+            <label>نص العرض</label
+            ><textarea id="offerMessage">
+مرحبًا، لدينا عرض خاص هذا الأسبوع في شاليهات الفخامة ✨</textarea
+            >
+            <div class="actions">
+              <button class="secondary" data-action="copy-offer-phones">
+                نسخ أرقام العملاء
+              </button>
+              <button class="secondary" data-action="copy-offer-message">
+                نسخ رسالة العرض
+              </button>
+              <button class="primary" data-action="open-offer-whatsapp">
+                فتح واتساب للعميل المختار
+              </button>
             </div>
           </div>
           <div class="card">
@@ -1239,8 +1310,83 @@
             '">حذف</button></div></div></div>'
           );
         }
+        function inRange(d, a, b) {
+          return d >= a && d <= b;
+        }
+        function monthBounds(ym) {
+          const [y, m] = ym.split("-").map(Number);
+          const start = y + "-" + String(m).padStart(2, "0") + "-01";
+          const end = new Date(y, m, 0).toISOString().slice(0, 10);
+          return { start, end, days: Number(end.slice(8, 10)) };
+        }
+        function weekBounds(t) {
+          const d = new Date(t + "T00:00:00"),
+            wd = d.getDay(),
+            shift = (wd + 6) % 7,
+            s = new Date(d),
+            e = new Date(d);
+          s.setDate(d.getDate() - shift);
+          e.setDate(s.getDate() + 6);
+          return { start: s.toISOString().slice(0, 10), end: e.toISOString().slice(0, 10) };
+        }
+        function getActiveBookings() {
+          return activeBookings();
+        }
+        function bookingsInMonth(month) {
+          const m = monthBounds(month);
+          return getActiveBookings().filter((b) => inRange(b.booking_date, m.start, m.end));
+        }
+        function getRepeatCustomers() {
+          const map = new Map();
+          getActiveBookings().forEach((b) => {
+            const key = String(b.customer_phone || "").trim() || String(b.customer_name || "").trim();
+            if (!key) return;
+            const cur = map.get(key) || { name: b.customer_name || "بدون اسم", phone: b.customer_phone || "—", count: 0, last: "" };
+            cur.count++;
+            if (b.booking_date > cur.last) cur.last = b.booking_date;
+            map.set(key, cur);
+          });
+          return Array.from(map.values()).filter((x) => x.count > 1).sort((a, b) => b.count - a.count);
+        }
+        function getWeakDays() {
+          const names = ["الأحد", "الاثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت"];
+          const e = new Date(today() + "T00:00:00"),
+            s = new Date(e);
+          s.setDate(e.getDate() - 59);
+          const start = s.toISOString().slice(0, 10),
+            end = e.toISOString().slice(0, 10);
+          const counts = Array(7).fill(0);
+          getActiveBookings().filter((b) => inRange(b.booking_date, start, end)).forEach((b) => {
+            counts[new Date(b.booking_date + "T00:00:00").getDay()]++;
+          });
+          const min = Math.min(...counts);
+          return counts.map((c, i) => (c === min ? names[i] : null)).filter(Boolean);
+        }
+        function getDashboardStats() {
+          const t = today(), m = monthNow(), wb = weekBounds(t), mb = monthBounds(m);
+          const bs = getActiveBookings(), bm = bookingsInMonth(m);
+          const todayCount = bs.filter((b) => b.booking_date === t && ["confirmed", "pending"].includes(b.status)).length;
+          const weekCount = bs.filter((b) => inRange(b.booking_date, wb.start, wb.end)).length;
+          const income = bm.filter((b) => b.status !== "cancelled").reduce((s, b) => s + (+b.total || 0), 0);
+          const activeCs = activeChalets();
+          const activePs = activeCs.reduce((s, c) => s + activePeriods(c).length, 0);
+          const available = activeCs.length * activePs * mb.days;
+          const confirmed = bm.filter((b) => b.status === "confirmed").length;
+          const occupancy = available > 0 ? (confirmed / available) * 100 : null;
+          const topChaletMap = new Map();
+          bm.filter((b) => b.status !== "cancelled").forEach((b) => topChaletMap.set(b.chalet_id, (topChaletMap.get(b.chalet_id) || 0) + (+b.total || 0)));
+          const topChalet = topChaletMap.size ? [...topChaletMap.entries()].sort((a, b) => b[1] - a[1])[0] : null;
+          const topPeriodMap = new Map();
+          bm.forEach((b) => {
+            const key = b.chalet_id + "__" + b.period_id;
+            topPeriodMap.set(key, (topPeriodMap.get(key) || 0) + 1);
+          });
+          const topPeriod = topPeriodMap.size ? [...topPeriodMap.entries()].sort((a, b) => b[1] - a[1])[0] : null;
+          return { todayCount, weekCount, income, occupancy, weakDays: getWeakDays(), repeatCustomers: getRepeatCustomers(), topChalet, topPeriod };
+        }
         function renderHome() {
           const bs = activeBookings();
+          const d = getDashboardStats();
           $("homeChalets").textContent = activeChalets().length;
           $("homeBookings").textContent = bs.length;
           $("homeDue").textContent = money(
@@ -1249,6 +1395,16 @@
               0,
             ),
           );
+          $("dashboardKpis").innerHTML = [
+            '<div class="kpi"><div class="muted">حجوزات اليوم</div><div class="stat">' + d.todayCount + '</div><div class="dashboard-note">confirmed + pending</div></div>',
+            '<div class="kpi"><div class="muted">حجوزات الأسبوع</div><div class="stat">' + d.weekCount + "</div></div>",
+            '<div class="kpi"><div class="muted">دخل الشهر</div><div class="stat">' + money(d.income) + "</div></div>",
+            '<div class="kpi"><div class="muted">نسبة الإشغال</div><div class="stat">' + (d.occupancy === null ? "—" : d.occupancy.toFixed(2) + "%") + '</div><div class="dashboard-note">' + (d.occupancy === null ? "البيانات غير كافية لحكم دقيق" : "") + "</div></div>",
+            '<div class="kpi"><div class="muted">أفضل شاليه دخلًا</div><div>' + esc(d.topChalet ? chaletName(d.topChalet[0]) + " (" + money(d.topChalet[1]) + " ر.س)" : "البيانات غير كافية لحكم دقيق") + "</div></div>",
+            '<div class="kpi"><div class="muted">أكثر فترة عليها طلب</div><div>' + esc(d.topPeriod ? periodName(d.topPeriod[0].split("__")[0], d.topPeriod[0].split("__")[1]) + " · " + chaletName(d.topPeriod[0].split("__")[0]) + " (" + d.topPeriod[1] + ")" : "البيانات غير كافية لحكم دقيق") + "</div></div>",
+            '<div class="kpi"><div class="muted">الأيام الضعيفة</div><div>' + esc(d.weakDays.length ? d.weakDays.join("، ") : "البيانات غير كافية لحكم دقيق") + "</div></div>",
+          ].join("");
+          $("repeatCustomersBox").innerHTML = d.repeatCustomers.length ? "<ul class='list-tight'>" + d.repeatCustomers.map((c) => "<li><b>" + esc(c.name) + "</b> · " + esc(c.phone) + " · " + c.count + " حجوزات · آخر حجز " + esc(c.last) + "</li>").join("") + "</ul>" : '<div class="empty">البيانات غير كافية لحكم دقيق</div>';
           $("homeUpcoming").innerHTML =
             bs
               .slice()
@@ -1694,6 +1850,49 @@
           if (/^05\d{8}$/.test(digits)) return "966" + digits.slice(1);
           return digits;
         }
+        function normalizePhoneForWhatsApp(phone) {
+          return cleanWhatsappPhone(phone);
+        }
+        function openCustomerWhatsApp(phone, message) {
+          const p = normalizePhoneForWhatsApp(phone);
+          if (!p) return feedback("رقم العميل غير صالح.", "bad");
+          const url = "https://wa.me/" + p + "?text=" + encodeURIComponent(message || "");
+          const w = window.open(url, "_blank");
+          if (!w) location.href = url;
+        }
+        function copyDashboardSummary() {
+          const d = getDashboardStats();
+          const lines = [
+            "حجوزات اليوم: " + d.todayCount,
+            "حجوزات الأسبوع: " + d.weekCount,
+            "دخل الشهر: " + money(d.income) + " ر.س",
+            "نسبة الإشغال: " + (d.occupancy === null ? "البيانات غير كافية لحكم دقيق" : d.occupancy.toFixed(2) + "%"),
+            "أفضل شاليه دخلًا: " + (d.topChalet ? chaletName(d.topChalet[0]) : "البيانات غير كافية لحكم دقيق"),
+          ];
+          navigator.clipboard.writeText(lines.join("\n"));
+          feedback("تم نسخ ملخص الداشبورد", "good");
+        }
+        function offerCustomersForFilter() {
+          const f = $("offerFilter") ? $("offerFilter").value : "all";
+          const bs = getActiveBookings();
+          if (f === "repeat") return getRepeatCustomers();
+          const cutoff = new Date(today() + "T00:00:00");
+          cutoff.setDate(cutoff.getDate() - 90);
+          const from = cutoff.toISOString().slice(0, 10);
+          const map = new Map();
+          bs.filter((b) => f !== "recent" || b.booking_date >= from).forEach((b) => {
+            const key = String(b.customer_phone || "").trim() || String(b.customer_name || "").trim();
+            if (!key) return;
+            if (!map.has(key)) map.set(key, { name: b.customer_name || "بدون اسم", phone: b.customer_phone || "" });
+          });
+          return Array.from(map.values());
+        }
+        function renderOfferCustomers() {
+          const list = offerCustomersForFilter();
+          $("offerCustomer").innerHTML =
+            list.map((c) => '<option value="' + esc(c.phone) + '">' + esc(c.name) + " · " + esc(c.phone || "—") + "</option>").join("") ||
+            '<option value="">لا يوجد عملاء</option>';
+        }
         function showVoucher(id) {
           const b = activeBookings().find((x) => x.id === id);
           if (!b) return feedback("الحجز غير موجود", "bad");
@@ -1844,6 +2043,18 @@
           if (a === "run-report") return runReport(true);
           if (a === "copy-report") return copyReport();
           if (a === "save-settings") return saveSettings();
+          if (a === "copy-dashboard-summary") return copyDashboardSummary();
+          if (a === "copy-offer-phones") {
+            const list = offerCustomersForFilter();
+            navigator.clipboard.writeText(list.map((x) => x.phone).filter(Boolean).join(","));
+            return feedback("تم نسخ أرقام العملاء", "good");
+          }
+          if (a === "copy-offer-message") {
+            navigator.clipboard.writeText($("offerMessage").value || "");
+            return feedback("تم نسخ رسالة العرض", "good");
+          }
+          if (a === "open-offer-whatsapp")
+            return openCustomerWhatsApp($("offerCustomer").value, $("offerMessage").value || "");
         }
         // ========================= JS: event binding =========================
         document.addEventListener("DOMContentLoaded", () => {
@@ -1879,6 +2090,7 @@
           });
           $("reportMonth").addEventListener("change", () => runReport(false));
           $("reportChalet").addEventListener("change", () => runReport(false));
+          $("offerFilter").addEventListener("change", renderOfferCustomers);
           if (!restoreSessionFromStorage()) clearSessionSnapshot();
           log("Ready");
         });
