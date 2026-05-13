@@ -1227,6 +1227,13 @@
           const dateBadgeClass = kind === "past" ? "bad" : "ok";
           const dateBadgeText = kind === "past" ? "قديم" : "قادم";
           const cardClass = kind === "past" ? "booking-past" : "booking-upcoming";
+          const remaining = Math.max(0, (+b.total || 0) - (+b.paid || 0));
+          const paymentWarning =
+            remaining > 0
+              ? '<div class="muted"><span class="badge bad">تحذير دفع: متبقي ' +
+                money(remaining) +
+                ' ر.س</span></div>'
+              : "";
           return (
             '<div class="item ' +
             cardClass +
@@ -1257,8 +1264,10 @@
             ' ر.س</b><div class="muted">مدفوع ' +
             money(b.paid) +
             " · متبقي " +
-            money((+b.total || 0) - (+b.paid || 0)) +
-            '</div></div><div class="actions"><button class="secondary tiny" data-action="voucher" data-id="' +
+            money(remaining) +
+            '</div>' +
+            paymentWarning +
+            '</div><div class="actions"><button class="secondary tiny" data-action="voucher" data-id="' +
             esc(b.id) +
             '">السند</button><button class="secondary tiny" data-action="edit-booking" data-id="' +
             esc(b.id) +
