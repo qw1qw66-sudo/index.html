@@ -740,7 +740,11 @@
           return new Date().toISOString();
         }
         function today() {
-          return now().slice(0, 10);
+          const d = new Date();
+          const y = d.getFullYear();
+          const m = String(d.getMonth() + 1).padStart(2, "0");
+          const day = String(d.getDate()).padStart(2, "0");
+          return y + "-" + m + "-" + day;
         }
         function monthNow() {
           return today().slice(0, 7);
@@ -769,6 +773,7 @@
         }
         function log(m, d) {
           const e = $("debugLog");
+          if (!e) return;
           e.textContent =
             "[" +
             now() +
@@ -991,18 +996,24 @@
         function getChalet(id) {
           return state.chalets.find((c) => c.id === id && !c.deleted_at);
         }
+        function getChaletAny(id) {
+          return state.chalets.find((c) => c.id === id);
+        }
         function getPeriod(ch, id) {
           return (ch && ch.periods ? ch.periods : []).find(
             (p) => p.id === id && p.active,
           );
         }
+        function getPeriodAny(ch, id) {
+          return (ch && ch.periods ? ch.periods : []).find((p) => p.id === id);
+        }
         function chaletName(id) {
-          const c = getChalet(id);
+          const c = getChaletAny(id);
           return c ? c.name : "—";
         }
         function periodName(chId, pId) {
-          const c = getChalet(chId),
-            p = getPeriod(c, pId);
+          const c = getChaletAny(chId),
+            p = getPeriodAny(c, pId);
           return p ? p.label : "—";
         }
         function statusText(s) {
@@ -1211,6 +1222,8 @@
           qsa(".view").forEach((v) =>
             v.classList.toggle("active", v.id === "tab-" + tab),
           );
+          parkBookingEditor();
+          parkVoucherPanel();
           feedback("فتح تبويب: " + tab);
           log("Tab changed; no upload", { tab });
         }
@@ -1274,7 +1287,7 @@
             .filter((b) => b.status !== "cancelled" && b.booking_date >= t)
             .sort((a, b) => a.booking_date.localeCompare(b.booking_date));
           const past = bs
-            .filter((b) => b.status !== "cancelled" && b.booking_date < t)
+            .filter((b) => b.booking_date < t || b.status === "cancelled")
             .sort((a, b) => b.booking_date.localeCompare(a.booking_date));
           $("homeChalets").textContent = activeChalets().length;
           $("homeBookings").textContent = bs.length;
@@ -1291,9 +1304,9 @@
               .join("") || '<div class="empty">لا توجد حجوزات</div>';
           $("homePast").innerHTML =
             past.map((b) => bookingCard(b, "past")).join("") ||
-            '<div class="empty">لا توجد حجوزات قديمة</div>';
+            '<div class="empty">لا توجد حجوزات قديمة أو ملغاة</div>';
           $("homePastSection").querySelector("summary").textContent =
-            "الحجوزات القديمة (" + past.length + ")";
+            "الحجوزات القديمة والملغاة (" + past.length + ")";
         }
         function renderChalets() {
           $("chaletList").innerHTML =
@@ -1325,14 +1338,14 @@
               .map((b) => bookingCard(b, "upcoming"))
               .join("") || '<div class="empty">لا توجد حجوزات</div>';
           const past = activeBookings()
-            .filter((b) => b.status !== "cancelled" && b.booking_date < today())
+            .filter((b) => b.booking_date < today() || b.status === "cancelled")
             .slice()
             .sort((a, b) => b.booking_date.localeCompare(a.booking_date));
           $("bookingPastList").innerHTML =
             past.map((b) => bookingCard(b, "past")).join("") ||
-            '<div class="empty">لا توجد حجوزات قديمة</div>';
+            '<div class="empty">لا توجد حجوزات قديمة أو ملغاة</div>';
           $("bookingsPastSection").querySelector("summary").textContent =
-            "الحجوزات القديمة (" + past.length + ")";
+            "الحجوزات القديمة والملغاة (" + past.length + ")";
         }
         function parkBookingEditor() {
           const editor = $("bookingEditor");
@@ -1521,12 +1534,6 @@
           if (!c) return;
           c.deleted_at = now();
           c.updated_at = now();
-          activeBookings().forEach((b) => {
-            if (b.chalet_id === id) {
-              b.deleted_at = now();
-              b.updated_at = now();
-            }
-          });
           $("chaletEditor").classList.add("hidden");
           setDirty(true, "soft delete chalet");
           renderAll();
@@ -1536,15 +1543,31 @@
           $("chaletEditor").classList.add("hidden");
           feedback("تم الإلغاء");
         }
-        function fillBookingSelects() {
+        function fillBookingSelects(existingChaletId = "") {
           const old = $("bookingChaletId").value;
-          $("bookingChaletId").innerHTML = activeChalets()
+          const active = activeChalets().slice();
+          if (
+            existingChaletId &&
+            !active.some((c) => c.id === existingChaletId)
+          ) {
+            const deleted = getChaletAny(existingChaletId);
+            if (deleted) active.push(deleted);
+          }
+          if (!active.length) {
+            $("bookingChaletId").innerHTML =
+              '<option value="">لا توجد شاليهات متاحة.</option>';
+            $("bookingPeriodId").innerHTML =
+              '<option value="">لا توجد فترات متاحة.</option>';
+            return;
+          }
+          $("bookingChaletId").innerHTML = active
             .map(
               (c) =>
                 '<option value="' +
                 esc(c.id) +
                 '">' +
                 esc(c.name) +
+                (c.deleted_at ? " (محذوف)" : "") +
                 "</option>",
             )
             .join("");
@@ -1552,8 +1575,8 @@
           fillPeriodSelect();
         }
         function fillPeriodSelect() {
-          const ch = getChalet($("bookingChaletId").value),
-            list = activePeriods(ch),
+          const ch = getChaletAny($("bookingChaletId").value),
+            list = allPeriods(ch),
             old = $("bookingPeriodId").value;
           if (!list.length) {
             $("bookingPeriodId").innerHTML =
@@ -1567,6 +1590,7 @@
                 esc(p.id) +
                 '">' +
                 esc(p.label) +
+                (p.active ? "" : " (غير مفعّلة)") +
                 " (" +
                 esc(p.start) +
                 "-" +
@@ -1606,18 +1630,22 @@
           feedback("تم فتح نموذج حجز جديد");
         }
         function findBookingCardForAction(id, sourceEl) {
+          const targetId = String(id || "");
           const fromSource = sourceEl && sourceEl.closest("[data-booking-card-id]");
-          if (fromSource && fromSource.dataset.bookingCardId === id) return fromSource;
+          if (fromSource && fromSource.dataset.bookingCardId === targetId)
+            return fromSource;
 
           const activeView = document.querySelector(".view.active");
           const visibleCards = activeView
             ? Array.from(activeView.querySelectorAll("[data-booking-card-id]"))
             : [];
-          const inActiveView = visibleCards.find((el) => el.dataset.bookingCardId === id);
+          const inActiveView = visibleCards.find(
+            (el) => el.dataset.bookingCardId === targetId,
+          );
           if (inActiveView) return inActiveView;
 
           return Array.from(document.querySelectorAll("[data-booking-card-id]")).find(
-            (el) => el.dataset.bookingCardId === id,
+            (el) => el.dataset.bookingCardId === targetId,
           );
         }
         function editBooking(id, sourceEl) {
@@ -1626,7 +1654,7 @@
           $("bookingId").value = b.id;
           $("bookingCustomerName").value = b.customer_name;
           $("bookingCustomerPhone").value = b.customer_phone;
-          fillBookingSelects();
+          fillBookingSelects(b.chalet_id);
           $("bookingChaletId").value = b.chalet_id;
           fillPeriodSelect();
           $("bookingPeriodId").value = b.period_id;
@@ -1669,11 +1697,22 @@
           if (!b.customer_name) return feedback("اسم العميل مطلوب", "bad");
           if (!b.chalet_id || !b.period_id)
             return feedback("اختر الشاليه والفترة", "bad");
-          if (findConflict(b))
+          if (!b.booking_date) return feedback("التاريخ مطلوب", "bad");
+          const conflict = findConflict(b);
+          if (conflict)
             return feedback(
-              "يوجد حجز مؤكد متعارض في نفس الشاليه والفترة.",
+              "يوجد حجز مؤكد متعارض في نفس الشاليه والفترة (" +
+                (conflict.customer_name || "بدون اسم") +
+                " · " +
+                (conflict.booking_date || "—") +
+                ").",
               "bad",
             );
+          if (b.guests < 1) return feedback("عدد الضيوف يجب أن يكون 1 على الأقل.", "bad");
+          if (b.total < 0 || b.paid < 0)
+            return feedback("لا يمكن إدخال مبالغ سالبة.", "bad");
+          if (b.paid > b.total)
+            return feedback("المدفوع لا يمكن أن يتجاوز الإجمالي.", "bad");
           if (old) Object.assign(old, b);
           else state.bookings.push(b);
           $("bookingEditor").classList.add("hidden");
@@ -1705,8 +1744,8 @@
         }
         // ========================= JS: voucher logic =========================
         function voucherText(b) {
-          const ch = getChalet(b.chalet_id),
-            p = getPeriod(ch, b.period_id);
+          const ch = getChaletAny(b.chalet_id),
+            p = getPeriodAny(ch, b.period_id);
           if (!ch || !p)
             return "لا يمكن عرض السند لأن الشاليه أو الفترة غير مفعلة.";
           const rem = (+b.total || 0) - (+b.paid || 0);
@@ -1828,6 +1867,7 @@
             chId = $("reportChalet").value,
             list = activeBookings().filter(
               (b) =>
+                b.status !== "cancelled" &&
                 b.booking_date &&
                 b.booking_date.slice(0, 7) === m &&
                 (!chId || b.chalet_id === chId),
@@ -1926,8 +1966,9 @@
             b.addEventListener("click", () => showTab(b.dataset.tab)),
           );
           document.addEventListener("click", (e) => {
-            const b = e.target.closest("[data-action]");
-            if (b) handleAction(b.dataset.action, b.dataset.id || "", b);
+            const btn = e.target.closest("[data-action]");
+            if (btn)
+              handleAction(btn.dataset.action, btn.dataset.id || "", btn);
           });
           $("bookingChaletId").addEventListener("change", fillPeriodSelect);
           $("bookingTotal").addEventListener("input", updateBookingRemaining);
@@ -1938,6 +1979,13 @@
           });
           $("reportMonth").addEventListener("change", () => runReport(false));
           $("reportChalet").addEventListener("change", () => runReport(false));
+          window.addEventListener("beforeunload", (e) => {
+            if (dirty) {
+              e.preventDefault();
+              e.returnValue = "";
+              return "";
+            }
+          });
           if (!restoreSessionFromStorage()) clearSessionSnapshot();
           log("Ready");
         });
