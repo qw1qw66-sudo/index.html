@@ -342,6 +342,17 @@
         color: var(--m);
         padding: 22px;
       }
+      .booking-upcoming {
+        border-color: rgba(119, 178, 109, 0.55);
+      }
+      .booking-past {
+        border-color: rgba(224, 107, 97, 0.55);
+      }
+      .section-details > summary {
+        cursor: pointer;
+        font-weight: 800;
+        color: var(--m);
+      }
       /* ========================= CSS: responsive mobile rules ========================= */
       @media (max-width: 780px) {
         .grid,
@@ -447,6 +458,10 @@
           <div class="card">
             <h3>أقرب الحجوزات</h3>
             <div id="homeUpcoming"></div>
+            <details id="homePastSection" class="section-details">
+              <summary>الحجوزات القديمة (0)</summary>
+              <div id="homePast"></div>
+            </details>
           </div>
         </section>
         <!-- ========================= HTML: chalets tab ========================= -->
@@ -518,6 +533,10 @@
               </button>
             </div>
             <div id="bookingList"></div>
+            <details id="bookingsPastSection" class="section-details">
+              <summary>الحجوزات القديمة (0)</summary>
+              <div id="bookingPastList"></div>
+            </details>
             <div id="bookingEditorParking" class="hidden"></div>
           </div>
           <div id="bookingEditor" class="card editor hidden">
@@ -1204,9 +1223,14 @@
           renderSettings();
           fillBookingSelects();
         }
-        function bookingCard(b) {
+        function bookingCard(b, kind) {
+          const dateBadgeClass = kind === "past" ? "bad" : "ok";
+          const dateBadgeText = kind === "past" ? "قديم" : "قادم";
+          const cardClass = kind === "past" ? "booking-past" : "booking-upcoming";
           return (
-            '<div class="item" data-booking-card-id="' +
+            '<div class="item ' +
+            cardClass +
+            '" data-booking-card-id="' +
             esc(b.id) +
             '"><div class="actions between"><div><b>' +
             esc(b.customer_name || "بدون اسم") +
@@ -1224,6 +1248,10 @@
                 : "gold") +
             '">' +
             esc(statusText(b.status)) +
+            '</span><span class="badge ' +
+            dateBadgeClass +
+            '">' +
+            dateBadgeText +
             "</span></div><div><b>" +
             money(b.total) +
             ' ر.س</b><div class="muted">مدفوع ' +
@@ -1241,6 +1269,13 @@
         }
         function renderHome() {
           const bs = activeBookings();
+          const t = today();
+          const upcoming = bs
+            .filter((b) => b.status !== "cancelled" && b.booking_date >= t)
+            .sort((a, b) => a.booking_date.localeCompare(b.booking_date));
+          const past = bs
+            .filter((b) => b.booking_date < t)
+            .sort((a, b) => b.booking_date.localeCompare(a.booking_date));
           $("homeChalets").textContent = activeChalets().length;
           $("homeBookings").textContent = bs.length;
           $("homeDue").textContent = money(
@@ -1250,12 +1285,15 @@
             ),
           );
           $("homeUpcoming").innerHTML =
-            bs
-              .slice()
-              .sort((a, b) => a.booking_date.localeCompare(b.booking_date))
+            upcoming
               .slice(0, 5)
-              .map(bookingCard)
+              .map((b) => bookingCard(b, "upcoming"))
               .join("") || '<div class="empty">لا توجد حجوزات</div>';
+          $("homePast").innerHTML =
+            past.map((b) => bookingCard(b, "past")).join("") ||
+            '<div class="empty">لا توجد حجوزات قديمة</div>';
+          $("homePastSection").querySelector("summary").textContent =
+            "الحجوزات القديمة (" + past.length + ")";
         }
         function renderChalets() {
           $("chaletList").innerHTML =
@@ -1281,10 +1319,20 @@
           parkVoucherPanel();
           $("bookingList").innerHTML =
             activeBookings()
+              .filter((b) => b.status !== "cancelled" && b.booking_date >= today())
               .slice()
-              .sort((a, b) => b.booking_date.localeCompare(a.booking_date))
-              .map(bookingCard)
+              .sort((a, b) => a.booking_date.localeCompare(b.booking_date))
+              .map((b) => bookingCard(b, "upcoming"))
               .join("") || '<div class="empty">لا توجد حجوزات</div>';
+          const past = activeBookings()
+            .filter((b) => b.booking_date < today())
+            .slice()
+            .sort((a, b) => b.booking_date.localeCompare(a.booking_date));
+          $("bookingPastList").innerHTML =
+            past.map((b) => bookingCard(b, "past")).join("") ||
+            '<div class="empty">لا توجد حجوزات قديمة</div>';
+          $("bookingsPastSection").querySelector("summary").textContent =
+            "الحجوزات القديمة (" + past.length + ")";
         }
         function parkBookingEditor() {
           const editor = $("bookingEditor");
