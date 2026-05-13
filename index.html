@@ -1338,6 +1338,8 @@
               .map((b) => bookingCard(b, "upcoming"))
               .join("") || '<div class="empty">لا توجد حجوزات</div>';
           const past = activeBookings()
+          const cancelledList = $("bookingCancelledList");
+          if (cancelledList) cancelledList.innerHTML = "";
             .filter((b) => b.booking_date < today() || b.status === "cancelled")
             .slice()
             .sort((a, b) => b.booking_date.localeCompare(a.booking_date));
