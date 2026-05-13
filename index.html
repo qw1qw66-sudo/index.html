@@ -769,6 +769,7 @@
         }
         function log(m, d) {
           const e = $("debugLog");
+          if (!e) return;
           e.textContent =
             "[" +
             now() +
@@ -1538,7 +1539,15 @@
         }
         function fillBookingSelects() {
           const old = $("bookingChaletId").value;
-          $("bookingChaletId").innerHTML = activeChalets()
+          const active = activeChalets();
+          if (!active.length) {
+            $("bookingChaletId").innerHTML =
+              '<option value="">لا توجد شاليهات متاحة.</option>';
+            $("bookingPeriodId").innerHTML =
+              '<option value="">لا توجد فترات متاحة.</option>';
+            return;
+          }
+          $("bookingChaletId").innerHTML = active
             .map(
               (c) =>
                 '<option value="' +
@@ -1627,8 +1636,24 @@
           $("bookingCustomerName").value = b.customer_name;
           $("bookingCustomerPhone").value = b.customer_phone;
           fillBookingSelects();
+          if (!$("bookingChaletId").querySelector('option[value="' + esc(b.chalet_id) + '"]')) {
+            $("bookingChaletId").insertAdjacentHTML(
+              "beforeend",
+              '<option value="' +
+                esc(b.chalet_id) +
+                '">شاليه محذوف/غير مفعّل</option>',
+            );
+          }
           $("bookingChaletId").value = b.chalet_id;
           fillPeriodSelect();
+          if (!$("bookingPeriodId").querySelector('option[value="' + esc(b.period_id) + '"]')) {
+            $("bookingPeriodId").insertAdjacentHTML(
+              "beforeend",
+              '<option value="' +
+                esc(b.period_id) +
+                '">فترة محذوفة/غير مفعّلة</option>',
+            );
+          }
           $("bookingPeriodId").value = b.period_id;
           $("bookingDate").value = b.booking_date;
           $("bookingGuests").value = b.guests;
