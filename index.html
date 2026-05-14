@@ -1229,7 +1229,7 @@
           const cardClass = kind === "past" ? "booking-past" : "booking-upcoming";
           const remaining = Math.max(0, (+b.total || 0) - (+b.paid || 0));
           const paymentWarning =
-            remaining > 0
+            remaining > 0 && b.status !== "cancelled"
               ? '<div class="muted"><span class="badge bad">تحذير دفع: متبقي ' +
                 money(remaining) +
                 ' ر.س</span></div>'
