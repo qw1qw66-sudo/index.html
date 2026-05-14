@@ -157,8 +157,8 @@
         position: static;
         background: rgba(16, 20, 29, 0.96);
         border: 1px solid var(--l);
-        border-radius: 14px;
-        padding: 8px;
+        border-radius: 12px;
+        padding: 6px 10px;
         margin-top: 6px;
       }
       .brand {
@@ -166,30 +166,43 @@
         align-items: center;
         gap: 8px;
         min-width: 0;
+        flex: 1 1 auto;
+        overflow: hidden;
+      }
+      .brand-text {
+        min-width: 0;
+        overflow: hidden;
       }
       .logo {
-        width: 34px;
-        height: 34px;
-        border-radius: 12px;
+        width: 30px;
+        height: 30px;
+        flex: 0 0 30px;
+        border-radius: 10px;
         border: 1px solid rgba(215, 180, 106, 0.45);
         display: flex;
         align-items: center;
         justify-content: center;
         background: linear-gradient(145deg, #2d2114, #15110d);
         color: var(--g2);
-        font-size: 22px;
+        font-size: 18px;
         font-weight: 900;
       }
       .header-title {
         margin: 0;
-        font-size: 16px;
+        font-size: 15px;
         line-height: 1.15;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
       }
       .header-sub {
         margin: 1px 0 0;
-        font-size: 12px;
+        font-size: 11px;
         color: var(--m);
         line-height: 1.1;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
       }
       .header-main {
         margin-top: 0;
@@ -200,10 +213,11 @@
         margin-top: 0;
         flex-wrap: nowrap;
         gap: 6px;
+        flex: 0 0 auto;
       }
       .header-actions .tiny {
-        min-height: 32px;
-        padding: 6px 10px;
+        min-height: 30px;
+        padding: 5px 10px;
       }
       .header-actions .badge {
         padding: 3px 8px;
@@ -363,17 +377,26 @@
           font-size: 23px;
         }
         .top {
-          padding: 8px;
+          padding: 5px 8px;
+          border-radius: 10px;
         }
         .logo {
-          width: 34px;
-          height: 34px;
+          width: 28px;
+          height: 28px;
+          flex: 0 0 28px;
+          font-size: 16px;
+          border-radius: 9px;
         }
         .header-title {
-          font-size: 16px;
+          font-size: 14px;
         }
         .header-sub {
-          font-size: 12px;
+          font-size: 11px;
+        }
+      }
+      @media (max-width: 420px) {
+        .header-sub {
+          display: none;
         }
       }
     </style>
@@ -421,10 +444,10 @@
         <header class="top">
           <div class="actions between header-main">
             <div class="brand">
-              <div class="logo">ش</div>
-              <div>
-                <h2 class="header-title">شاليهات الفخامة</h2>
-                <p id="shellStatus" class="header-sub">متصل · ALI6</p>
+              <div id="appLogo" class="logo">ح</div>
+              <div class="brand-text">
+                <h2 id="appTitle" class="header-title">نظام حجوزات الشاليهات</h2>
+                <p id="shellStatus" class="header-sub"></p>
               </div>
             </div>
             <div class="actions header-actions">
@@ -1033,6 +1056,38 @@
             }[s] || s
           );
         }
+        // ========================= JS: facility identity helpers =========================
+        function facilityName() {
+          return (
+            String((state.settings && state.settings.facility_name) || "").trim() ||
+            "نظام حجوزات الشاليهات"
+          );
+        }
+        function facilityTag() {
+          return String((state.settings && state.settings.tag) || "").trim();
+        }
+        function facilityLogoLetter() {
+          const name = facilityName();
+          return name.trim().charAt(0) || "ح";
+        }
+        function renderShell() {
+          const logo = $("appLogo");
+          const titleEl = $("appTitle");
+          if (logo) logo.textContent = facilityLogoLetter();
+          if (titleEl) titleEl.textContent = facilityName();
+          const sub = $("shellStatus");
+          if (!sub) return;
+          const tag = facilityTag();
+          if (loadedWorkspace) {
+            sub.innerHTML =
+              (tag ? esc(tag) + " · " : "") +
+              '<span class="ok">متصل</span> · <span class="ltr">' +
+              esc(loadedWorkspace.workspace_key || workspaceKey) +
+              "</span>";
+          } else {
+            sub.innerHTML = tag ? esc(tag) : "";
+          }
+        }
         // ========================= JS: remaining payment helpers =========================
         function remainingAmount(b) {
           return Math.max(0, (+b.total || 0) - (+b.paid || 0));
@@ -1139,10 +1194,6 @@
           lastCloudUpdatedAt = String(r.updated_at || "");
           $("connectScreen").classList.add("hidden");
           $("appShell").classList.remove("hidden");
-          $("shellStatus").innerHTML =
-            '<span class="ok">متصل</span> · <span class="ltr">' +
-            esc(r.workspace_key || workspaceKey) +
-            "</span>";
           $("settingsWorkspace").textContent = r.workspace_key || workspaceKey;
           setDirty(false, "current session login/create");
           renderAll();
@@ -1306,6 +1357,7 @@
         }
         // ========================= JS: rendering =========================
         function renderAll() {
+          renderShell();
           renderHome();
           renderChalets();
           renderBookings();
