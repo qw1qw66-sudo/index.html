@@ -456,6 +456,10 @@
             </div>
           </div>
           <div class="card">
+            <h3>تنبيهات المتبقي</h3>
+            <div id="homeRemainingAlerts"></div>
+          </div>
+          <div class="card">
             <h3>أقرب الحجوزات</h3>
             <div id="homeUpcoming"></div>
             <details id="homePastSection" class="section-details">
@@ -967,6 +971,9 @@
                 paid: Number(b.paid || 0),
                 status: String(b.status || "confirmed"),
                 notes: String(b.notes || ""),
+                remaining_status: String(b.remaining_status || ""),
+                remaining_note: String(b.remaining_note || ""),
+                remaining_updated_at: String(b.remaining_updated_at || ""),
                 deleted_at: b.deleted_at || null,
                 created_at: b.created_at || now(),
                 updated_at: b.updated_at || now(),
