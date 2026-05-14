@@ -27,6 +27,33 @@
         --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
         --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.06);
         --shadow-lg: 0 8px 28px rgba(0, 0, 0, 0.08);
+        --nav-bg: rgba(255, 255, 255, 0.82);
+        --tab-active-bg: rgba(0, 0, 0, 0.05);
+      }
+      /* ========================= CSS: variables (Apple-inspired dark) ========================= */
+      html[data-theme="dark"] {
+        --bg: #000000;
+        --card: #1c1c1e;
+        --soft: #161618;
+        --t: #f5f5f7;
+        --m: #a1a1a6;
+        --l: #2c2c2e;
+        --l2: #2c2c2e;
+        --g: #c79b48;
+        --g2: #d8ad55;
+        --g-soft: rgba(199, 155, 72, 0.16);
+        --r: #ff6961;
+        --r-soft: rgba(255, 105, 97, 0.14);
+        --ok: #30d158;
+        --ok-soft: rgba(48, 209, 88, 0.14);
+        --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+        --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.45);
+        --shadow-lg: 0 8px 28px rgba(0, 0, 0, 0.55);
+        --nav-bg: rgba(28, 28, 30, 0.82);
+        --tab-active-bg: rgba(255, 255, 255, 0.08);
+      }
+      html[data-theme="dark"] button:hover:not(:disabled) {
+        background: #3a3a3c;
       }
       /* ========================= CSS: base layout ========================= */
       * {
@@ -308,7 +335,7 @@
         right: 0;
         bottom: 0;
         z-index: 30;
-        background: rgba(255, 255, 255, 0.82);
+        background: var(--nav-bg);
         -webkit-backdrop-filter: saturate(180%) blur(20px);
         backdrop-filter: saturate(180%) blur(20px);
         border-top: 1px solid var(--l2);
@@ -344,9 +371,22 @@
         line-height: 1;
       }
       .tab-button.active {
-        background: rgba(0, 0, 0, 0.05);
+        background: var(--tab-active-bg);
         color: var(--t);
         font-weight: 600;
+      }
+      /* ========================= CSS: settings identity card ========================= */
+      .settings-divider {
+        border: 0;
+        border-top: 1px solid var(--l2);
+        margin: 12px 0;
+      }
+      .settings-line {
+        margin: 6px 0;
+      }
+      .theme-toggle-group button[aria-pressed="true"] {
+        background: var(--t);
+        color: var(--card);
       }
       .tab-button.active .icon {
         color: var(--t);
@@ -609,27 +649,12 @@
       <!-- ========================= HTML: app shell ========================= -->
       <section id="appShell" class="hidden">
         <div id="feedback" class="feedback">جاهز</div>
-        <!-- ========================= HTML: compact top utility bar ========================= -->
-        <header class="top">
-          <div class="actions between header-main">
-            <div class="brand">
-              <div id="appLogo" class="logo">ح</div>
-              <div class="brand-text">
-                <h2 id="appTitle" class="header-title">نظام حجوزات الشاليهات</h2>
-              </div>
-            </div>
-            <div class="actions header-actions">
-              <button
-                id="uploadButton"
-                class="primary tiny"
-                data-action="upload"
-                disabled
-              >
-                رفع</button
-              ><span id="dirtyBadge" class="badge">لا تغييرات</span>
-            </div>
-          </div>
-        </header>
+        <!-- ========================= HTML: hidden identity refs (top bar moved to Settings) ========================= -->
+        <div class="hidden" aria-hidden="true">
+          <span id="appLogo">ح</span>
+          <span id="appTitle">نظام حجوزات الشاليهات</span>
+          <span id="shellStatus"></span>
+        </div>
         <!-- ========================= HTML: home tab ========================= -->
         <section id="tab-home" class="view active">
           <div class="grid3">
@@ -862,8 +887,8 @@
         </section>
         <!-- ========================= HTML: settings tab ========================= -->
         <section id="tab-settings" class="view">
-          <div class="card">
-            <h3>الإعدادات</h3>
+          <div id="settingsIdentityCard" class="card">
+            <h3>الهوية والاتصال</h3>
             <div class="grid">
               <div>
                 <label>اسم المنشأة</label><input id="settingFacilityName" />
@@ -875,13 +900,56 @@
                 حفظ الإعدادات
               </button>
             </div>
-          </div>
-          <div id="settingsConnectionCard" class="card">
-            <h3>المساحة والاتصال</h3>
-            <p class="muted" style="margin: 0">
+            <hr class="settings-divider" />
+            <p class="muted settings-line">
               اسم المستخدم / رمز المساحة:
               <span id="settingsWorkspace" class="ltr"></span>
             </p>
+            <p class="muted settings-line">
+              حالة الاتصال:
+              <span id="settingsConnectionState"></span>
+            </p>
+            <p class="muted settings-line">
+              آخر تحديث سحابي:
+              <span id="settingsLastUpdated" class="ltr">—</span>
+            </p>
+            <p class="muted settings-line">
+              آخر أعداد سحابية:
+              <span id="settingsLastCounts">—</span>
+            </p>
+            <div class="actions">
+              <button
+                id="uploadButton"
+                class="primary"
+                data-action="upload"
+                disabled
+              >
+                رفع التعديلات</button
+              ><span id="dirtyBadge" class="badge">لا تغييرات</span>
+            </div>
+          </div>
+          <div id="settingsConnectionCard" class="card">
+            <h3>وضع النهار / الليل</h3>
+            <p class="muted settings-line">اختر مظهر التطبيق المفضل.</p>
+            <div class="actions theme-toggle-group">
+              <button
+                id="themeLightButton"
+                class="secondary"
+                data-action="set-theme-light"
+                type="button"
+                aria-pressed="true"
+              >
+                نهاري</button
+              ><button
+                id="themeDarkButton"
+                class="secondary"
+                data-action="set-theme-dark"
+                type="button"
+                aria-pressed="false"
+              >
+                ليلي
+              </button>
+            </div>
           </div>
         </section>
         <!-- ========================= HTML: bottom navigation ========================= -->
@@ -912,6 +980,32 @@
         "use strict";
         const SUPABASE_URL = "https://fkqidesfrtpwzjcimjoe.supabase.co",
           SUPABASE_ANON_KEY = "sb_publishable_Uks_PYr6aqY5wnNBjDjTgg_z2Ic6_al";
+        // ========================= JS: theme preference (light/dark) =========================
+        const THEME_STORAGE_KEY = "ui_theme_preference";
+        function readStoredTheme() {
+          try {
+            const v = localStorage.getItem(THEME_STORAGE_KEY);
+            return v === "dark" || v === "light" ? v : "light";
+          } catch (e) {
+            return "light";
+          }
+        }
+        function applyTheme(theme) {
+          const t = theme === "dark" ? "dark" : "light";
+          document.documentElement.dataset.theme = t;
+          const lightBtn = document.getElementById("themeLightButton");
+          const darkBtn = document.getElementById("themeDarkButton");
+          if (lightBtn) lightBtn.setAttribute("aria-pressed", t === "light" ? "true" : "false");
+          if (darkBtn) darkBtn.setAttribute("aria-pressed", t === "dark" ? "true" : "false");
+        }
+        function setTheme(theme) {
+          const t = theme === "dark" ? "dark" : "light";
+          try {
+            localStorage.setItem(THEME_STORAGE_KEY, t);
+          } catch (e) {}
+          applyTheme(t);
+        }
+        applyTheme(readStoredTheme());
         // ========================= JS: state =========================
         let loadedWorkspace = null,
           workspaceKey = "",
@@ -1036,10 +1130,13 @@
         }
         function setDirty(v, r) {
           dirty = Boolean(v);
-          $("uploadButton").disabled = !dirty || !loadedWorkspace;
-          $("dirtyBadge").textContent = dirty
-            ? "تغييرات" : "لا تغييرات";
-          $("dirtyBadge").className = "badge " + (dirty ? "gold" : "");
+          const upBtn = $("uploadButton");
+          if (upBtn) upBtn.disabled = !dirty || !loadedWorkspace;
+          const badge = $("dirtyBadge");
+          if (badge) {
+            badge.textContent = dirty ? "تغييرات" : "لا تغييرات";
+            badge.className = "badge " + (dirty ? "gold" : "");
+          }
           if (r) log("Dirty state changed", { dirty, reason: r });
           persistSessionSnapshot();
         }
@@ -1482,7 +1579,10 @@
               "تم إيقاف الرفع: البيانات المحلية فارغة وقد تستبدل بيانات موجودة.",
               "bad",
             );
-          $("uploadButton").disabled = true;
+          {
+            const upBtn = $("uploadButton");
+            if (upBtn) upBtn.disabled = true;
+          }
           try {
             const fresh = await callRpc("get_shared_workspace", {
               p_workspace_key: workspaceKey,
@@ -1508,7 +1608,10 @@
             feedback("تم رفع التعديلات", "good");
             log("Upload succeeded", { lastCloudUpdatedAt, lastCloudCounts });
           } catch (e) {
-            $("uploadButton").disabled = false;
+            {
+              const upBtn = $("uploadButton");
+              if (upBtn) upBtn.disabled = false;
+            }
             feedback("فشل الرفع: " + e.message, "bad");
             log("Upload failed", {
               message: e.message,
@@ -1596,7 +1699,9 @@
             esc(b.id) +
             '">السند</button><button class="secondary tiny" data-action="edit-booking" data-id="' +
             esc(b.id) +
-            '">تعديل</button><button class="danger tiny" data-action="soft-delete-booking" data-id="' +
+            '">تعديل</button><button class="secondary tiny" data-action="open-customer-whatsapp" data-id="' +
+            esc(b.id) +
+            '">محادثة واتساب</button><button class="danger tiny" data-action="soft-delete-booking" data-id="' +
             esc(b.id) +
             '">حذف</button></div></div></div>'
           );
@@ -1748,35 +1853,21 @@
           $("settingTag").value = state.settings.tag || "";
           $("settingsWorkspace").textContent = loadedWorkspace
             ? loadedWorkspace.workspace_key
-            : workspaceKey;
-          const c = lastCloudCounts || { chalets: "—", bookings: "—" };
-          let box = $("settingsTech");
-          if (!box) {
-            box = document.createElement("div");
-            box.id = "settingsTech";
-            box.className = "muted";
-            const host =
-              $("settingsConnectionCard") ||
-              $("tab-settings").querySelector(".card");
-            host.appendChild(box);
-          }
-          box.innerHTML =
-            "حالة الاتصال: " +
-            (loadedWorkspace
+            : workspaceKey || "—";
+          const conn = $("settingsConnectionState");
+          if (conn) {
+            conn.innerHTML = loadedWorkspace
               ? '<span class="ok">متصل</span>'
-              : '<span class="bad">غير متصل</span>') +
-            '<br>workspace key: <span class="ltr">' +
-            esc(
-              loadedWorkspace
-                ? loadedWorkspace.workspace_key
-                : workspaceKey || "—",
-            ) +
-            '</span><br>last cloud updated_at: <span class="ltr">' +
-            esc(lastCloudUpdatedAt || "—") +
-            "</span><br>last cloud counts: chalets " +
-            esc(c.chalets) +
-            " · bookings " +
-            esc(c.bookings);
+              : '<span class="bad">غير متصل</span>';
+          }
+          const lu = $("settingsLastUpdated");
+          if (lu) lu.textContent = lastCloudUpdatedAt || "—";
+          const lc = $("settingsLastCounts");
+          if (lc) {
+            const c = lastCloudCounts || { chalets: "—", bookings: "—" };
+            lc.textContent =
+              "الشاليهات " + c.chalets + " · الحجوزات " + c.bookings;
+          }
         }
         // ========================= JS: chalet logic =========================
         function newChalet() {
@@ -2161,6 +2252,24 @@
           if (/^05\d{8}$/.test(digits)) return "966" + digits.slice(1);
           return digits;
         }
+        function normalizePhoneForWhatsApp(phone) {
+          const raw = String(phone || "").replace(/[\s\-()+]/g, "");
+          const digits = raw.replace(/[^\d]/g, "");
+          if (!digits) return "";
+          if (/^05\d{8}$/.test(digits)) return "966" + digits.slice(1);
+          if (/^5\d{8}$/.test(digits)) return "966" + digits;
+          if (/^966\d{9}$/.test(digits)) return digits;
+          return "";
+        }
+        function openCustomerWhatsApp(id) {
+          const b = activeBookings().find((x) => x.id === id);
+          if (!b) return feedback("الحجز غير موجود", "bad");
+          const phone = normalizePhoneForWhatsApp(b.customer_phone);
+          if (!phone) return feedback("رقم العميل غير صالح لواتساب.", "bad");
+          const url = "https://wa.me/" + phone;
+          window.open(url, "_blank", "noopener,noreferrer");
+          feedback("تم فتح محادثة واتساب مع العميل.", "good");
+        }
         function showVoucher(id, sourceEl) {
           const b = activeBookings().find((x) => x.id === id);
           if (!b) return feedback("الحجز غير موجود", "bad");
@@ -2316,6 +2425,8 @@
         }
         function handleAction(a, id, sourceEl) {
           if (a === "upload") return uploadChanges();
+          if (a === "set-theme-light") return setTheme("light");
+          if (a === "set-theme-dark") return setTheme("dark");
           if (!loadedWorkspace)
             return feedback("سجّل الدخول أو أنشئ حسابًا أولًا", "bad");
           if (a === "new-chalet") return newChalet();
@@ -2341,10 +2452,12 @@
           if (a === "copy-report") return copyReport();
           if (a === "copy-remaining-reminder") return copyRemainingReminder(id);
           if (a === "save-settings") return saveSettings();
+          if (a === "open-customer-whatsapp") return openCustomerWhatsApp(id);
         }
         // ========================= JS: event binding =========================
         document.addEventListener("DOMContentLoaded", () => {
           log("DOMContentLoaded: attaching event listeners");
+          applyTheme(readStoredTheme());
           $("pullButton").addEventListener("click", pullWorkspace);
           $("createButton").addEventListener("click", createWorkspace);
           document.addEventListener(
