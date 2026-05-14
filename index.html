@@ -1,2498 +1,800 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="ar" dir="rtl">
-  <head>
-    <meta charset="utf-8" />
-    <meta
-      name="viewport"
-      content="width=device-width,initial-scale=1,viewport-fit=cover"
-    />
-    <title>نظام حجوزات الشاليهات</title>
-    <style>
-      /* ========================= CSS: variables (Apple-inspired light) ========================= */
-      :root {
-        --bg: #f5f5f7;
-        --card: #ffffff;
-        --soft: #fbfbfd;
-        --t: #1d1d1f;
-        --m: #6e6e73;
-        --l: #d2d2d7;
-        --l2: #e5e5ea;
-        --g: #b48a3a;
-        --g2: #c79b48;
-        --g-soft: rgba(180, 138, 58, 0.1);
-        --r: #d6433a;
-        --r-soft: rgba(214, 67, 58, 0.08);
-        --ok: #2f9e44;
-        --ok-soft: rgba(47, 158, 68, 0.08);
-        --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
-        --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.06);
-        --shadow-lg: 0 8px 28px rgba(0, 0, 0, 0.08);
-        --nav-bg: rgba(255, 255, 255, 0.82);
-        --tab-active-bg: rgba(0, 0, 0, 0.05);
-      }
-      /* ========================= CSS: variables (Apple-inspired dark) ========================= */
-      html[data-theme="dark"] {
-        --bg: #000000;
-        --card: #1c1c1e;
-        --soft: #161618;
-        --t: #f5f5f7;
-        --m: #a1a1a6;
-        --l: #2c2c2e;
-        --l2: #2c2c2e;
-        --g: #c79b48;
-        --g2: #d8ad55;
-        --g-soft: rgba(199, 155, 72, 0.16);
-        --r: #ff6961;
-        --r-soft: rgba(255, 105, 97, 0.14);
-        --ok: #30d158;
-        --ok-soft: rgba(48, 209, 88, 0.14);
-        --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
-        --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.45);
-        --shadow-lg: 0 8px 28px rgba(0, 0, 0, 0.55);
-        --nav-bg: rgba(28, 28, 30, 0.82);
-        --tab-active-bg: rgba(255, 255, 255, 0.08);
-      }
-      html[data-theme="dark"] button:hover:not(:disabled) {
-        background: #3a3a3c;
-      }
-      /* ========================= CSS: base layout ========================= */
-      * {
-        box-sizing: border-box;
-      }
-      html,
-      body {
-        background: var(--bg);
-      }
-      body {
-        margin: 0;
-        color: var(--t);
-        font-family:
-          -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI",
-          Tahoma, Arial, sans-serif;
-        -webkit-font-smoothing: antialiased;
-        -moz-osx-font-smoothing: grayscale;
-        padding: 14px 14px 110px;
-        line-height: 1.5;
-      }
-      button,
-      input,
-      select,
-      textarea {
-        font: inherit;
-        color: inherit;
-      }
-      button {
-        min-height: 42px;
-        border: 0;
-        border-radius: 999px;
-        padding: 10px 18px;
-        font-weight: 600;
-        background: var(--l2);
-        color: var(--t);
-        cursor: pointer;
-        transition:
-          background 0.15s ease,
-          transform 0.05s ease,
-          box-shadow 0.15s ease,
-          opacity 0.15s ease;
-      }
-      button:hover:not(:disabled) {
-        background: #dcdce0;
-      }
-      button:active:not(:disabled) {
-        transform: scale(0.98);
-      }
-      button:disabled {
-        opacity: 0.45;
-        cursor: not-allowed;
-      }
-      input,
-      select,
-      textarea {
-        width: 100%;
-        min-height: 44px;
-        border: 1px solid var(--l);
-        border-radius: 12px;
-        background: var(--card);
-        color: var(--t);
-        padding: 10px 14px;
-        transition:
-          border-color 0.15s ease,
-          box-shadow 0.15s ease;
-      }
-      input:focus,
-      select:focus,
-      textarea:focus {
-        outline: none;
-        border-color: var(--g2);
-        box-shadow: 0 0 0 3px var(--g-soft);
-      }
-      textarea {
-        min-height: 88px;
-        resize: vertical;
-      }
-      .page {
-        max-width: 1080px;
-        margin: auto;
-      }
-      .card,
-      .item {
-        background: var(--card);
-        border: 1px solid var(--l2);
-        border-radius: 18px;
-        padding: 18px;
-        margin: 12px 0;
-        box-shadow: var(--shadow-sm);
-      }
-      .item {
-        background: var(--soft);
-        border-radius: 16px;
-        padding: 16px;
-      }
-      h1,
-      h2,
-      h3 {
-        color: var(--t);
-        letter-spacing: -0.01em;
-      }
-      h3 {
-        font-size: 18px;
-        font-weight: 600;
-        margin: 0 0 12px;
-      }
-      .title {
-        margin: 0 0 8px;
-        font-size: 30px;
-        font-weight: 700;
-        letter-spacing: -0.02em;
-      }
-      .muted,
-      .subtitle {
-        color: var(--m);
-      }
-      label {
-        display: block;
-        font-size: 13px;
-        font-weight: 500;
-        color: var(--m);
-        margin: 8px 0 6px;
-      }
-      .grid {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 12px;
-      }
-      .grid3 {
-        display: grid;
-        grid-template-columns: repeat(3, 1fr);
-        gap: 12px;
-      }
-      .actions {
-        display: flex;
-        gap: 8px;
-        flex-wrap: wrap;
-        align-items: center;
-        margin-top: 12px;
-      }
-      .between {
-        justify-content: space-between;
-      }
-      .primary {
-        background: var(--t);
-        color: #fff;
-      }
-      .primary:hover:not(:disabled) {
-        background: #000;
-      }
-      .secondary {
-        background: var(--l2);
-        color: var(--t);
-        border: 0;
-      }
-      .secondary:hover:not(:disabled) {
-        background: #dcdce0;
-      }
-      .danger {
-        background: var(--r-soft);
-        color: var(--r);
-        border: 0;
-      }
-      .danger:hover:not(:disabled) {
-        background: rgba(214, 67, 58, 0.16);
-      }
-      .accent {
-        background: linear-gradient(135deg, var(--g2), var(--g));
-        color: #fff;
-      }
-      .tiny {
-        min-height: 32px;
-        padding: 6px 14px;
-        font-size: 13px;
-      }
-      .hidden {
-        display: none !important;
-      }
-      .ltr {
-        direction: ltr;
-        text-align: left;
-      }
-      /* ========================= CSS: debug ========================= */
-      .debug {
-        direction: ltr;
-        text-align: left;
-        white-space: pre-wrap;
-        overflow: auto;
-        max-height: 250px;
-        min-height: 100px;
-        background: var(--soft);
-        border: 1px solid var(--l2);
-        border-radius: 12px;
-        padding: 12px;
-        color: var(--m);
-        font:
-          12px ui-monospace,
-          SFMono-Regular, Menlo, monospace;
-      }
-      .debug-card > summary {
-        font-size: 13px;
-        color: var(--m);
-        font-weight: 500;
-      }
-      /* ========================= CSS: compact top bar ========================= */
-      .top {
-        position: sticky;
-        top: 6px;
-        z-index: 25;
-        background: rgba(255, 255, 255, 0.78);
-        -webkit-backdrop-filter: saturate(180%) blur(18px);
-        backdrop-filter: saturate(180%) blur(18px);
-        border: 1px solid var(--l2);
-        border-radius: 999px;
-        padding: 6px 12px;
-        margin: 4px 0 14px;
-        box-shadow: var(--shadow-sm);
-      }
-      .brand {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        min-width: 0;
-        flex: 1 1 auto;
-        overflow: hidden;
-      }
-      .brand-text {
-        min-width: 0;
-        overflow: hidden;
-      }
-      .logo {
-        width: 30px;
-        height: 30px;
-        flex: 0 0 30px;
-        border-radius: 9px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        background: var(--t);
-        color: #fff;
-        font-size: 15px;
-        font-weight: 600;
-        letter-spacing: -0.01em;
-      }
-      .header-title {
-        margin: 0;
-        font-size: 15px;
-        font-weight: 600;
-        line-height: 1.2;
-        letter-spacing: -0.01em;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-      }
-      .header-main {
-        margin-top: 0;
-        flex-wrap: nowrap;
-        gap: 8px;
-      }
-      .header-actions {
-        margin-top: 0;
-        flex-wrap: nowrap;
-        gap: 6px;
-        flex: 0 0 auto;
-      }
-      .header-actions .tiny {
-        min-height: 30px;
-        padding: 5px 14px;
-        font-size: 12px;
-      }
-      .header-actions .badge {
-        padding: 3px 9px;
-        font-size: 11px;
-      }
-      /* ========================= CSS: bottom navigation ========================= */
-      .bottom-nav {
-        position: fixed;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        z-index: 30;
-        background: var(--nav-bg);
-        -webkit-backdrop-filter: saturate(180%) blur(20px);
-        backdrop-filter: saturate(180%) blur(20px);
-        border-top: 1px solid var(--l2);
-        padding: 6px 12px calc(6px + env(safe-area-inset-bottom));
-      }
-      .bottom-tabs {
-        max-width: 1080px;
-        margin: auto;
-        display: grid;
-        grid-template-columns: repeat(5, 1fr);
-        gap: 4px;
-      }
-      .tab-button {
-        background: transparent;
-        border: 0;
-        color: var(--m);
-        font-size: 11px;
-        font-weight: 500;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: 3px;
-        min-height: 54px;
-        padding: 6px 2px;
-        border-radius: 14px;
-      }
-      .tab-button:hover:not(:disabled) {
-        background: transparent;
-        color: var(--t);
-      }
-      .tab-button .icon {
-        font-size: 19px;
-        line-height: 1;
-      }
-      .tab-button.active {
-        background: var(--tab-active-bg);
-        color: var(--t);
-        font-weight: 600;
-      }
-      /* ========================= CSS: settings identity card ========================= */
-      .settings-divider {
-        border: 0;
-        border-top: 1px solid var(--l2);
-        margin: 12px 0;
-      }
-      .settings-line {
-        margin: 6px 0;
-      }
-      .theme-toggle-group button[aria-pressed="true"] {
-        background: var(--t);
-        color: var(--card);
-      }
-      .tab-button.active .icon {
-        color: var(--t);
-      }
-      .view {
-        display: none;
-      }
-      .view.active {
-        display: block;
-      }
-      .badge {
-        display: inline-block;
-        background: var(--l2);
-        border: 0;
-        border-radius: 99px;
-        padding: 3px 10px;
-        font-size: 12px;
-        font-weight: 500;
-        color: var(--m);
-      }
-      .badge.ok {
-        background: var(--ok-soft);
-        color: var(--ok);
-      }
-      .badge.bad {
-        background: var(--r-soft);
-        color: var(--r);
-      }
-      .badge.gold {
-        background: var(--g-soft);
-        color: var(--g);
-      }
-      .ok {
-        color: var(--ok);
-      }
-      .bad {
-        color: var(--r);
-      }
-      .gold {
-        color: var(--g);
-      }
-      .feedback {
-        position: sticky;
-        top: 62px;
-        z-index: 20;
-        background: var(--card);
-        border: 1px solid var(--l2);
-        border-radius: 14px;
-        margin: 10px 0;
-        padding: 11px 14px;
-        font-size: 14px;
-        color: var(--m);
-        box-shadow: var(--shadow-sm);
-      }
-      .feedback.good {
-        color: var(--ok);
-        background: var(--ok-soft);
-        border-color: rgba(47, 158, 68, 0.18);
-      }
-      .feedback.bad {
-        color: var(--r);
-        background: var(--r-soft);
-        border-color: rgba(214, 67, 58, 0.18);
-      }
-      .editor {
-        background: var(--card);
-        border: 1px solid var(--l2);
-        box-shadow: var(--shadow-md);
-      }
-      .period-card {
-        border: 1px solid var(--l2);
-        border-radius: 14px;
-        padding: 14px;
-        margin: 10px 0;
-        background: var(--soft);
-      }
-      .stat {
-        font-size: 34px;
-        font-weight: 700;
-        letter-spacing: -0.02em;
-        line-height: 1.1;
-        margin-top: 4px;
-        color: var(--t);
-      }
-      .kpi {
-        background: var(--card);
-        border: 1px solid var(--l2);
-        border-radius: 18px;
-        padding: 18px;
-        box-shadow: var(--shadow-sm);
-        transition: box-shadow 0.2s ease, transform 0.2s ease;
-      }
-      .kpi:hover {
-        box-shadow: var(--shadow-md);
-      }
-      .kpi .muted {
-        font-size: 13px;
-        font-weight: 500;
-      }
-      .voucher {
-        background: var(--card);
-        color: var(--t);
-        border: 1px solid var(--l2);
-        border-radius: 16px;
-        padding: 18px;
-        box-shadow: var(--shadow-sm);
-      }
-      .voucher h3 {
-        margin: 0 0 12px;
-        font-size: 17px;
-      }
-      .vrow {
-        display: flex;
-        justify-content: space-between;
-        gap: 12px;
-        border-bottom: 1px solid var(--l2);
-        padding: 10px 0;
-        font-size: 14px;
-      }
-      .vrow:last-child {
-        border-bottom: 0;
-      }
-      .vrow b {
-        font-weight: 600;
-      }
-      .empty {
-        text-align: center;
-        color: var(--m);
-        padding: 28px 14px;
-        font-size: 14px;
-      }
-      .booking-upcoming {
-        border-right: 3px solid var(--ok);
-      }
-      .booking-past {
-        border-right: 3px solid var(--r);
-        opacity: 0.92;
-      }
-      [dir="rtl"] .booking-upcoming {
-        border-right: 0;
-        border-left: 3px solid var(--ok);
-      }
-      [dir="rtl"] .booking-past {
-        border-right: 0;
-        border-left: 3px solid var(--r);
-      }
-      .section-details > summary {
-        cursor: pointer;
-        font-weight: 500;
-        color: var(--m);
-        font-size: 14px;
-        padding: 4px 0;
-        list-style: none;
-      }
-      .section-details > summary::-webkit-details-marker {
-        display: none;
-      }
-      .section-details[open] > summary {
-        margin-bottom: 8px;
-      }
-      details > summary {
-        cursor: pointer;
-      }
-      #connectScreen {
-        max-width: 480px;
-        margin: 40px auto;
-        padding: 28px;
-      }
-      #connectScreen .title {
-        text-align: center;
-      }
-      #connectScreen .subtitle {
-        text-align: center;
-        margin-bottom: 20px;
-      }
-      #settingsTech {
-        margin-top: 14px;
-        padding: 14px;
-        background: var(--soft);
-        border: 1px solid var(--l2);
-        border-radius: 12px;
-        font-size: 13px;
-        line-height: 1.7;
-      }
-      /* ========================= CSS: responsive mobile rules ========================= */
-      @media (max-width: 780px) {
-        .grid,
-        .grid3 {
-          grid-template-columns: 1fr;
-        }
-        .title {
-          font-size: 26px;
-        }
-        body {
-          padding: 10px 12px 110px;
-        }
-        .card,
-        .item {
-          padding: 16px;
-        }
-        .top {
-          padding: 5px 10px;
-        }
-        .logo {
-          width: 28px;
-          height: 28px;
-          flex: 0 0 28px;
-          font-size: 14px;
-        }
-        .header-title {
-          font-size: 14px;
-        }
-        .stat {
-          font-size: 30px;
-        }
-      }
-      @media (max-width: 420px) {
-        .header-actions .badge {
-          display: none;
-        }
-      }
-    </style>
-  </head>
-  <body>
-    <main class="page">
-      <!-- ========================= HTML: login screen ========================= -->
-      <section id="connectScreen" class="card">
-        <h1 class="title">نظام حجوزات الشاليهات</h1>
-        <p class="subtitle">تسجيل دخول بسيط بدون بريد وبدون روابط تحقق.</p>
-        <div class="grid">
-          <div>
-            <label>اسم المستخدم / رمز المساحة</label
-            ><input
-              id="workspaceInput"
-              class="ltr"
-              autocomplete="username"
-              placeholder="ALI6"
-            />
-          </div>
-          <div>
-            <label>الرقم السري</label
-            ><input
-              id="pinInput"
-              class="ltr"
-              type="password"
-              autocomplete="current-password"
-              placeholder="••••"
-            />
-          </div>
-        </div>
-        <div class="actions">
-          <button id="pullButton" class="primary" type="button">
-            دخول / سحب البيانات</button
-          ><button id="createButton" class="secondary" type="button">
-            إنشاء حساب جديد
-          </button>
-        </div>
-        <p id="loginMessage" class="subtitle"></p>
-      </section>
-      <!-- ========================= HTML: app shell ========================= -->
-      <section id="appShell" class="hidden">
-        <div id="feedback" class="feedback">جاهز</div>
-        <!-- ========================= HTML: hidden identity refs (top bar moved to Settings) ========================= -->
-        <div class="hidden" aria-hidden="true">
-          <span id="appLogo">ح</span>
-          <span id="appTitle">نظام حجوزات الشاليهات</span>
-          <span id="shellStatus"></span>
-        </div>
-        <!-- ========================= HTML: home tab ========================= -->
-        <section id="tab-home" class="view active">
-          <div class="grid3">
-            <div class="kpi">
-              <div class="muted">الشاليهات</div>
-              <div id="homeChalets" class="stat">0</div>
-            </div>
-            <div class="kpi">
-              <div class="muted">الحجوزات</div>
-              <div id="homeBookings" class="stat">0</div>
-            </div>
-            <div class="kpi">
-              <div class="muted">المتبقي</div>
-              <div id="homeDue" class="stat">0</div>
-            </div>
-          </div>
-          <div class="card">
-            <h3>تنبيهات المتبقي</h3>
-            <div id="remainingAlerts"></div>
-          </div>
-          <div class="card">
-            <h3>أقرب الحجوزات</h3>
-            <div id="homeUpcoming"></div>
-            <details id="homePastSection" class="section-details">
-              <summary>الحجوزات القديمة (0)</summary>
-              <div id="homePast"></div>
-            </details>
-          </div>
-        </section>
-        <!-- ========================= HTML: chalets tab ========================= -->
-        <section id="tab-chalets" class="view">
-          <div class="card">
-            <div class="actions between">
-              <h3>الشاليهات</h3>
-              <button class="primary" data-action="new-chalet">
-                + شاليه جديد
-              </button>
-            </div>
-            <div id="chaletList"></div>
-          </div>
-          <div id="chaletEditor" class="card editor hidden">
-            <h3 id="chaletEditorTitle">تعديل الشاليه</h3>
-            <input id="chaletId" type="hidden" />
-            <div class="grid">
-              <div><label>اسم الشاليه</label><input id="chaletName" /></div>
-              <div>
-                <label>السعة</label
-                ><input id="chaletCapacity" type="number" min="0" />
-              </div>
-            </div>
-            <label>الوصف</label><textarea id="chaletDescription"></textarea>
-            <div class="grid">
-              <div>
-                <label>رقم التواصل</label
-                ><input id="chaletContactPhone" class="ltr" />
-              </div>
-              <div>
-                <label>رقم العامل</label
-                ><input id="chaletWorkerPhone" class="ltr" />
-              </div>
-            </div>
-            <div class="grid">
-              <div>
-                <label>اسم العامل</label><input id="chaletWorkerName" />
-              </div>
-              <div>
-                <label>رابط الموقع</label
-                ><input id="chaletMapUrl" class="ltr" />
-              </div>
-            </div>
-            <label>الشروط</label><textarea id="chaletTerms"></textarea>
-            <h3>فترات الشاليه</h3>
-            <div id="periodEditorList"></div>
-            <div class="actions">
-              <button class="primary" data-action="save-chalet">
-                حفظ الشاليه والفترات</button
-              ><button class="secondary" data-action="cancel-chalet">
-                إلغاء</button
-              ><button
-                id="deleteChaletButton"
-                class="danger"
-                data-action="delete-chalet"
-              >
-                حذف الشاليه
-              </button>
-            </div>
-          </div>
-        </section>
-        <!-- ========================= HTML: bookings tab ========================= -->
-        <section id="tab-bookings" class="view">
-          <div class="card">
-            <div class="actions between">
-              <h3>الحجوزات</h3>
-              <button id="newBookingButton" class="primary" data-action="new-booking">
-                + حجز جديد
-              </button>
-            </div>
-            <div id="bookingList"></div>
-            <details id="bookingsPastSection" class="section-details">
-              <summary>الحجوزات القديمة (0)</summary>
-              <div id="bookingPastList"></div>
-            </details>
-            <div id="bookingEditorParking" class="hidden"></div>
-          </div>
-          <div id="bookingEditor" class="card editor hidden">
-            <h3 id="bookingEditorTitle">حجز</h3>
-            <input id="bookingId" type="hidden" />
-            <div class="grid">
-              <div>
-                <label>اسم العميل</label><input id="bookingCustomerName" />
-              </div>
-              <div>
-                <label>جوال العميل</label
-                ><input id="bookingCustomerPhone" class="ltr" />
-              </div>
-            </div>
-            <div class="grid">
-              <div>
-                <label>الشاليه</label
-                ><select id="bookingChaletId"></select>
-              </div>
-              <div>
-                <label>التاريخ</label><input id="bookingDate" type="date" />
-              </div>
-            </div>
-            <div class="grid">
-              <div>
-                <label>الفترة</label
-                ><select id="bookingPeriodId"></select>
-              </div>
-              <div>
-                <label>الضيوف</label
-                ><input id="bookingGuests" type="number" min="1" />
-              </div>
-            </div>
-            <div class="grid3">
-              <div>
-                <label>الإجمالي</label
-                ><input id="bookingTotal" type="number" min="0" />
-              </div>
-              <div>
-                <label>المدفوع</label
-                ><input id="bookingPaid" type="number" min="0" />
-              </div>
-              <div>
-                <label>المتبقي</label
-                ><input id="bookingRemaining" type="number" readonly />
-              </div>
-            </div>
-            <label>الحالة</label
-            ><select id="bookingStatus">
-              <option value="confirmed">مؤكد</option>
-              <option value="pending">معلق</option>
-              <option value="cancelled">ملغي</option>
-              <option value="completed">مكتمل</option></select
-            ><label>ملاحظات داخلية</label
-            ><textarea id="bookingNotes"></textarea>
-            <h3>حالة المتبقي</h3>
-            <label>حالة المتبقي</label
-            ><select id="bookingRemainingStatus">
-              <option value="">— اختر —</option>
-              <option value="unreviewed">يحتاج مراجعة</option>
-              <option value="customer_pending">باقي على العميل</option>
-              <option value="worker_received">استلمه العامل</option>
-              <option value="transferred">تم التحويل / تمت التسوية</option>
-              <option value="no_remaining">لا يوجد متبقي</option></select
-            ><label>ملاحظة المتبقي</label
-            ><textarea id="bookingRemainingNote"></textarea>
-            <div class="actions">
-              <button class="primary" data-action="save-booking">
-                حفظ الحجز</button
-              ><button class="secondary" data-action="cancel-booking">
-                إلغاء</button
-              ><button
-                id="deleteBookingButton"
-                class="danger"
-                data-action="delete-booking"
-              >
-                حذف
-              </button>
-            </div>
-          </div>
-          <!-- ========================= HTML: voucher panel ========================= -->
-          <div id="voucherPanel" class="card hidden">
-            <div class="actions between">
-              <h3>السند</h3>
-              <button class="secondary" data-action="close-voucher">
-                إغلاق
-              </button>
-            </div>
-            <div>
-              <label>تعديل نص السند</label
-              ><textarea id="voucherTextarea"></textarea>
-            </div>
-            <div id="voucherBox"></div>
-            <div class="actions">
-              <button class="primary" data-action="copy-voucher">
-                نسخ السند</button
-              ><button class="secondary" data-action="send-whatsapp-voucher">
-                إرسال واتساب</button
-              ><button class="secondary" data-action="share-voucher">
-                مشاركة
-              </button>
-            </div>
-          </div>
-          <div id="voucherPanelParking" class="hidden"></div>
-        </section>
-        <!-- ========================= HTML: reports tab ========================= -->
-        <section id="tab-reports" class="view">
-          <div class="card">
-            <h3>التقارير الشهرية</h3>
-            <div class="grid">
-              <div>
-                <label>الشهر</label><input id="reportMonth" type="month" />
-              </div>
-              <div>
-                <label>الشاليه</label
-                ><select id="reportChalet"></select>
-              </div>
-            </div>
-            <div class="actions">
-              <button class="primary" data-action="run-report">
-                عرض التقرير</button
-              ><button class="secondary" data-action="copy-report">
-                نسخ التقرير
-              </button>
-            </div>
-            <div id="reportBox"></div>
-          </div>
-        </section>
-        <!-- ========================= HTML: settings tab ========================= -->
-        <section id="tab-settings" class="view">
-          <div id="settingsIdentityCard" class="card">
-            <h3>الهوية والاتصال</h3>
-            <div class="grid">
-              <div>
-                <label>اسم المنشأة</label><input id="settingFacilityName" />
-              </div>
-              <div><label>الوصف</label><input id="settingTag" /></div>
-            </div>
-            <div class="actions">
-              <button class="primary" data-action="save-settings">
-                حفظ الإعدادات
-              </button>
-            </div>
-            <hr class="settings-divider" />
-            <p class="muted settings-line">
-              اسم المستخدم / رمز المساحة:
-              <span id="settingsWorkspace" class="ltr"></span>
-            </p>
-            <p class="muted settings-line">
-              حالة الاتصال:
-              <span id="settingsConnectionState"></span>
-            </p>
-            <p class="muted settings-line">
-              آخر تحديث سحابي:
-              <span id="settingsLastUpdated" class="ltr">—</span>
-            </p>
-            <p class="muted settings-line">
-              آخر أعداد سحابية:
-              <span id="settingsLastCounts">—</span>
-            </p>
-            <div class="actions">
-              <button
-                id="uploadButton"
-                class="primary"
-                data-action="upload"
-                disabled
-              >
-                رفع التعديلات</button
-              ><span id="dirtyBadge" class="badge">لا تغييرات</span>
-            </div>
-          </div>
-          <div id="settingsConnectionCard" class="card">
-            <h3>وضع النهار / الليل</h3>
-            <p class="muted settings-line">اختر مظهر التطبيق المفضل.</p>
-            <div class="actions theme-toggle-group">
-              <button
-                id="themeLightButton"
-                class="secondary"
-                data-action="set-theme-light"
-                type="button"
-                aria-pressed="true"
-              >
-                نهاري</button
-              ><button
-                id="themeDarkButton"
-                class="secondary"
-                data-action="set-theme-dark"
-                type="button"
-                aria-pressed="false"
-              >
-                ليلي
-              </button>
-            </div>
-          </div>
-        </section>
-        <!-- ========================= HTML: bottom navigation ========================= -->
-        <nav class="bottom-nav">
-          <div class="bottom-tabs">
-            <button class="tab-button active" data-tab="home">
-              <span class="icon">⌂</span><span>الرئيسية</span></button
-            ><button class="tab-button" data-tab="bookings">
-              <span class="icon">≡</span><span>الحجوزات</span></button
-            ><button class="tab-button" data-tab="chalets">
-              <span class="icon">⌘</span><span>الشاليهات</span></button
-            ><button class="tab-button" data-tab="reports">
-              <span class="icon">▦</span><span>التقارير</span></button
-            ><button class="tab-button" data-tab="settings">
-              <span class="icon">⚙️</span><span>الإعدادات</span>
-            </button>
-          </div>
-        </nav>
-        <!-- ========================= HTML: collapsed debug log ========================= -->
-        <details class="card debug-card">
-          <summary>سجل التتبع</summary>
-          <div id="debugLog" class="debug"></div>
-        </details>
-      </section>
-    </main>
-    <script>
-      (function () {
-        "use strict";
-        const SUPABASE_URL = "https://fkqidesfrtpwzjcimjoe.supabase.co",
-          SUPABASE_ANON_KEY = "sb_publishable_Uks_PYr6aqY5wnNBjDjTgg_z2Ic6_al";
-        // ========================= JS: theme preference (light/dark) =========================
-        const THEME_STORAGE_KEY = "ui_theme_preference";
-        function readStoredTheme() {
-          try {
-            const v = localStorage.getItem(THEME_STORAGE_KEY);
-            return v === "dark" || v === "light" ? v : "light";
-          } catch (e) {
-            return "light";
-          }
-        }
-        function applyTheme(theme) {
-          const t = theme === "dark" ? "dark" : "light";
-          document.documentElement.dataset.theme = t;
-          const lightBtn = document.getElementById("themeLightButton");
-          const darkBtn = document.getElementById("themeDarkButton");
-          if (lightBtn) lightBtn.setAttribute("aria-pressed", t === "light" ? "true" : "false");
-          if (darkBtn) darkBtn.setAttribute("aria-pressed", t === "dark" ? "true" : "false");
-        }
-        function setTheme(theme) {
-          const t = theme === "dark" ? "dark" : "light";
-          try {
-            localStorage.setItem(THEME_STORAGE_KEY, t);
-          } catch (e) {}
-          applyTheme(t);
-        }
-        applyTheme(readStoredTheme());
-        // ========================= JS: state =========================
-        let loadedWorkspace = null,
-          workspaceKey = "",
-          accessPin = "",
-          dirty = false,
-          editingChaletPeriods = [],
-          lastCloudCounts = null,
-          lastCloudUpdatedAt = "",
-          currentVoucherText = "",
-          currentReportText = "",
-          state = emptyData();
-        const SESSION_SNAPSHOT_KEY = "active_workspace_session";
-        const SESSION_PIN_KEY = "active_session_pin";
-        // ========================= JS: utility helpers =========================
-        function emptyData() {
-          return {
-            schema_version: 3,
-            settings: { facility_name: "", tag: "", holidays: [] },
-            chalets: [],
-            bookings: [],
-          };
-        }
-        function canonicalEmptyDataModel() {
-          return emptyData();
-        }
-        function uid() {
-          return crypto.randomUUID
-            ? crypto.randomUUID()
-            : "id_" +
-                Date.now().toString(36) +
-                "_" +
-                Math.random().toString(36).slice(2, 10);
-        }
-        function now() {
-          return new Date().toISOString();
-        }
-        function today() {
-          return now().slice(0, 10);
-        }
-        function monthNow() {
-          return today().slice(0, 7);
-        }
-        function $(id) {
-          return document.getElementById(id);
-        }
-        function qsa(s) {
-          return Array.from(document.querySelectorAll(s));
-        }
-        function esc(v) {
-          return String(v ?? "").replace(
-            /[&<>"']/g,
-            (c) =>
-              ({
-                "&": "&amp;",
-                "<": "&lt;",
-                ">": "&gt;",
-                '"': "&quot;",
-                "'": "&#39;",
-              })[c],
-          );
-        }
-        function money(n) {
-          return new Intl.NumberFormat("en-US").format(Number(n) || 0);
-        }
-        function log(m, d) {
-          const e = $("debugLog");
-          e.textContent =
-            "[" +
-            now() +
-            "] " +
-            m +
-            (d === undefined ? "" : "\n" + JSON.stringify(d, null, 2)) +
-            "\n\n" +
-            e.textContent;
-        }
-        function feedback(m, t) {
-          const e = $("feedback");
-          if (e) {
-            e.textContent = m;
-            e.className = "feedback " + (t || "");
-          }
-          const lm = $("loginMessage");
-          if (lm && !loadedWorkspace) lm.textContent = m || "";
-        }
-        function normalizeWorkspaceKey(v) {
-          return String(v || "")
-            .trim()
-            .toUpperCase()
-            .replace(/[^A-Z0-9_-]/g, "");
-        }
-        function counts(doc = state) {
-          return {
-            chalets: (doc.chalets || []).filter((x) => !x.deleted_at).length,
-            bookings: (doc.bookings || []).filter((x) => !x.deleted_at).length,
-          };
-        }
-        function defaultPeriods(existing) {
-          const arr = Array.isArray(existing) ? existing.slice(0, 6) : [];
-          while (arr.length < 6) {
-            const n = arr.length + 1;
-            arr.push({
-              id: uid(),
-              label: "الفترة " + n,
-              start: "07:00",
-              end: "17:00",
-              weekday_price: 0,
-              weekend_price: 0,
-              active: true,
-              sort: n,
-            });
-          }
-          return arr.slice(0, 6).map((p, i) => ({
-            id: String(p.id || uid()),
-            label: String(p.label || "الفترة " + (i + 1)),
-            start: String(p.start || "07:00"),
-            end: String(p.end || "17:00"),
-            weekday_price: Number(p.weekday_price || 0),
-            weekend_price: Number(p.weekend_price || 0),
-            active: p.active !== false,
-            sort: Number(p.sort ?? i + 1),
-          }));
-        }
-        function setDirty(v, r) {
-          dirty = Boolean(v);
-          const upBtn = $("uploadButton");
-          if (upBtn) upBtn.disabled = !dirty || !loadedWorkspace;
-          const badge = $("dirtyBadge");
-          if (badge) {
-            badge.textContent = dirty ? "تغييرات" : "لا تغييرات";
-            badge.className = "badge " + (dirty ? "gold" : "");
-          }
-          if (r) log("Dirty state changed", { dirty, reason: r });
-          persistSessionSnapshot();
-        }
-        function persistSessionSnapshot() {
-          if (!loadedWorkspace || !workspaceKey) return;
-          try {
-            const snapshot = {
-              workspaceKey,
-              state,
-              lastCloudCounts,
-              lastCloudUpdatedAt,
-              dirty,
-            };
-            sessionStorage.setItem(
-              SESSION_SNAPSHOT_KEY,
-              JSON.stringify(snapshot),
-            );
-            // Temporary for same-tab refresh only; do not persist across tabs/sessions.
-            sessionStorage.setItem(SESSION_PIN_KEY, accessPin || "");
-          } catch (e) {
-            log("Session snapshot save failed", { message: e.message });
-          }
-        }
-        function clearSessionSnapshot() {
-          sessionStorage.removeItem(SESSION_SNAPSHOT_KEY);
-          sessionStorage.removeItem(SESSION_PIN_KEY);
-        }
-        function restoreSessionFromStorage() {
-          try {
-            const raw = sessionStorage.getItem(SESSION_SNAPSHOT_KEY);
-            const pin = String(sessionStorage.getItem(SESSION_PIN_KEY) || "");
-            if (!raw || pin.length < 4) return false;
-            const snap = JSON.parse(raw);
-            if (!snap || !snap.workspaceKey || !snap.state) return false;
-            workspaceKey = normalizeWorkspaceKey(snap.workspaceKey);
-            accessPin = pin;
-            state = normalizeData(snap.state);
-            loadedWorkspace = { workspace_key: workspaceKey, data: state };
-            const restoredLastCloudCounts = snap.lastCloudCounts || counts(state);
-            const restoredLastCloudUpdatedAt = String(snap.lastCloudUpdatedAt || "");
-            const restoredDirty = Boolean(snap.dirty);
-            $("workspaceInput").value = workspaceKey;
-            $("pinInput").value = "";
-            openApp({
-              workspace_key: workspaceKey,
-              data: state,
-              updated_at: restoredLastCloudUpdatedAt,
-            });
-            lastCloudCounts = restoredLastCloudCounts;
-            lastCloudUpdatedAt = restoredLastCloudUpdatedAt;
-            setDirty(restoredDirty, "restored session");
-            feedback("تم استرجاع الجلسة الحالية في نفس التبويب.", "good");
-            return true;
-          } catch (e) {
-            log("Session restore failed", { message: e.message });
-            clearSessionSnapshot();
-            return false;
-          }
-        }
-        function readCredentials() {
-          workspaceKey = normalizeWorkspaceKey($("workspaceInput").value);
-          accessPin = String($("pinInput").value || "").trim();
-          $("workspaceInput").value = workspaceKey;
-          if (workspaceKey.length < 3)
-            throw new Error("اسم المستخدم / رمز المساحة مطلوب.");
-          if (accessPin.length < 4)
-            throw new Error(
-              "الرقم السري مطلوب ويجب أن يكون 4 خانات على الأقل.",
-            );
-          return { workspaceKey, pin: accessPin };
-        }
-        // ========================= JS: Supabase RPC =========================
-        async function callRpc(name, payload) {
-          const res = await fetch(SUPABASE_URL + "/rest/v1/rpc/" + name, {
-            method: "POST",
-            headers: {
-              apikey: SUPABASE_ANON_KEY,
-              Authorization: "Bearer " + SUPABASE_ANON_KEY,
-              "Content-Type": "application/json",
-              Accept: "application/json",
-            },
-            body: JSON.stringify(payload),
-          });
-          const text = await res.text();
-          let body = null;
-          try {
-            body = text ? JSON.parse(text) : null;
-          } catch (_) {
-            body = { raw: text };
-          }
-          if (!res.ok) {
-            const err = new Error(
-              body && body.message ? body.message : "RPC_FAILED",
-            );
-            err.status = res.status;
-            err.body = body;
-            throw err;
-          }
-          return body;
-        }
-        // ========================= JS: data normalization =========================
-        function normalizeData(raw) {
-          const src = raw && raw.data ? raw.data : raw || {},
-            out = emptyData();
-          out.schema_version = Number(src.schema_version || 3);
-          out.settings = Object.assign(out.settings, src.settings || {});
-          out.chalets = Array.isArray(src.chalets)
-            ? src.chalets.map((c) => ({
-                id: String(c.id || uid()),
-                name: String(c.name || ""),
-                capacity: Number(c.capacity || 0),
-                description: String(c.description || ""),
-                contactPhone: String(c.contactPhone || ""),
-                workerPhone: String(c.workerPhone || ""),
-                workerName: String(c.workerName || ""),
-                mapUrl: String(c.mapUrl || ""),
-                terms: String(c.terms || ""),
-                periods: defaultPeriods(c.periods),
-                deleted_at: c.deleted_at || null,
-                created_at: c.created_at || now(),
-                updated_at: c.updated_at || now(),
-              }))
-            : [];
-          out.bookings = Array.isArray(src.bookings)
-            ? src.bookings.map((b) => ({
-                id: String(b.id || uid()),
-                customer_name: String(b.customer_name || ""),
-                customer_phone: String(b.customer_phone || ""),
-                chalet_id: String(b.chalet_id || ""),
-                booking_date: String(b.booking_date || ""),
-                period_id: String(b.period_id || ""),
-                guests: Number(b.guests || 1),
-                total: Number(b.total || 0),
-                paid: Number(b.paid || 0),
-                status: String(b.status || "confirmed"),
-                notes: String(b.notes || ""),
-                remaining_status: String(b.remaining_status || ""),
-                remaining_note: String(b.remaining_note || ""),
-                remaining_updated_at: String(b.remaining_updated_at || ""),
-                deleted_at: b.deleted_at || null,
-                created_at: b.created_at || now(),
-                updated_at: b.updated_at || now(),
-              }))
-            : [];
-          return out;
-        }
-        function activeChalets() {
-          return state.chalets.filter((c) => !c.deleted_at);
-        }
-        function allPeriods(c) {
-          return defaultPeriods(c && c.periods ? c.periods : []).sort(
-            (a, b) => (+a.sort || 0) - (+b.sort || 0),
-          );
-        }
-        function activePeriods(c) {
-          return allPeriods(c).filter((p) => p.active);
-        }
-        function activeBookings() {
-          return state.bookings.filter((b) => !b.deleted_at);
-        }
-        function getChalet(id) {
-          return state.chalets.find((c) => c.id === id && !c.deleted_at);
-        }
-        function getPeriod(ch, id) {
-          return (ch && ch.periods ? ch.periods : []).find(
-            (p) => p.id === id && p.active,
-          );
-        }
-        function chaletName(id) {
-          const c = getChalet(id);
-          return c ? c.name : "—";
-        }
-        function periodName(chId, pId) {
-          const c = getChalet(chId),
-            p = getPeriod(c, pId);
-          return p ? p.label : "—";
-        }
-        function statusText(s) {
-          return (
-            {
-              confirmed: "مؤكد",
-              pending: "معلق",
-              cancelled: "ملغي",
-              completed: "مكتمل",
-            }[s] || s
-          );
-        }
-        // ========================= JS: facility identity helpers =========================
-        function facilityName() {
-          return (
-            String((state.settings && state.settings.facility_name) || "").trim() ||
-            "نظام حجوزات الشاليهات"
-          );
-        }
-        function facilityTag() {
-          return String((state.settings && state.settings.tag) || "").trim();
-        }
-        function facilityLogoLetter() {
-          const name = facilityName();
-          return name.trim().charAt(0) || "ح";
-        }
-        function renderShell() {
-          const logo = $("appLogo");
-          const titleEl = $("appTitle");
-          if (logo) logo.textContent = facilityLogoLetter();
-          if (titleEl) titleEl.textContent = facilityName();
-          const sub = $("shellStatus");
-          if (!sub) return;
-          const tag = facilityTag();
-          if (loadedWorkspace) {
-            sub.innerHTML =
-              (tag ? esc(tag) + " · " : "") +
-              '<span class="ok">متصل</span> · <span class="ltr">' +
-              esc(loadedWorkspace.workspace_key || workspaceKey) +
-              "</span>";
-          } else {
-            sub.innerHTML = tag ? esc(tag) : "";
-          }
-        }
-        // ========================= JS: remaining payment helpers =========================
-        function remainingAmount(b) {
-          return Math.max(0, (+b.total || 0) - (+b.paid || 0));
-        }
-        function remainingStatusValue(b) {
-          const stored = String((b && b.remaining_status) || "");
-          if (stored) return stored;
-          return remainingAmount(b) > 0 ? "unreviewed" : "no_remaining";
-        }
-        function remainingStatusText(status) {
-          return (
-            {
-              unreviewed: "يحتاج مراجعة",
-              customer_pending: "باقي على العميل",
-              worker_received: "استلمه العامل ولم يتم تحويله بعد",
-              transferred: "تم التحويل / تمت التسوية",
-              no_remaining: "لا يوجد متبقي",
-            }[status] || ""
-          );
-        }
-        function remainingStatusClass(status) {
-          return (
-            {
-              unreviewed: "gold",
-              customer_pending: "bad",
-              worker_received: "gold",
-              transferred: "ok",
-              no_remaining: "",
-            }[status] || ""
-          );
-        }
-        function oldRemainingAlerts() {
-          const t = today();
-          return activeBookings()
-            .filter((b) => {
-              if (b.status === "cancelled") return false;
-              if (!b.booking_date || b.booking_date >= t) return false;
-              const status = remainingStatusValue(b);
-              if (status === "transferred" || status === "no_remaining")
-                return false;
-              return (
-                remainingAmount(b) > 0 ||
-                status === "unreviewed" ||
-                status === "customer_pending" ||
-                status === "worker_received"
-              );
-            })
-            .sort((a, b) => b.booking_date.localeCompare(a.booking_date));
-        }
-        async function copyRemainingReminder(id) {
-          const b = activeBookings().find((x) => x.id === id);
-          if (!b) return feedback("الحجز غير موجود", "bad");
-          const ch = getChalet(b.chalet_id);
-          const text = [
-            "السلام عليكم، تذكير بخصوص حجز " +
-              (ch ? ch.name : "—") +
-              " بتاريخ " +
-              (b.booking_date || "—") +
-              ".",
-            "المتبقي المسجل: " + money(remainingAmount(b)) + " ريال.",
-            "حالة المتبقي الحالية: " +
-              remainingStatusText(remainingStatusValue(b)) +
-              ".",
-            "يرجى التأكيد إذا تم السداد أو التحويل. شكرًا لكم.",
-          ].join("\n");
-          try {
-            await navigator.clipboard.writeText(text);
-            feedback("تم نسخ تذكير المتبقي.", "good");
-          } catch (_) {
-            feedback("تعذر نسخ تذكير المتبقي.", "bad");
-          }
-        }
-        function intervalFor(b) {
-          const ch = getChalet(b.chalet_id),
-            p = getPeriod(ch, b.period_id);
-          if (!ch || !p || !b.booking_date || !p.start || !p.end) return null;
-          const s = new Date(b.booking_date + "T" + p.start + ":00").getTime();
-          let e = new Date(b.booking_date + "T" + p.end + ":00").getTime();
-          if (e <= s) e += 86400000;
-          return { start: s, end: e };
-        }
-        // ========================= JS: conflict detection =========================
-        function findConflict(nb) {
-          if (nb.status !== "confirmed") return null;
-          const ni = intervalFor(nb);
-          if (!ni) return null;
-          return (
-            activeBookings().find((b) => {
-              if (
-                b.id === nb.id ||
-                b.chalet_id !== nb.chalet_id ||
-                b.status !== "confirmed"
-              )
-                return false;
-              const oi = intervalFor(b);
-              return oi && oi.start < ni.end && oi.end > ni.start;
-            }) || null
-          );
-        }
-        function openApp(r) {
-          loadedWorkspace = r;
-          state = normalizeData(r.data);
-          lastCloudCounts = counts(state);
-          lastCloudUpdatedAt = String(r.updated_at || "");
-          $("connectScreen").classList.add("hidden");
-          $("appShell").classList.remove("hidden");
-          $("settingsWorkspace").textContent = r.workspace_key || workspaceKey;
-          setDirty(false, "current session login/create");
-          renderAll();
-          log("App opened", {
-            workspace_key: r.workspace_key,
-            lastCloudCounts,
-            lastCloudUpdatedAt,
-          });
-          persistSessionSnapshot();
-        }
-        async function pullWorkspace() {
-          log("Login clicked");
-          $("pullButton").disabled = true;
-          $("createButton").disabled = true;
-          try {
-            const c = readCredentials();
-            log("Calling get_shared_workspace", { username: c.workspaceKey });
-            const r = await callRpc("get_shared_workspace", {
-              p_workspace_key: c.workspaceKey,
-              p_access_pin: c.pin,
-            });
-            if (!r || r.ok !== true) throw new Error("RPC_RESPONSE_NOT_OK");
-            feedback("تم تسجيل الدخول بنجاح.", "good");
-            openApp(r);
-          } catch (e) {
-            loadedWorkspace = null;
-            feedback(
-              "فشل الدخول: الحساب غير موجود أو الرقم السري غير صحيح.",
-              "bad",
-            );
-            log("Login failed", {
-              message: e.message,
-              status: e.status || null,
-            });
-          } finally {
-            $("pullButton").disabled = false;
-            $("createButton").disabled = false;
-          }
-        }
-        async function createWorkspace() {
-          log("Create account clicked");
-          $("pullButton").disabled = true;
-          $("createButton").disabled = true;
-          try {
-            const c = readCredentials();
-            const data = canonicalEmptyDataModel();
-            log("Calling save_shared_workspace with canonical empty model", {
-              username: c.workspaceKey,
-            });
-            const r = await callRpc("save_shared_workspace", {
-              p_workspace_key: c.workspaceKey,
-              p_access_pin: c.pin,
-              p_data: data,
-            });
-            if (!r || r.ok !== true) throw new Error("RPC_RESPONSE_NOT_OK");
-            feedback("تم إنشاء الحساب وفتح النظام.", "good");
-            openApp(r);
-          } catch (e) {
-            loadedWorkspace = null;
-            feedback("فشل إنشاء الحساب: " + e.message, "bad");
-            log("Create account failed", {
-              message: e.message,
-              status: e.status || null,
-            });
-          } finally {
-            $("pullButton").disabled = false;
-            $("createButton").disabled = false;
-          }
-        }
-        // ========================= JS: dirty/safe upload logic =========================
-        function backupBeforePush() {
-          try {
-            const key = "backup_before_cloud_push_" + now();
-            localStorage.setItem(
-              key,
-              JSON.stringify({
-                workspace_key: workspaceKey,
-                lastCloudUpdatedAt,
-                lastCloudCounts,
-                data: state,
-                timestamp: now(),
-              }),
-            );
-            const keys = [];
-            for (let i = 0; i < localStorage.length; i++) {
-              const k = localStorage.key(i);
-              if (k && k.indexOf("backup_before_cloud_push_") === 0)
-                keys.push(k);
-            }
-            keys
-              .sort()
-              .slice(0, -10)
-              .forEach((k) => localStorage.removeItem(k));
-            log("Local backup created", { key });
-          } catch (e) {
-            log("Backup failed", { message: e.message });
-          }
-        }
-        async function uploadChanges() {
-          log("Upload button clicked");
-          if (!loadedWorkspace || !workspaceKey || !accessPin)
-            return feedback(
-              "يجب تسجيل الدخول أو إنشاء حساب في نفس الجلسة قبل الرفع.",
-              "bad",
-            );
-          if (!lastCloudCounts || !lastCloudUpdatedAt)
-            return feedback("لا يمكن الرفع قبل توفر آخر حالة سحابية.", "bad");
-          const c = counts(state);
-          if (
-            c.chalets === 0 &&
-            c.bookings === 0 &&
-            (lastCloudCounts.chalets > 0 || lastCloudCounts.bookings > 0)
-          )
-            return feedback(
-              "تم إيقاف الرفع: البيانات المحلية فارغة وقد تستبدل بيانات موجودة.",
-              "bad",
-            );
-          {
-            const upBtn = $("uploadButton");
-            if (upBtn) upBtn.disabled = true;
-          }
-          try {
-            const fresh = await callRpc("get_shared_workspace", {
-              p_workspace_key: workspaceKey,
-              p_access_pin: accessPin,
-            });
-            if (String(fresh.updated_at || "") !== String(lastCloudUpdatedAt))
-              throw new Error(
-                "تم إيقاف الرفع: توجد نسخة أحدث في السحابة. اسحب البيانات أولًا.",
-              );
-            backupBeforePush();
-            const r = await callRpc("save_shared_workspace", {
-              p_workspace_key: workspaceKey,
-              p_access_pin: accessPin,
-              p_data: state,
-            });
-            if (!r || r.ok !== true) throw new Error("RPC_RESPONSE_NOT_OK");
-            loadedWorkspace = r;
-            state = normalizeData(r.data);
-            lastCloudCounts = counts(state);
-            lastCloudUpdatedAt = String(r.updated_at || "");
-            setDirty(false, "uploaded");
-            renderAll();
-            feedback("تم رفع التعديلات", "good");
-            log("Upload succeeded", { lastCloudUpdatedAt, lastCloudCounts });
-          } catch (e) {
-            {
-              const upBtn = $("uploadButton");
-              if (upBtn) upBtn.disabled = false;
-            }
-            feedback("فشل الرفع: " + e.message, "bad");
-            log("Upload failed", {
-              message: e.message,
-              status: e.status || null,
-            });
-          }
-        }
-        function showTab(tab) {
-          qsa(".tab-button").forEach((b) =>
-            b.classList.toggle("active", b.dataset.tab === tab),
-          );
-          qsa(".view").forEach((v) =>
-            v.classList.toggle("active", v.id === "tab-" + tab),
-          );
-          feedback("فتح تبويب: " + tab);
-          log("Tab changed; no upload", { tab });
-        }
-        // ========================= JS: rendering =========================
-        function renderAll() {
-          renderShell();
-          renderHome();
-          renderChalets();
-          renderBookings();
-          renderReports();
-          renderSettings();
-          fillBookingSelects();
-        }
-        function bookingCard(b, kind) {
-          const dateBadgeClass = kind === "past" ? "bad" : "ok";
-          const dateBadgeText = kind === "past" ? "قديم" : "قادم";
-          const cardClass = kind === "past" ? "booking-past" : "booking-upcoming";
-          const remaining = remainingAmount(b);
-          const paymentWarning =
-            remaining > 0 && b.status !== "cancelled"
-              ? '<div class="muted"><span class="badge bad">تحذير دفع: متبقي ' +
-                money(remaining) +
-                ' ر.س</span></div>'
-              : "";
-          const remStatus = remainingStatusValue(b);
-          const remBadge =
-            b.status !== "cancelled"
-              ? '<div class="muted"><span class="badge ' +
-                remainingStatusClass(remStatus) +
-                '">المتبقي: ' +
-                money(remaining) +
-                " ر.س · " +
-                esc(remainingStatusText(remStatus)) +
-                "</span></div>"
-              : "";
-          return (
-            '<div class="item ' +
-            cardClass +
-            '" data-booking-card-id="' +
-            esc(b.id) +
-            '"><div class="actions between"><div><b>' +
-            esc(b.customer_name || "بدون اسم") +
-            '</b><div class="muted">' +
-            esc(chaletName(b.chalet_id)) +
-            " · " +
-            esc(periodName(b.chalet_id, b.period_id)) +
-            " · " +
-            esc(b.booking_date || "—") +
-            '</div><span class="badge ' +
-            (b.status === "confirmed"
-              ? "ok"
-              : b.status === "cancelled"
-                ? "bad"
-                : "gold") +
-            '">' +
-            esc(statusText(b.status)) +
-            '</span><span class="badge ' +
-            dateBadgeClass +
-            '">' +
-            dateBadgeText +
-            "</span></div><div><b>" +
-            money(b.total) +
-            ' ر.س</b><div class="muted">مدفوع ' +
-            money(b.paid) +
-            " · متبقي " +
-            money(remaining) +
-            '</div>' +
-            paymentWarning +
-            remBadge +
-            '</div><div class="actions"><button class="secondary tiny" data-action="voucher" data-id="' +
-            esc(b.id) +
-            '">السند</button><button class="secondary tiny" data-action="edit-booking" data-id="' +
-            esc(b.id) +
-            '">تعديل</button><button class="secondary tiny" data-action="open-customer-whatsapp" data-id="' +
-            esc(b.id) +
-            '">محادثة واتساب</button><button class="danger tiny" data-action="soft-delete-booking" data-id="' +
-            esc(b.id) +
-            '">حذف</button></div></div></div>'
-          );
-        }
-        function renderHome() {
-          const bs = activeBookings();
-          const t = today();
-          const upcoming = bs
-            .filter((b) => b.status !== "cancelled" && b.booking_date >= t)
-            .sort((a, b) => a.booking_date.localeCompare(b.booking_date));
-          const past = bs
-            .filter((b) => b.status !== "cancelled" && b.booking_date < t)
-            .sort((a, b) => b.booking_date.localeCompare(a.booking_date));
-          $("homeChalets").textContent = activeChalets().length;
-          $("homeBookings").textContent = bs.length;
-          $("homeDue").textContent = money(
-            bs.reduce(
-              (s, b) => s + Math.max(0, (+b.total || 0) - (+b.paid || 0)),
-              0,
-            ),
-          );
-          renderRemainingAlerts();
-          $("homeUpcoming").innerHTML =
-            upcoming
-              .slice(0, 5)
-              .map((b) => bookingCard(b, "upcoming"))
-              .join("") || '<div class="empty">لا توجد حجوزات</div>';
-          $("homePast").innerHTML =
-            past.map((b) => bookingCard(b, "past")).join("") ||
-            '<div class="empty">لا توجد حجوزات قديمة</div>';
-          $("homePastSection").querySelector("summary").textContent =
-            "الحجوزات القديمة (" + past.length + ")";
-        }
-        function remainingAlertCard(b) {
-          const ch = getChalet(b.chalet_id);
-          const status = remainingStatusValue(b);
-          return (
-            '<div class="item" data-booking-card-id="' +
-            esc(b.id) +
-            '"><div class="actions between"><div><b>' +
-            esc(b.customer_name || "بدون اسم") +
-            '</b><div class="muted">' +
-            esc(ch ? ch.name : "—") +
-            " · " +
-            esc(b.booking_date || "—") +
-            '</div><div class="muted ltr">' +
-            esc(b.customer_phone || "—") +
-            "</div></div><div><b>" +
-            money(remainingAmount(b)) +
-            ' ر.س</b><div class="muted"><span class="badge ' +
-            remainingStatusClass(status) +
-            '">' +
-            esc(remainingStatusText(status)) +
-            '</span></div></div></div><div class="actions"><button class="secondary tiny" data-action="edit-booking" data-id="' +
-            esc(b.id) +
-            '">تعديل الحجز</button><button class="secondary tiny" data-action="copy-remaining-reminder" data-id="' +
-            esc(b.id) +
-            '">نسخ تذكير</button></div></div>'
-          );
-        }
-        function renderRemainingAlerts() {
-          const el = $("remainingAlerts");
-          if (!el) return;
-          const alerts = oldRemainingAlerts();
-          el.innerHTML =
-            alerts.map((b) => remainingAlertCard(b)).join("") ||
-            '<div class="empty">لا توجد تنبيهات متبقي.</div>';
-        }
-        function renderChalets() {
-          $("chaletList").innerHTML =
-            activeChalets()
-              .map(
-                (c) =>
-                  '<div class="item"><div class="actions between"><div><b>' +
-                  esc(c.name || "بدون اسم") +
-                  '</b><div class="muted">السعة: ' +
-                  esc(c.capacity) +
-                  " · الفترات: " +
-                  allPeriods(c).length +
-                  '</div></div><div class="actions"><button class="secondary tiny" data-action="edit-chalet" data-id="' +
-                  esc(c.id) +
-                  '">تعديل الشاليه</button><button class="danger tiny" data-action="soft-delete-chalet" data-id="' +
-                  esc(c.id) +
-                  '">حذف</button></div></div></div>',
-              )
-              .join("") || '<div class="empty">لا توجد شاليهات</div>';
-        }
-        function renderBookings() {
-          parkBookingEditor();
-          parkVoucherPanel();
-          $("bookingList").innerHTML =
-            activeBookings()
-              .filter((b) => b.status !== "cancelled" && b.booking_date >= today())
-              .slice()
-              .sort((a, b) => a.booking_date.localeCompare(b.booking_date))
-              .map((b) => bookingCard(b, "upcoming"))
-              .join("") || '<div class="empty">لا توجد حجوزات</div>';
-          const past = activeBookings()
-            .filter((b) => b.status !== "cancelled" && b.booking_date < today())
-            .slice()
-            .sort((a, b) => b.booking_date.localeCompare(a.booking_date));
-          $("bookingPastList").innerHTML =
-            past.map((b) => bookingCard(b, "past")).join("") ||
-            '<div class="empty">لا توجد حجوزات قديمة</div>';
-          $("bookingsPastSection").querySelector("summary").textContent =
-            "الحجوزات القديمة (" + past.length + ")";
-        }
-        function parkBookingEditor() {
-          const editor = $("bookingEditor");
-          const parking = $("bookingEditorParking");
-          if (editor && parking) {
-            editor.classList.add("hidden");
-            parking.appendChild(editor);
-          }
-        }
-        function parkVoucherPanel() {
-          const panel = $("voucherPanel");
-          const parking = $("voucherPanelParking");
-          if (panel && parking) {
-            panel.classList.add("hidden");
-            parking.appendChild(panel);
-          }
-        }
-        function renderReports() {
-          const previous = $("reportChalet").value;
-          const options = activeChalets();
-          $("reportChalet").innerHTML = [
-            '<option value="">كل الشاليهات</option>',
-          ]
-            .concat(
-              options.map(
-                (c) =>
-                  '<option value="' +
-                  esc(c.id) +
-                  '">' +
-                  esc(c.name) +
-                  "</option>",
-              ),
-            )
-            .join("");
-          if (previous && options.some((c) => c.id === previous)) {
-            $("reportChalet").value = previous;
-          }
-          if (!$("reportMonth").value) $("reportMonth").value = monthNow();
-          runReport(false);
-        }
-        function renderSettings() {
-          $("settingFacilityName").value = state.settings.facility_name || "";
-          $("settingTag").value = state.settings.tag || "";
-          $("settingsWorkspace").textContent = loadedWorkspace
-            ? loadedWorkspace.workspace_key
-            : workspaceKey || "—";
-          const conn = $("settingsConnectionState");
-          if (conn) {
-            conn.innerHTML = loadedWorkspace
-              ? '<span class="ok">متصل</span>'
-              : '<span class="bad">غير متصل</span>';
-          }
-          const lu = $("settingsLastUpdated");
-          if (lu) lu.textContent = lastCloudUpdatedAt || "—";
-          const lc = $("settingsLastCounts");
-          if (lc) {
-            const c = lastCloudCounts || { chalets: "—", bookings: "—" };
-            lc.textContent =
-              "الشاليهات " + c.chalets + " · الحجوزات " + c.bookings;
-          }
-        }
-        // ========================= JS: chalet logic =========================
-        function newChalet() {
-          editingChaletPeriods = defaultPeriods([]);
-          $("chaletId").value = "";
-          $("chaletName").value = "";
-          $("chaletCapacity").value = "0";
-          $("chaletDescription").value = "";
-          $("chaletContactPhone").value = "";
-          $("chaletWorkerPhone").value = "";
-          $("chaletWorkerName").value = "";
-          $("chaletMapUrl").value = "";
-          $("chaletTerms").value = "";
-          $("deleteChaletButton").classList.add("hidden");
-          $("chaletEditorTitle").textContent = "شاليه جديد";
-          $("chaletEditor").classList.remove("hidden");
-          renderPeriodEditor();
-          feedback("تم فتح نموذج شاليه جديد");
-        }
-        function editChalet(id) {
-          const c = state.chalets.find((x) => x.id === id);
-          if (!c) return feedback("الشاليه غير موجود", "bad");
-          editingChaletPeriods = defaultPeriods(c.periods).map((p) =>
-            Object.assign({}, p),
-          );
-          $("chaletId").value = c.id;
-          $("chaletName").value = c.name;
-          $("chaletCapacity").value = c.capacity;
-          $("chaletDescription").value = c.description;
-          $("chaletContactPhone").value = c.contactPhone;
-          $("chaletWorkerPhone").value = c.workerPhone;
-          $("chaletWorkerName").value = c.workerName;
-          $("chaletMapUrl").value = c.mapUrl;
-          $("chaletTerms").value = c.terms;
-          $("deleteChaletButton").classList.remove("hidden");
-          $("chaletEditorTitle").textContent = "تعديل الشاليه";
-          $("chaletEditor").classList.remove("hidden");
-          renderPeriodEditor();
-          feedback("تم فتح تعديل الشاليه");
-        }
-        // ========================= JS: period logic =========================
-        function renderPeriodEditor() {
-          editingChaletPeriods = defaultPeriods(editingChaletPeriods);
-          $("periodEditorList").innerHTML = editingChaletPeriods
-            .map(
-              (p, i) =>
-                '<div class="period-card" data-period-id="' +
-                esc(p.id) +
-                '"><h4>الفترة ' +
-                (i + 1) +
-                '</h4><div class="grid"><div><label>اسم الفترة</label><input data-period-field="label" value="' +
-                esc(p.label) +
-                '"></div><div><label>ترتيب العرض</label><input data-period-field="sort" type="number" value="' +
-                esc(p.sort) +
-                '"></div></div><div class="grid"><div><label>وقت الدخول</label><input data-period-field="start" type="time" value="' +
-                esc(p.start) +
-                '"></div><div><label>وقت الخروج</label><input data-period-field="end" type="time" value="' +
-                esc(p.end) +
-                '"></div></div><div class="grid"><div><label>سعر أيام الأسبوع</label><input data-period-field="weekday_price" type="number" min="0" value="' +
-                esc(p.weekday_price) +
-                '"></div><div><label>سعر نهاية الأسبوع</label><input data-period-field="weekend_price" type="number" min="0" value="' +
-                esc(p.weekend_price) +
-                '"></div></div><label><input data-period-field="active" type="checkbox" ' +
-                (p.active ? "checked" : "") +
-                ' style="width:auto;min-height:auto"> مفعلة</label></div>',
-            )
-            .join("");
-        }
-        function syncPeriodInputs() {
-          qsa("[data-period-id]").forEach((row) => {
-            const p = editingChaletPeriods.find(
-              (x) => x.id === row.dataset.periodId,
-            );
-            if (!p) return;
-            row.querySelectorAll("[data-period-field]").forEach((input) => {
-              const f = input.dataset.periodField;
-              if (f === "active") p[f] = input.checked;
-              else if (
-                f === "weekday_price" ||
-                f === "weekend_price" ||
-                f === "sort"
-              )
-                p[f] = Number(input.value) || 0;
-              else p[f] = input.value;
-            });
-          });
-          editingChaletPeriods = defaultPeriods(editingChaletPeriods);
-        }
-        function saveChalet() {
-          syncPeriodInputs();
-          const id = $("chaletId").value || uid(),
-            old = state.chalets.find((x) => x.id === id),
-            c = {
-              id,
-              name: $("chaletName").value.trim(),
-              capacity: +$("chaletCapacity").value || 0,
-              description: $("chaletDescription").value.trim(),
-              contactPhone: $("chaletContactPhone").value.trim(),
-              workerPhone: $("chaletWorkerPhone").value.trim(),
-              workerName: $("chaletWorkerName").value.trim(),
-              mapUrl: $("chaletMapUrl").value.trim(),
-              terms: $("chaletTerms").value.trim(),
-              periods: defaultPeriods(editingChaletPeriods),
-              deleted_at: null,
-              created_at: old ? old.created_at : now(),
-              updated_at: now(),
-            };
-          if (!c.name) return feedback("اسم الشاليه مطلوب", "bad");
-          if (old) Object.assign(old, c);
-          else state.chalets.push(c);
-          $("chaletEditor").classList.add("hidden");
-          setDirty(true, "save chalet and six periods");
-          renderAll();
-          feedback("تم تحديث بيانات الشاليه.", "good");
-          log("[OK] Chalet updated", { id });
-          log("[OK] Periods updated", { periods: c.periods.map((p) => p.id) });
-        }
-        function softDeleteChalet(id) {
-          const c = state.chalets.find((x) => x.id === id);
-          if (!c) return;
-          c.deleted_at = now();
-          c.updated_at = now();
-          activeBookings().forEach((b) => {
-            if (b.chalet_id === id) {
-              b.deleted_at = now();
-              b.updated_at = now();
-            }
-          });
-          $("chaletEditor").classList.add("hidden");
-          setDirty(true, "soft delete chalet");
-          renderAll();
-          feedback("تم حذف الشاليه محليًا", "good");
-        }
-        function cancelChalet() {
-          $("chaletEditor").classList.add("hidden");
-          feedback("تم الإلغاء");
-        }
-        function fillBookingSelects() {
-          const old = $("bookingChaletId").value;
-          const chalets = activeChalets();
-          $("bookingChaletId").innerHTML = chalets
-            .map(
-              (c) =>
-                '<option value="' +
-                esc(c.id) +
-                '">' +
-                esc(c.name) +
-                "</option>",
-            )
-            .join("");
-          if (old && chalets.some((c) => c.id === old)) $("bookingChaletId").value = old;
-          fillPeriodSelect();
-        }
-        function fillPeriodSelect() {
-          const ch = getChalet($("bookingChaletId").value),
-            list = activePeriods(ch),
-            old = $("bookingPeriodId").value;
-          if (!list.length) {
-            $("bookingPeriodId").innerHTML =
-              '<option value="">لا توجد فترات مفعلة لهذا الشاليه.</option>';
-            return;
-          }
-          $("bookingPeriodId").innerHTML = list
-            .map(
-              (p) =>
-                '<option value="' +
-                esc(p.id) +
-                '">' +
-                esc(p.label) +
-                " (" +
-                esc(p.start) +
-                "-" +
-                esc(p.end) +
-                ")</option>",
-            )
-            .join("");
-          if (old && list.some((p) => p.id === old))
-            $("bookingPeriodId").value = old;
-        }
-        function updateBookingRemaining() {
-          const total = +$("bookingTotal").value || 0,
-            paid = +$("bookingPaid").value || 0;
-          $("bookingRemaining").value = String(total - paid);
-        }
-        // ========================= JS: booking logic =========================
-        function newBooking() {
-          if (!activeChalets().length)
-            return feedback("أضف شاليه وفترة أولًا", "bad");
-          $("bookingId").value = "";
-          $("bookingCustomerName").value = "";
-          $("bookingCustomerPhone").value = "";
-          fillBookingSelects();
-          $("bookingDate").value = today();
-          $("bookingGuests").value = "1";
-          $("bookingTotal").value = "0";
-          $("bookingPaid").value = "0";
-          updateBookingRemaining();
-          $("bookingStatus").value = "confirmed";
-          $("bookingNotes").value = "";
-          $("bookingRemainingStatus").value = "";
-          $("bookingRemainingNote").value = "";
-          $("deleteBookingButton").classList.add("hidden");
-          $("bookingEditorTitle").textContent = "حجز جديد";
-          const list = $("bookingList");
-          const editor = $("bookingEditor");
-          if (list && list.parentNode) list.parentNode.insertBefore(editor, list);
-          $("bookingEditor").classList.remove("hidden");
-          feedback("تم فتح نموذج حجز جديد");
-        }
-        function findBookingCardForAction(id, sourceEl) {
-          const fromSource = sourceEl && sourceEl.closest("[data-booking-card-id]");
-          if (fromSource && fromSource.dataset.bookingCardId === id) return fromSource;
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>التقارير – حسابتي</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700;800&display=swap" rel="stylesheet" />
+  <style>
+    /* ─── reset ─── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    button { font-family: inherit; cursor: pointer; border: none; background: none; }
 
-          const activeView = document.querySelector(".view.active");
-          const visibleCards = activeView
-            ? Array.from(activeView.querySelectorAll("[data-booking-card-id]"))
-            : [];
-          const inActiveView = visibleCards.find((el) => el.dataset.bookingCardId === id);
-          if (inActiveView) return inActiveView;
+    /* ─── tokens ─── */
+    :root {
+      --cyan:        #3DD9D6;
+      --cyan-dim:    rgba(61,217,214,.13);
+      --cyan-glow:   0 0 0 3px rgba(61,217,214,.28);
+      --text-hi:     #1F2937;
+      --text-mid:    #374151;
+      --text-lo:     #6B7280;
+      --bg:          #FFFFFF;
+      --bg-soft:     #F8FAFC;
+      --border:      #E5E7EB;
+      --sh-xs:       0 1px 3px rgba(0,0,0,.05);
+      --sh-sm:       0 2px 8px rgba(0,0,0,.07);
+      --sh-md:       0 4px 16px rgba(0,0,0,.09);
+    }
 
-          return Array.from(document.querySelectorAll("[data-booking-card-id]")).find(
-            (el) => el.dataset.bookingCardId === id,
-          );
-        }
-        function editBooking(id, sourceEl) {
-          const b = state.bookings.find((x) => x.id === id);
-          if (!b) return feedback("الحجز غير موجود", "bad");
-          $("bookingId").value = b.id;
-          $("bookingCustomerName").value = b.customer_name;
-          $("bookingCustomerPhone").value = b.customer_phone;
-          fillBookingSelects();
-          $("bookingChaletId").value = b.chalet_id;
-          fillPeriodSelect();
-          $("bookingPeriodId").value = b.period_id;
-          $("bookingDate").value = b.booking_date;
-          $("bookingGuests").value = b.guests;
-          $("bookingTotal").value = b.total;
-          $("bookingPaid").value = b.paid;
-          updateBookingRemaining();
-          $("bookingStatus").value = b.status;
-          $("bookingNotes").value = b.notes;
-          $("bookingRemainingStatus").value = String(b.remaining_status || "");
-          $("bookingRemainingNote").value = String(b.remaining_note || "");
-          $("deleteBookingButton").classList.remove("hidden");
-          $("bookingEditorTitle").textContent = "تعديل حجز";
-          const card = findBookingCardForAction(id, sourceEl);
-          const editor = $("bookingEditor");
-          if (card && card.parentNode) card.insertAdjacentElement("afterend", editor);
-          $("bookingEditor").classList.remove("hidden");
-          if (card && card.scrollIntoView)
-            card.scrollIntoView({ behavior: "smooth", block: "start" });
-          feedback("تم فتح تعديل الحجز");
-        }
-        function saveBooking() {
-          const id = $("bookingId").value || uid(),
-            old = state.bookings.find((x) => x.id === id),
-            newRemainingStatus = String($("bookingRemainingStatus").value || ""),
-            newRemainingNote = $("bookingRemainingNote").value.trim(),
-            oldRemainingStatus = String((old && old.remaining_status) || ""),
-            oldRemainingNote = String((old && old.remaining_note) || ""),
-            remainingChanged =
-              newRemainingStatus !== oldRemainingStatus ||
-              newRemainingNote !== oldRemainingNote,
-            b = {
-              id,
-              customer_name: $("bookingCustomerName").value.trim(),
-              customer_phone: $("bookingCustomerPhone").value.trim(),
-              chalet_id: $("bookingChaletId").value,
-              booking_date: $("bookingDate").value,
-              period_id: $("bookingPeriodId").value,
-              guests: +$("bookingGuests").value || 1,
-              total: +$("bookingTotal").value || 0,
-              paid: +$("bookingPaid").value || 0,
-              status: $("bookingStatus").value,
-              notes: $("bookingNotes").value.trim(),
-              remaining_status: newRemainingStatus,
-              remaining_note: newRemainingNote,
-              remaining_updated_at: remainingChanged
-                ? now()
-                : String((old && old.remaining_updated_at) || ""),
-              deleted_at: null,
-              created_at: old ? old.created_at : now(),
-              updated_at: now(),
-            };
-          if (!b.customer_name) return feedback("اسم العميل مطلوب", "bad");
-          if (!b.chalet_id || !b.period_id)
-            return feedback("اختر الشاليه والفترة", "bad");
-          if (!b.booking_date) return feedback("التاريخ مطلوب", "bad");
-          const selectedChalet = getChalet(b.chalet_id);
-          const selectedPeriod = getPeriod(selectedChalet, b.period_id);
-          if (!selectedChalet || !selectedPeriod)
-            return feedback("الفترة المختارة غير متاحة لهذا الشاليه.", "bad");
-          if (b.guests < 1)
-            return feedback("عدد الضيوف يجب أن يكون 1 على الأقل.", "bad");
-          if (b.total < 0 || b.paid < 0)
-            return feedback("لا يمكن إدخال مبالغ سالبة.", "bad");
-          if (b.paid > b.total)
-            return feedback("المدفوع لا يمكن أن يتجاوز الإجمالي.", "bad");
-          if (findConflict(b))
-            return feedback(
-              "يوجد حجز مؤكد متعارض في نفس الشاليه والفترة.",
-              "bad",
-            );
-          if (old) Object.assign(old, b);
-          else state.bookings.push(b);
-          $("bookingEditor").classList.add("hidden");
-          setDirty(true, "save booking");
-          renderAll();
-          feedback("تم حفظ الحجز محليًا", "good");
-        }
-        function softDeleteBooking(id) {
-          const b = state.bookings.find((x) => x.id === id);
-          if (!b) return;
-          b.deleted_at = now();
-          b.updated_at = now();
-          $("bookingEditor").classList.add("hidden");
-          setDirty(true, "soft delete booking");
-          renderAll();
-          feedback("تم حذف الحجز محليًا", "good");
-        }
-        function cancelBooking() {
-          $("bookingEditor").classList.add("hidden");
-          feedback("تم الإلغاء");
-        }
-        // ========================= JS: settings logic =========================
-        function saveSettings() {
-          state.settings.facility_name = $("settingFacilityName").value.trim();
-          state.settings.tag = $("settingTag").value.trim();
-          setDirty(true, "save settings");
-          renderAll();
-          feedback("تم حفظ الإعدادات محليًا", "good");
-        }
-        // ========================= JS: voucher logic =========================
-        function voucherText(b) {
-          const ch = getChalet(b.chalet_id),
-            p = getPeriod(ch, b.period_id);
-          if (!ch || !p)
-            return "لا يمكن عرض السند لأن الشاليه أو الفترة غير مفعلة.";
-          const rem = (+b.total || 0) - (+b.paid || 0);
-          return [
-            "سند حجز",
-            "المنشأة: " + (state.settings.facility_name || "—"),
-            "الشاليه: " + ch.name,
-            "العميل: " + b.customer_name,
-            "الجوال: " + b.customer_phone,
-            "التاريخ: " + b.booking_date,
-            "الفترة: " + p.label,
-            "وقت الدخول: " + p.start,
-            "وقت الخروج: " + p.end,
-            "الضيوف: " + b.guests,
-            "الإجمالي: " + money(b.total),
-            "المدفوع: " + money(b.paid),
-            "المتبقي: " + money(rem),
-            "رقم التواصل: " + ch.contactPhone,
-            "رقم العامل: " + ch.workerPhone,
-            "اسم العامل: " + ch.workerName,
-            "رابط الموقع: " + ch.mapUrl,
-            "الشروط: " + ch.terms,
-          ].join("\n");
-        }
-        function renderVoucherPreview(text) {
-          $("voucherBox").innerHTML =
-            '<div class="voucher">' +
-            String(text || "")
-              .split("\n")
-              .map((line) => {
-                const i = line.indexOf(": ");
-                return i > 0
-                  ? '<div class="vrow"><span>' +
-                      esc(line.slice(0, i)) +
-                      "</span><b>" +
-                      esc(line.slice(i + 2)) +
-                      "</b></div>"
-                  : "<h3>" + esc(line) + "</h3>";
-              })
-              .join("") +
-            "</div>";
-        }
-        function cleanWhatsappPhone(phone) {
-          const digits = String(phone || "").replace(/[^\d]/g, "");
-          if (!digits) return "";
-          if (/^05\d{8}$/.test(digits)) return "966" + digits.slice(1);
-          return digits;
-        }
-        function normalizePhoneForWhatsApp(phone) {
-          const raw = String(phone || "").replace(/[\s\-()+]/g, "");
-          const digits = raw.replace(/[^\d]/g, "");
-          if (!digits) return "";
-          if (/^05\d{8}$/.test(digits)) return "966" + digits.slice(1);
-          if (/^5\d{8}$/.test(digits)) return "966" + digits;
-          if (/^966\d{9}$/.test(digits)) return digits;
-          return "";
-        }
-        function openCustomerWhatsApp(id) {
-          const b = activeBookings().find((x) => x.id === id);
-          if (!b) return feedback("الحجز غير موجود", "bad");
-          const phone = normalizePhoneForWhatsApp(b.customer_phone);
-          if (!phone) return feedback("رقم العميل غير صالح لواتساب.", "bad");
-          const url = "https://wa.me/" + phone;
-          window.open(url, "_blank", "noopener,noreferrer");
-          feedback("تم فتح محادثة واتساب مع العميل.", "good");
-        }
-        function showVoucher(id, sourceEl) {
-          const b = activeBookings().find((x) => x.id === id);
-          if (!b) return feedback("الحجز غير موجود", "bad");
-          currentVoucherText = voucherText(b);
-          $("voucherTextarea").value = currentVoucherText;
-          renderVoucherPreview(currentVoucherText);
-          const card = findBookingCardForAction(b.id, sourceEl);
-          const panel = $("voucherPanel");
-          if (card && card.parentNode) card.insertAdjacentElement("afterend", panel);
-          panel.dataset.bookingId = b.id;
-          panel.classList.remove("hidden");
-          if (panel.scrollIntoView)
-            panel.scrollIntoView({ behavior: "smooth", block: "start" });
-          feedback("تم عرض السند", "good");
-        }
-        async function copyVoucher() {
-          const text = $("voucherTextarea").value;
-          if (!text) return feedback("نص السند فارغ.", "bad");
-          try {
-            await navigator.clipboard.writeText(text);
-            feedback("تم نسخ السند.", "good");
-          } catch (_) {
-            feedback("تعذر نسخ السند.", "bad");
-          }
-        }
-        function sendVoucherToWhatsapp() {
-          const text = $("voucherTextarea").value;
-          if (!text) return feedback("نص السند فارغ.", "bad");
-          const bid = $("voucherPanel").dataset.bookingId || "",
-            b = activeBookings().find((x) => x.id === bid);
-          if (!b || !String(b.customer_phone || "").trim())
-            return feedback(
-              "رقم العميل غير موجود لإرسال السند عبر واتساب.",
-              "bad",
-            );
-          const phone = cleanWhatsappPhone(b.customer_phone);
-          if (!phone)
-            return feedback(
-              "رقم العميل غير موجود لإرسال السند عبر واتساب.",
-              "bad",
-            );
-          const url =
-            "https://wa.me/" + phone + "?text=" + encodeURIComponent(text);
-          const w = window.open(url, "_blank");
-          if (!w) location.href = url;
-          feedback("تم فتح واتساب لإرسال السند.", "good");
-        }
-        async function shareVoucher() {
-          const text = $("voucherTextarea").value;
-          if (!text) return feedback("نص السند فارغ.", "bad");
-          try {
-            if (navigator.share)
-              await navigator.share({ title: "سند حجز", text });
-            else await navigator.clipboard.writeText(text);
-            feedback("تمت المشاركة/النسخ", "good");
-          } catch (e) {
-            feedback("تعذرت المشاركة أو النسخ: " + e.message, "bad");
-          }
-        }
-        function closeVoucher() {
-          $("voucherPanel").classList.add("hidden");
-          currentVoucherText = "";
-          $("voucherPanel").dataset.bookingId = "";
-          $("voucherTextarea").value = "";
-          $("voucherBox").innerHTML = "";
-          parkVoucherPanel();
-        }
-        // ========================= JS: report logic =========================
-        function runReport(showMsg) {
-          const m = $("reportMonth").value || monthNow(),
-            chId = $("reportChalet").value,
-            list = activeBookings().filter(
-              (b) =>
-                b.booking_date &&
-                b.booking_date.slice(0, 7) === m &&
-                (!chId || b.chalet_id === chId),
-            );
-          if (!list.length) {
-            currentReportText = "البيانات غير كافية لحكم دقيق.";
-            $("reportBox").innerHTML =
-              '<div class="empty">' + currentReportText + "</div>";
-            if (showMsg) feedback(currentReportText, "bad");
-            return;
-          }
-          const total = list.reduce((s, b) => s + (+b.total || 0), 0),
-            paid = list.reduce((s, b) => s + (+b.paid || 0), 0),
-            remaining = total - paid,
-            rev = {};
-          list.forEach(
-            (b) =>
-              (rev[b.chalet_id] = (rev[b.chalet_id] || 0) + (+b.total || 0)),
-          );
-          const bestId = Object.keys(rev).sort((a, b) => rev[b] - rev[a])[0];
-          const remTotals = {
-            unreviewed: 0,
-            customer_pending: 0,
-            worker_received: 0,
-            transferred: 0,
-            no_remaining: 0,
-          };
-          let remOverall = 0;
-          list.forEach((b) => {
-            if (b.status === "cancelled") return;
-            const amt = remainingAmount(b);
-            const st = remainingStatusValue(b);
-            if (remTotals[st] === undefined) remTotals[st] = 0;
-            remTotals[st] += amt;
-            remOverall += amt;
-          });
-          currentReportText = [
-            "تقرير شهر " + m,
-            "الشاليه: " + (chId ? chaletName(chId) : "كل الشاليهات"),
-            "عدد الحجوزات: " + list.length,
-            "الإجمالي: " + money(total),
-            "المدفوع: " + money(paid),
-            "المتبقي: " + money(remaining),
-            "أفضل شاليه بالإيراد: " +
-              (bestId ? chaletName(bestId) : "البيانات غير كافية لحكم دقيق."),
-            "إجمالي المتبقي: " + money(remOverall),
-            "باقي على العميل: " + money(remTotals.customer_pending),
-            "مستلم عند العامل: " + money(remTotals.worker_received),
-            "تم تحويله/تسويته: " + money(remTotals.transferred),
-            "يحتاج مراجعة: " + money(remTotals.unreviewed),
-          ].join("\n");
-          $("reportBox").innerHTML =
-            '<div class="grid3"><div class="item"><div class="muted">العدد</div><div class="stat">' +
-            list.length +
-            '</div></div><div class="item"><div class="muted">الإجمالي</div><div class="stat">' +
-            money(total) +
-            '</div></div><div class="item"><div class="muted">المتبقي</div><div class="stat">' +
-            money(remaining) +
-            '</div></div></div><div class="grid3"><div class="item"><div class="muted">إجمالي المتبقي</div><div class="stat">' +
-            money(remOverall) +
-            '</div></div><div class="item"><div class="muted">باقي على العميل</div><div class="stat">' +
-            money(remTotals.customer_pending) +
-            '</div></div><div class="item"><div class="muted">مستلم عند العامل</div><div class="stat">' +
-            money(remTotals.worker_received) +
-            '</div></div></div><div class="grid"><div class="item"><div class="muted">تم تحويله/تسويته</div><div class="stat">' +
-            money(remTotals.transferred) +
-            '</div></div><div class="item"><div class="muted">يحتاج مراجعة</div><div class="stat">' +
-            money(remTotals.unreviewed) +
-            "</div></div></div>";
-          if (showMsg) feedback("تم إنشاء التقرير", "good");
-        }
-        async function copyReport() {
-          if (!currentReportText) runReport(false);
-          try {
-            await navigator.clipboard.writeText(currentReportText);
-            feedback("تم نسخ التقرير", "good");
-          } catch (e) {
-            feedback("تعذر نسخ التقرير: " + e.message, "bad");
-          }
-        }
-        function handleAction(a, id, sourceEl) {
-          if (a === "upload") return uploadChanges();
-          if (a === "set-theme-light") return setTheme("light");
-          if (a === "set-theme-dark") return setTheme("dark");
-          if (!loadedWorkspace)
-            return feedback("سجّل الدخول أو أنشئ حسابًا أولًا", "bad");
-          if (a === "new-chalet") return newChalet();
-          if (a === "edit-chalet") return editChalet(id);
-          if (a === "soft-delete-chalet") return softDeleteChalet(id);
-          if (a === "save-chalet") return saveChalet();
-          if (a === "cancel-chalet") return cancelChalet();
-          if (a === "delete-chalet")
-            return softDeleteChalet($("chaletId").value);
-          if (a === "new-booking") return newBooking();
-          if (a === "edit-booking") return editBooking(id, sourceEl);
-          if (a === "soft-delete-booking") return softDeleteBooking(id);
-          if (a === "save-booking") return saveBooking();
-          if (a === "cancel-booking") return cancelBooking();
-          if (a === "delete-booking")
-            return softDeleteBooking($("bookingId").value);
-          if (a === "voucher") return showVoucher(id, sourceEl);
-          if (a === "copy-voucher") return copyVoucher();
-          if (a === "send-whatsapp-voucher") return sendVoucherToWhatsapp();
-          if (a === "share-voucher") return shareVoucher();
-          if (a === "close-voucher") return closeVoucher();
-          if (a === "run-report") return runReport(true);
-          if (a === "copy-report") return copyReport();
-          if (a === "copy-remaining-reminder") return copyRemainingReminder(id);
-          if (a === "save-settings") return saveSettings();
-          if (a === "open-customer-whatsapp") return openCustomerWhatsApp(id);
-        }
-        // ========================= JS: event binding =========================
-        document.addEventListener("DOMContentLoaded", () => {
-          log("DOMContentLoaded: attaching event listeners");
-          applyTheme(readStoredTheme());
-          $("pullButton").addEventListener("click", pullWorkspace);
-          $("createButton").addEventListener("click", createWorkspace);
-          document.addEventListener(
-            "click",
-            (e) => {
-              const b = e.target.closest("button");
-              if (b)
-                log("Button clicked", {
-                  text: b.textContent.trim(),
-                  action: b.dataset.action || null,
-                  tab: b.dataset.tab || null,
-                });
-            },
-            true,
-          );
-          qsa(".tab-button").forEach((b) =>
-            b.addEventListener("click", () => showTab(b.dataset.tab)),
-          );
-          document.addEventListener("click", (e) => {
-            const b = e.target.closest("[data-action]");
-            if (b) handleAction(b.dataset.action, b.dataset.id || "", b);
-          });
-          $("bookingChaletId").addEventListener("change", fillPeriodSelect);
-          $("bookingTotal").addEventListener("input", updateBookingRemaining);
-          $("bookingPaid").addEventListener("input", updateBookingRemaining);
-          $("voucherTextarea").addEventListener("input", (e) => {
-            currentVoucherText = e.target.value;
-            renderVoucherPreview(currentVoucherText);
-          });
-          $("reportMonth").addEventListener("change", () => runReport(false));
-          $("reportChalet").addEventListener("change", () => runReport(false));
-          if (!restoreSessionFromStorage()) clearSessionSnapshot();
-          log("Ready");
-        });
-      })();
-    </script>
-  </body>
+    /* ─── base ─── */
+    html, body {
+      font-family: 'Tajawal', sans-serif;
+      direction: rtl;
+      background: var(--bg-soft);
+      color: var(--text-hi);
+      min-height: 100vh;
+      overflow-x: hidden;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    /* ════════════════════════════════════════
+       HEADER
+    ════════════════════════════════════════ */
+    .header {
+      background: #fff;
+      border-bottom: 1px solid var(--border);
+      padding: 7px 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: sticky;
+      top: 0;
+      z-index: 120;
+      box-shadow: var(--sh-sm);
+    }
+
+    .brand { display: flex; align-items: center; gap: 9px; }
+
+    .logo-ring {
+      width: 38px; height: 38px;
+      background: var(--cyan);
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+      box-shadow: 0 2px 8px rgba(61,217,214,.4);
+    }
+    .logo-ring span {
+      color: #fff; font-size: 19px; font-weight: 800;
+      letter-spacing: -1px; line-height: 1;
+    }
+
+    .brand-words { display: flex; flex-direction: column; }
+    .company-name { font-size: 12.5px; font-weight: 700; color: var(--text-hi); line-height: 1.35; }
+    .product-name { font-size: 10.5px; font-weight: 600; color: var(--cyan); letter-spacing: .3px; }
+
+    .hdr-actions { display: flex; align-items: center; gap: 6px; }
+
+    .avatar {
+      width: 32px; height: 32px; border-radius: 50%;
+      background: linear-gradient(135deg,#7C3AED,#4F46E5);
+      display: flex; align-items: center; justify-content: center;
+      color: #fff; font-size: 13px; font-weight: 700; flex-shrink: 0;
+    }
+
+    .qbar { display: flex; align-items: center; gap: 1px; }
+
+    .q-btn {
+      width: 29px; height: 29px;
+      display: flex; align-items: center; justify-content: center;
+      border-radius: 6px; color: #9CA3AF;
+      transition: background .15s, color .15s;
+    }
+    .q-btn:hover { background: var(--bg-soft); color: var(--text-hi); }
+
+    .bell-wrap { position: relative; }
+    .bell-badge {
+      position: absolute; top: 1px; left: 1px;
+      min-width: 15px; height: 15px;
+      background: #EF4444; border-radius: 10px;
+      font-size: 8.5px; color: #fff; font-weight: 800;
+      display: flex; align-items: center; justify-content: center;
+      border: 1.5px solid #fff; padding: 0 2px;
+      pointer-events: none;
+    }
+
+    .hamburger {
+      display: none; align-items: center; justify-content: center;
+      width: 32px; height: 32px; border-radius: 7px; color: var(--text-lo);
+      transition: background .15s;
+    }
+    .hamburger:hover { background: var(--bg-soft); }
+
+    /* ════════════════════════════════════════
+       SUB-HEADER  (lang pill + clock)
+    ════════════════════════════════════════ */
+    .sub-hdr {
+      background: #fff;
+      padding: 5px 14px 6px;
+      display: flex; align-items: center;
+      justify-content: flex-end;
+      gap: 10px;
+      border-bottom: 1px solid var(--border);
+    }
+    .lang-pill {
+      background: var(--cyan); color: #fff;
+      font-size: 10.5px; font-weight: 700;
+      padding: 2px 11px; border-radius: 20px;
+    }
+    #clock {
+      font-size: 11.5px; color: var(--text-lo);
+      direction: ltr; font-variant-numeric: tabular-nums; font-weight: 500;
+    }
+
+    /* ════════════════════════════════════════
+       PRIMARY TAB BAR
+    ════════════════════════════════════════ */
+    .tab-bar {
+      background: #fff;
+      border-bottom: 2px solid var(--border);
+      overflow-x: auto; -webkit-overflow-scrolling: touch;
+      scrollbar-width: none;
+      position: sticky; top: 54px; z-index: 110;
+    }
+    .tab-bar::-webkit-scrollbar { display: none; }
+
+    .tab-list {
+      display: flex;
+      padding: 0 10px;
+      min-width: max-content;
+    }
+
+    .tab-item {
+      display: flex; align-items: center; gap: 5px;
+      padding: 10px 13px 8px;
+      font-size: 12.5px; font-weight: 500; color: var(--text-lo);
+      border-bottom: 2px solid transparent; margin-bottom: -2px;
+      white-space: nowrap; user-select: none; cursor: pointer;
+      transition: color .18s, border-color .18s;
+    }
+    .tab-item:hover:not(.active) { color: var(--text-mid); }
+    .tab-item.active { color: var(--cyan); border-bottom-color: var(--cyan); font-weight: 700; }
+    .tab-icon { width: 15px; height: 15px; flex-shrink: 0; }
+
+    /* ════════════════════════════════════════
+       MOBILE DRAWER
+    ════════════════════════════════════════ */
+    .drawer-overlay {
+      display: none; position: fixed; inset: 0;
+      background: rgba(0,0,0,.45); z-index: 300;
+      backdrop-filter: blur(2px);
+    }
+    .drawer-overlay.open { display: block; }
+
+    .drawer {
+      position: absolute; top: 0; right: 0;
+      width: 265px; height: 100%;
+      background: #fff; padding: 16px;
+      overflow-y: auto;
+      transform: translateX(100%);
+      transition: transform .28s cubic-bezier(.4,0,.2,1);
+    }
+    .drawer-overlay.open .drawer { transform: translateX(0); }
+
+    .drawer-head {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 14px; padding-bottom: 12px;
+      border-bottom: 1px solid var(--border);
+    }
+    .drawer-title { font-size: 14px; font-weight: 700; }
+    .drawer-close {
+      width: 28px; height: 28px;
+      display: flex; align-items: center; justify-content: center;
+      border-radius: 6px; color: var(--text-lo); transition: background .15s;
+    }
+    .drawer-close:hover { background: var(--bg-soft); }
+
+    .drawer-tab {
+      display: flex; align-items: center; gap: 10px;
+      padding: 11px 10px; border-radius: 8px;
+      font-size: 13.5px; font-weight: 500; color: var(--text-lo);
+      cursor: pointer; transition: all .15s; user-select: none;
+    }
+    .drawer-tab:hover { background: var(--bg-soft); color: var(--text-hi); }
+    .drawer-tab.active { background: var(--cyan-dim); color: var(--cyan); font-weight: 700; }
+
+    /* ════════════════════════════════════════
+       MODULE ICON STRIP
+    ════════════════════════════════════════ */
+    .module-section {
+      background: #fff;
+      border-bottom: 3px solid var(--cyan);
+      padding-top: 14px;
+    }
+
+    .module-strip {
+      display: flex;
+      overflow-x: auto; -webkit-overflow-scrolling: touch;
+      scrollbar-width: none;
+      padding: 0 10px;
+      gap: 0;
+    }
+    .module-strip::-webkit-scrollbar { display: none; }
+
+    .mod-item {
+      display: flex; flex-direction: column; align-items: center; gap: 5px;
+      padding: 4px 6px 14px;
+      min-width: 74px; max-width: 84px; flex-shrink: 0;
+      cursor: pointer; user-select: none; position: relative;
+      transition: transform .2s;
+    }
+    .mod-item:hover { transform: translateY(-2px); }
+    .mod-item.active { transform: scale(1.04) translateY(-1px); }
+
+    .mod-icon-bg {
+      width: 52px; height: 52px; border-radius: 13px;
+      display: flex; align-items: center; justify-content: center;
+      background: var(--bg-soft);
+      box-shadow: var(--sh-xs);
+      transition: background .2s, box-shadow .2s;
+      overflow: hidden;
+    }
+    .mod-item:hover .mod-icon-bg { box-shadow: var(--sh-sm); }
+    .mod-item.active .mod-icon-bg {
+      background: var(--cyan);
+      box-shadow: var(--cyan-glow), var(--sh-sm);
+    }
+    .mod-item.active .mod-icon-bg svg { filter: brightness(0) invert(1); }
+
+    .mod-label {
+      font-size: 9.5px; color: var(--text-lo);
+      text-align: center; line-height: 1.35;
+      font-weight: 500; max-width: 74px;
+    }
+    .mod-item.active .mod-label { color: var(--cyan); font-weight: 700; }
+
+    .mod-tail {
+      position: absolute; bottom: 0; left: 50%;
+      transform: translateX(-50%);
+      width: 0; height: 0;
+      border-left: 9px solid transparent;
+      border-right: 9px solid transparent;
+      border-top: 9px solid var(--cyan);
+      display: none;
+    }
+    .mod-item.active .mod-tail { display: block; }
+
+    /* ════════════════════════════════════════
+       SUB-REPORTS PANEL
+    ════════════════════════════════════════ */
+    .reports-section { background: #fff; padding: 20px 18px 36px; }
+
+    .reports-heading {
+      display: flex; align-items: center; gap: 8px;
+      font-size: 14px; font-weight: 700; color: var(--text-hi);
+      margin-bottom: 16px;
+    }
+    .reports-heading-bar {
+      width: 4px; height: 19px; border-radius: 2px;
+      background: var(--cyan); flex-shrink: 0;
+    }
+
+    .reports-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 3px 12px;
+    }
+
+    .report-row {
+      display: flex; align-items: center; gap: 8px;
+      padding: 9px 10px; border-radius: 8px;
+      font-size: 13px; font-weight: 500; color: var(--text-mid);
+      cursor: pointer; transition: background .14s, color .14s;
+    }
+    .report-row:hover { background: var(--cyan-dim); color: var(--cyan); }
+
+    .dot {
+      width: 6px; height: 6px; border-radius: 50%;
+      background: var(--cyan); flex-shrink: 0;
+    }
+
+    .empty-state {
+      grid-column: 1/-1; text-align: center; padding: 28px;
+      font-size: 13px; color: var(--text-lo); font-style: italic;
+    }
+
+    /* ─── responsive ─── */
+    @media (max-width: 639px) { .reports-grid { grid-template-columns: 1fr; } }
+    @media (max-width: 480px) {
+      .hamburger { display: flex; }
+      .tab-bar { display: none; }
+      .qbar .q-btn:nth-child(n+5):not(.bell-btn) { display: none; }
+      .company-name { font-size: 11px; max-width: 150px; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── MOBILE DRAWER ── -->
+<div class="drawer-overlay" id="drawerOverlay">
+  <div class="drawer">
+    <div class="drawer-head">
+      <span class="drawer-title">القائمة الرئيسية</span>
+      <button class="drawer-close" onclick="closeDrawer()">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+        </svg>
+      </button>
+    </div>
+    <div id="drawerTabs"></div>
+  </div>
+</div>
+
+<!-- ── HEADER ── -->
+<header class="header">
+  <div class="brand">
+    <div class="logo-ring"><span>H</span></div>
+    <div class="brand-words">
+      <span class="company-name">مؤسسة متوكل لمواد البناء</span>
+      <span class="product-name">Hesabate ®</span>
+    </div>
+  </div>
+  <div class="hdr-actions">
+    <div class="qbar" id="qbar"></div>
+    <div class="avatar">م</div>
+    <button class="hamburger" id="hamburger" onclick="openDrawer()">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <line x1="3" y1="6"  x2="21" y2="6"/>
+        <line x1="3" y1="12" x2="21" y2="12"/>
+        <line x1="3" y1="18" x2="21" y2="18"/>
+      </svg>
+    </button>
+  </div>
+</header>
+
+<!-- ── SUB-HEADER ── -->
+<div class="sub-hdr">
+  <span class="lang-pill">عربي</span>
+  <span id="clock">PM 00:00:00</span>
+</div>
+
+<!-- ── TAB BAR ── -->
+<nav class="tab-bar">
+  <div class="tab-list" id="tabList"></div>
+</nav>
+
+<!-- ── MODULE STRIP ── -->
+<div class="module-section">
+  <div class="module-strip" id="moduleStrip"></div>
+</div>
+
+<!-- ── SUB-REPORTS ── -->
+<section class="reports-section">
+  <div class="reports-heading">
+    <div class="reports-heading-bar"></div>
+    <span id="rTitle">تقارير العملاء والموردين</span>
+  </div>
+  <div class="reports-grid" id="rGrid"></div>
+</section>
+
+<script>
+/* ══════════════════════════════════════════
+   CLOCK
+══════════════════════════════════════════ */
+function tick() {
+  const d = new Date();
+  let h = d.getHours();
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  h = h % 12 || 12;
+  const mm = String(d.getMinutes()).padStart(2,'0');
+  const ss = String(d.getSeconds()).padStart(2,'0');
+  document.getElementById('clock').textContent =
+    `${ampm} ${String(h).padStart(2,'0')}:${mm}:${ss}`;
+}
+tick(); setInterval(tick, 1000);
+
+/* ══════════════════════════════════════════
+   TABS DATA
+══════════════════════════════════════════ */
+const TABS = [
+  { id:'home', label:'الواجهة الرئيسية',
+    svg:`<svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+      <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/>
+      <polyline points="9 22 9 12 15 12 15 22"/></svg>` },
+  { id:'defs', label:'تعريفات',
+    svg:`<svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+      <line x1="4" y1="6" x2="20" y2="6"/>
+      <line x1="8" y1="12" x2="20" y2="12"/>
+      <line x1="12" y1="18" x2="20" y2="18"/>
+      <circle cx="4" cy="12" r="2" fill="currentColor" stroke="none"/>
+      <circle cx="8" cy="18" r="2" fill="currentColor" stroke="none"/></svg>` },
+  { id:'inv', label:'الفواتير و السندات',
+    svg:`<svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+      <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
+      <polyline points="14 2 14 8 20 8"/>
+      <line x1="16" y1="13" x2="8" y2="13"/>
+      <line x1="16" y1="17" x2="8" y2="17"/></svg>` },
+  { id:'hr', label:'حساباتي HR',
+    svg:`<svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+      <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>
+      <circle cx="9" cy="7" r="4"/>
+      <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>` },
+  { id:'other', label:'أنظمة أخرى',
+    svg:`<svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+      <rect x="3"  y="3"  width="7" height="7"/>
+      <rect x="14" y="3"  width="7" height="7"/>
+      <rect x="14" y="14" width="7" height="7"/>
+      <rect x="3"  y="14" width="7" height="7"/></svg>` },
+  { id:'pos', label:'حساباتي POS',
+    svg:`<svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+      <rect x="2" y="3" width="20" height="14" rx="2"/>
+      <line x1="8" y1="21" x2="16" y2="21"/>
+      <line x1="12" y1="17" x2="12" y2="21"/></svg>` },
+  { id:'reports', label:'التقارير', active:true,
+    svg:`<svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+      <line x1="18" y1="20" x2="18" y2="10"/>
+      <line x1="12" y1="20" x2="12" y2="4"/>
+      <line x1="6"  y1="20" x2="6"  y2="14"/></svg>` },
+  { id:'chat', label:'تحدث معنا',
+    svg:`<svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+      <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>` },
+];
+
+/* ══════════════════════════════════════════
+   QUICK-ACTION BUTTONS
+══════════════════════════════════════════ */
+const QBTNS = [
+  { t:'بحث',     s:`<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>` },
+  { t:'ملفي',    s:`<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>` },
+  { t:'لوحة',    s:`<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>` },
+  { t:'تقويم',   s:`<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>` },
+  { t:'إعدادات', s:`<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93l-1.41 1.41M4.93 4.93l1.41 1.41M4.93 19.07l1.41-1.41M19.07 19.07l-1.41-1.41M22 12h-2M4 12H2M12 22v-2M12 4V2"/></svg>` },
+  { t:'طباعة',   s:`<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>` },
+  { t:'مستندات', s:`<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>` },
+  { t:'مزامنة',  s:`<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>` },
+];
+
+/* ══════════════════════════════════════════
+   MODULES  (RTL order: index 0 = rightmost)
+══════════════════════════════════════════ */
+const MODS = [
+  {
+    id:'customers', label:'العملاء والموردين',
+    icon:`<svg width="30" height="30" viewBox="0 0 30 30" fill="none">
+      <circle cx="11" cy="10" r="4.5" fill="#BFDBFE" stroke="#3B82F6" stroke-width="1.3"/>
+      <circle cx="21" cy="10" r="3.2" fill="#DBEAFE" stroke="#60A5FA" stroke-width="1.2"/>
+      <path d="M2 25c0-4.5 4-8 9-8s9 3.5 9 8" fill="#EFF6FF" stroke="#3B82F6" stroke-width="1.3"/>
+      <path d="M21 16.5c3 0 7 2 7 6" stroke="#60A5FA" stroke-width="1.3" stroke-linecap="round"/>
+    </svg>`,
+    reports:['أرصدة العملاء والموردين','فئات سعر البيع الخاصة','تقرير الزيارات الميدانية',
+             'كشف حساب عميل','أرصدة حركات العملاء والموردين','أرصدة تعدت حد الدين',
+             'كشف دفعات الزبائن','أرصدة لم تتحرك منذ','زيارات المندوبين',
+             'تعمير الذمم','استعلام العملاء']
+  },
+  {
+    id:'hr-payroll', label:'حساباتي HR الرواتب والأجور',
+    icon:`<svg width="30" height="30" viewBox="0 0 30 30" fill="none">
+      <rect x="4" y="7" width="22" height="17" rx="2" fill="#FED7AA" stroke="#F97316" stroke-width="1.3"/>
+      <rect x="7" y="10" width="16" height="3.5" rx="1" fill="#FB923C"/>
+      <line x1="7" y1="17" x2="14" y2="17" stroke="#F97316" stroke-width="1.3" stroke-linecap="round"/>
+      <line x1="7" y1="20" x2="11" y2="20" stroke="#F97316" stroke-width="1.3" stroke-linecap="round"/>
+      <circle cx="22" cy="19" r="5" fill="#FDBA74" stroke="#F97316" stroke-width="1.3"/>
+      <path d="M21 19h2M22 18v2" stroke="#C2410C" stroke-width="1.4" stroke-linecap="round"/>
+    </svg>`,
+    reports:['كشف الرواتب الشهري','تقرير الأجور والمكافآت','كشف الاستقطاعات',
+             'تقرير الإجازات المستحقة','مكافآت نهاية الخدمة','السلف والاقتطاعات']
+  },
+  {
+    id:'pos-mod', label:'POS',
+    icon:`<svg width="30" height="30" viewBox="0 0 30 30" fill="none">
+      <rect x="4" y="5" width="22" height="15" rx="2" fill="#BBF7D0" stroke="#16A34A" stroke-width="1.3"/>
+      <rect x="7" y="8" width="16" height="9" rx="1" fill="#86EFAC"/>
+      <line x1="10" y1="23" x2="20" y2="23" stroke="#16A34A" stroke-width="1.6" stroke-linecap="round"/>
+      <line x1="15" y1="20" x2="15" y2="23" stroke="#16A34A" stroke-width="1.6" stroke-linecap="round"/>
+      <rect x="9"    y="9.5" width="3"   height="2.5" rx=".5" fill="#15803D"/>
+      <rect x="13.5" y="9.5" width="3"   height="2.5" rx=".5" fill="#15803D"/>
+      <rect x="18"   y="9.5" width="2.5" height="2.5" rx=".5" fill="#15803D"/>
+      <rect x="9"    y="13"  width="3"   height="2.5" rx=".5" fill="#15803D"/>
+      <rect x="13.5" y="13"  width="7"   height="2.5" rx=".5" fill="#15803D"/>
+    </svg>`,
+    reports:['تقرير المبيعات اليومية','كشف حركة الكاشير','تقرير الخصومات',
+             'إحصائيات المبيعات','الأصناف الأكثر مبيعاً','كشف إيرادات الفروع']
+  },
+  {
+    id:'banks', label:'البنوك و الشيكات',
+    icon:`<svg width="30" height="30" viewBox="0 0 30 30" fill="none">
+      <rect x="3" y="14" width="24" height="11" rx="1.5" fill="#BFDBFE" stroke="#2563EB" stroke-width="1.3"/>
+      <path d="M15 4L3 14h24L15 4z" fill="#93C5FD" stroke="#2563EB" stroke-width="1.3" stroke-linejoin="round"/>
+      <rect x="6"     y="17" width="3.5" height="5" rx=".5" fill="#2563EB"/>
+      <rect x="13.25" y="17" width="3.5" height="5" rx=".5" fill="#2563EB"/>
+      <rect x="20.5"  y="17" width="3.5" height="5" rx=".5" fill="#2563EB"/>
+      <line x1="3" y1="25" x2="27" y2="25" stroke="#1D4ED8" stroke-width="1.5" stroke-linecap="round"/>
+    </svg>`,
+    reports:['كشف الأرصدة البنكية','تقرير الشيكات الصادرة','تقرير الشيكات الواردة',
+             'كشف حركات البنوك','التسويات البنكية','الشيكات المرتجعة']
+  },
+  {
+    id:'inv-wh', label:'كشوف الفواتير و المستودعات',
+    icon:`<svg width="30" height="30" viewBox="0 0 30 30" fill="none">
+      <rect x="4"  y="4" width="14" height="19" rx="1.5" fill="#FED7AA" stroke="#EA580C" stroke-width="1.2"/>
+      <rect x="7"  y="7.5" width="8" height="1.8" rx=".9" fill="#EA580C"/>
+      <rect x="7"  y="11"  width="8" height="1.8" rx=".9" fill="#EA580C"/>
+      <rect x="7"  y="14.5" width="5" height="1.8" rx=".9" fill="#EA580C"/>
+      <rect x="10" y="6.5" width="14" height="19" rx="1.5" fill="#FDBA74" stroke="#EA580C" stroke-width="1.2"/>
+      <rect x="13" y="10"  width="8" height="1.8" rx=".9" fill="#C2410C"/>
+      <rect x="13" y="13.5" width="8" height="1.8" rx=".9" fill="#C2410C"/>
+      <rect x="13" y="17"  width="5" height="1.8" rx=".9" fill="#C2410C"/>
+    </svg>`,
+    reports:['كشف فواتير المبيعات','كشف فواتير المشتريات','تقرير حركة المستودعات',
+             'ملخص الفواتير الشهري','تقرير الإرجاعات','فواتير الخدمات']
+  },
+  {
+    id:'invoices', label:'الفواتير',
+    icon:`<svg width="30" height="30" viewBox="0 0 30 30" fill="none">
+      <path d="M6 3h13l7 7v17a2 2 0 01-2 2H6a2 2 0 01-2-2V5a2 2 0 012-2z" fill="#C7D2FE" stroke="#6366F1" stroke-width="1.3"/>
+      <polyline points="19,3 19,10 26,10" stroke="#6366F1" stroke-width="1.3" fill="none"/>
+      <line x1="9" y1="14"   x2="21" y2="14"   stroke="#6366F1" stroke-width="1.3" stroke-linecap="round"/>
+      <line x1="9" y1="17.5" x2="21" y2="17.5" stroke="#6366F1" stroke-width="1.3" stroke-linecap="round"/>
+      <line x1="9" y1="21"   x2="16" y2="21"   stroke="#6366F1" stroke-width="1.3" stroke-linecap="round"/>
+    </svg>`,
+    reports:['فواتير المبيعات اليومية','فواتير المشتريات','ضريبة الفواتير',
+             'الفواتير المرتجعة','ملخص الفواتير السنوي','الفواتير غير المدفوعة',
+             'الفواتير حسب العميل']
+  },
+  {
+    id:'docs', label:'السندات المحاسبية',
+    icon:`<svg width="30" height="30" viewBox="0 0 30 30" fill="none">
+      <rect x="3" y="4" width="24" height="22" rx="2" fill="#EDE9FE" stroke="#7C3AED" stroke-width="1.3"/>
+      <line x1="15" y1="4" x2="15" y2="26" stroke="#A78BFA" stroke-width="1" stroke-dasharray="2.5 2"/>
+      <rect x="5"  y="8"  width="8" height="2.2" rx="1" fill="#A78BFA"/>
+      <rect x="5"  y="12" width="8" height="2.2" rx="1" fill="#A78BFA"/>
+      <rect x="5"  y="16" width="8" height="2.2" rx="1" fill="#A78BFA"/>
+      <rect x="17" y="8"  width="7" height="2.2" rx="1" fill="#C4B5FD"/>
+      <rect x="17" y="12" width="7" height="2.2" rx="1" fill="#C4B5FD"/>
+      <rect x="17" y="16" width="5" height="2.2" rx="1" fill="#C4B5FD"/>
+      <line x1="3" y1="22" x2="27" y2="22" stroke="#7C3AED" stroke-width="1.3"/>
+    </svg>`,
+    reports:['سندات القبض','سندات الصرف','اليومية العامة',
+             'القيود المحاسبية','ميزان المراجعة','سندات التحويل الداخلي']
+  },
+  {
+    id:'perms', label:'الصلاحيات و المستخدمين',
+    icon:`<svg width="30" height="30" viewBox="0 0 30 30" fill="none">
+      <circle cx="13" cy="11" r="5" fill="#FECDD3" stroke="#E11D48" stroke-width="1.3"/>
+      <path d="M4 26c0-5 4-9 9-9s9 4 9 9" fill="#FFE4E6" stroke="#E11D48" stroke-width="1.3"/>
+      <circle cx="23" cy="21" r="5.5" fill="#FCA5A5" stroke="#E11D48" stroke-width="1.3"/>
+      <path d="M21 21l1.5 1.5L25 19" stroke="#BE123C" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>`,
+    reports:['المستخدمون النشطون','سجل عمليات المستخدمين','تقرير الصلاحيات',
+             'المستخدمون غير النشطين','سجل تسجيل الدخول']
+  },
+  {
+    id:'expenses', label:'كشف حركات المصاريف',
+    icon:`<svg width="30" height="30" viewBox="0 0 30 30" fill="none">
+      <rect x="3" y="9" width="24" height="17" rx="2" fill="#FEF3C7" stroke="#D97706" stroke-width="1.3"/>
+      <line x1="3" y1="14.5" x2="27" y2="14.5" stroke="#D97706" stroke-width="1"/>
+      <path d="M8 21l3.5-4 3.5 4 5.5-6" stroke="#D97706" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+      <rect x="10" y="3" width="10" height="8" rx="1.5" fill="#FCD34D" stroke="#D97706" stroke-width="1.3"/>
+      <line x1="13.5" y1="5.5" x2="16.5" y2="5.5" stroke="#D97706" stroke-width="1.1" stroke-linecap="round"/>
+      <line x1="13"   y1="7.5" x2="17"   y2="7.5" stroke="#D97706" stroke-width="1.1" stroke-linecap="round"/>
+    </svg>`,
+    reports:['المصاريف اليومية','تقرير المصاريف الشهري','مقارنة المصاريف',
+             'مصاريف حسب مركز التكلفة','المصاريف حسب الفئة','كشف المصروفات السنوي']
+  },
+  {
+    id:'vat', label:'الضريبة المضافة',
+    icon:`<svg width="30" height="30" viewBox="0 0 30 30" fill="none">
+      <rect x="3" y="3" width="24" height="24" rx="3" fill="#DCFCE7" stroke="#16A34A" stroke-width="1.3"/>
+      <circle cx="10.5" cy="12" r="3.5" fill="#86EFAC" stroke="#16A34A" stroke-width="1.3"/>
+      <circle cx="19.5" cy="18" r="3.5" fill="#86EFAC" stroke="#16A34A" stroke-width="1.3"/>
+      <line x1="7" y1="23" x2="23" y2="7" stroke="#16A34A" stroke-width="1.6" stroke-linecap="round"/>
+    </svg>`,
+    reports:['تقرير ضريبة القيمة المضافة','ضريبة المبيعات','ضريبة المشتريات',
+             'ملخص الضريبة الشهري','إقرار ضريبي دوري']
+  },
+  {
+    id:'validity', label:'تقارير الصلاحية',
+    icon:`<svg width="30" height="30" viewBox="0 0 30 30" fill="none">
+      <rect x="3" y="2" width="24" height="27" rx="2.5" fill="#E0F2FE" stroke="#0EA5E9" stroke-width="1.3"/>
+      <circle cx="15" cy="14" r="7" fill="#BAE6FD" stroke="#0EA5E9" stroke-width="1.3"/>
+      <path d="M12 14l2.5 2.5 4.5-5" stroke="#0369A1" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+      <line x1="7" y1="23" x2="23" y2="23" stroke="#0EA5E9" stroke-width="1.1" stroke-linecap="round"/>
+    </svg>`,
+    reports:['صلاحية المستخدمين','الوصول والأذونات','سجل التغييرات','الأدوار الوظيفية']
+  },
+  {
+    id:'wh1', label:'المستودعات',
+    icon:`<svg width="30" height="30" viewBox="0 0 30 30" fill="none">
+      <rect x="3" y="14" width="24" height="13" rx="1.5" fill="#FEF3C7" stroke="#B45309" stroke-width="1.3"/>
+      <path d="M3 14L15 5l12 9" fill="#FDE68A" stroke="#B45309" stroke-width="1.3" stroke-linejoin="round"/>
+      <rect x="11"   y="19" width="8"   height="8"   rx="1"  fill="#FCD34D" stroke="#B45309" stroke-width="1.3"/>
+      <rect x="5"    y="18" width="4.5" height="4.5" rx=".7" fill="#F59E0B"/>
+      <rect x="20.5" y="18" width="4.5" height="4.5" rx=".7" fill="#F59E0B"/>
+    </svg>`,
+    reports:['المخزون الحالي','حركة المستودعات','تقرير الجرد',
+             'الأصناف الأكثر حركة','المخزون تحت الحد الأدنى','التحويلات بين المستودعات',
+             'صرف المستودع']
+  },
+  {
+    id:'cost', label:'حركات مراكز التكلفة',
+    icon:`<svg width="30" height="30" viewBox="0 0 30 30" fill="none">
+      <circle cx="15" cy="15" r="12" fill="#EDE9FE" stroke="#6D28D9" stroke-width="1.3"/>
+      <path d="M15 15L15 3A12 12 0 0127 15z"  fill="#A78BFA" stroke="#6D28D9" stroke-width="1"/>
+      <path d="M15 15L27 15A12 12 0 0115 27z"  fill="#C4B5FD" stroke="#6D28D9" stroke-width="1"/>
+      <path d="M15 15L15 27A12 12 0 013 15z"   fill="#DDD6FE" stroke="#6D28D9" stroke-width="1"/>
+      <circle cx="15" cy="15" r="4.5" fill="white" stroke="#6D28D9" stroke-width="1.2"/>
+    </svg>`,
+    reports:['تقرير مراكز التكلفة','توزيع المصاريف','تحليل التكاليف',
+             'مقارنة مراكز التكلفة','الميزانية مقابل الفعلي']
+  },
+  {
+    id:'acctg', label:'تقارير محاسبية',
+    icon:`<svg width="30" height="30" viewBox="0 0 30 30" fill="none">
+      <rect x="3" y="3" width="24" height="24" rx="2.5" fill="#D1FAE5" stroke="#047857" stroke-width="1.3"/>
+      <rect x="6"  y="17" width="4" height="8"  rx=".7" fill="#10B981"/>
+      <rect x="13" y="12" width="4" height="13" rx=".7" fill="#059669"/>
+      <rect x="20" y="7"  width="4" height="18" rx=".7" fill="#047857"/>
+      <line x1="5" y1="25.5" x2="25" y2="25.5" stroke="#047857" stroke-width="1.4" stroke-linecap="round"/>
+    </svg>`,
+    reports:['قائمة الدخل','الميزانية العمومية','التدفقات النقدية',
+             'ميزان المراجعة','الأرباح والخسائر','القيود المحاسبية','الحسابات الختامية']
+  },
+  {
+    id:'wh2', label:'المستودعات',
+    icon:`<svg width="30" height="30" viewBox="0 0 30 30" fill="none">
+      <rect x="3"    y="13.5" width="24"  height="13.5" rx="1.5" fill="#FFEDD5" stroke="#C2410C" stroke-width="1.3"/>
+      <path d="M3 13.5L15 4l12 9.5" fill="#FED7AA" stroke="#C2410C" stroke-width="1.3" stroke-linejoin="round"/>
+      <rect x="11"   y="18.5" width="8"   height="8.5" rx="1"  fill="#FB923C" stroke="#C2410C" stroke-width="1.3"/>
+      <rect x="5"    y="17.5" width="4.5" height="4.5" rx=".7" fill="#F97316"/>
+      <rect x="20.5" y="17.5" width="4.5" height="4.5" rx=".7" fill="#F97316"/>
+      <line x1="15" y1="4" x2="15" y2="10" stroke="#C2410C" stroke-width="1.1" stroke-dasharray="2 1.5"/>
+    </svg>`,
+    reports:['جرد المستودعات','الأصناف المنتهية','كشف التوريدات',
+             'تقرير المرتجعات','المخزون التفصيلي']
+  },
+  {
+    id:'hr-att', label:'حساباتي HR الدوام',
+    icon:`<svg width="30" height="30" viewBox="0 0 30 30" fill="none">
+      <rect x="2" y="5" width="26" height="23" rx="2.5" fill="#DBEAFE" stroke="#1D4ED8" stroke-width="1.3"/>
+      <line x1="8"  y1="2.5" x2="8"  y2="7.5" stroke="#1D4ED8" stroke-width="1.7" stroke-linecap="round"/>
+      <line x1="22" y1="2.5" x2="22" y2="7.5" stroke="#1D4ED8" stroke-width="1.7" stroke-linecap="round"/>
+      <line x1="2" y1="12" x2="28" y2="12" stroke="#1D4ED8" stroke-width="1"/>
+      <rect x="5.5"   y="15"   width="4.5" height="3.5" rx=".7" fill="#93C5FD"/>
+      <rect x="12.75" y="15"   width="4.5" height="3.5" rx=".7" fill="#93C5FD"/>
+      <rect x="20"    y="15"   width="4.5" height="3.5" rx=".7" fill="#2563EB"/>
+      <rect x="5.5"   y="20.5" width="4.5" height="3.5" rx=".7" fill="#93C5FD"/>
+      <rect x="12.75" y="20.5" width="4.5" height="3.5" rx=".7" fill="#BFDBFE"/>
+      <rect x="20"    y="20.5" width="4.5" height="3.5" rx=".7" fill="#93C5FD"/>
+    </svg>`,
+    reports:['تقرير الحضور والانصراف','كشف الغيابات','تقرير الإجازات',
+             'ساعات العمل الإضافي','كشف التأخيرات','دوام شهري تفصيلي']
+  },
+  {
+    id:'assets', label:'تقارير الأصول',
+    icon:`<svg width="30" height="30" viewBox="0 0 30 30" fill="none">
+      <rect x="3"  y="13.5" width="24" height="14"  rx="1.5" fill="#EDE9FE" stroke="#5B21B6" stroke-width="1.3"/>
+      <path d="M3 13.5L15 5l12 8.5" fill="#DDD6FE" stroke="#5B21B6" stroke-width="1.3" stroke-linejoin="round"/>
+      <rect x="11" y="18"   width="8"  height="9.5" rx="1"  fill="#C4B5FD" stroke="#5B21B6" stroke-width="1.3"/>
+      <line x1="15" y1="18"    x2="15" y2="27.5" stroke="#5B21B6" stroke-width="1"/>
+      <line x1="11" y1="22.75" x2="19" y2="22.75" stroke="#5B21B6" stroke-width="1"/>
+      <circle cx="23" cy="10" r="4.5" fill="#A78BFA" stroke="#5B21B6" stroke-width="1.3"/>
+      <path d="M21.2 10h3.6M23 8.2v3.6" stroke="#4C1D95" stroke-width="1.4" stroke-linecap="round"/>
+    </svg>`,
+    reports:['تقرير حركات الأصول','تقرير الأصول حتى فترة']
+  },
+];
+
+/* ══════════════════════════════════════════
+   STATE
+══════════════════════════════════════════ */
+let activeTab = 'reports';
+let activeMod = 'customers';
+
+/* ══════════════════════════════════════════
+   RENDER: quick-action bar
+══════════════════════════════════════════ */
+function renderQBar() {
+  const el = document.getElementById('qbar');
+  el.innerHTML = QBTNS.map(b =>
+    `<button class="q-btn" title="${b.t}">${b.s}</button>`
+  ).join('') +
+  `<div class="q-btn bell-wrap" style="position:relative;display:flex;align-items:center;justify-content:center;cursor:pointer;border-radius:6px;" title="الإشعارات">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" stroke-width="1.6">
+      <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+      <path d="M13.73 21a2 2 0 01-3.46 0"/>
+    </svg>
+    <span class="bell-badge">2</span>
+  </div>`;
+}
+
+/* ══════════════════════════════════════════
+   RENDER: tabs
+══════════════════════════════════════════ */
+function renderTabs() {
+  const list   = document.getElementById('tabList');
+  const drawer = document.getElementById('drawerTabs');
+
+  list.innerHTML = TABS.map(t =>
+    `<div class="tab-item${t.id===activeTab?' active':''}" onclick="setTab('${t.id}')">
+      ${t.svg}<span>${t.label}</span>
+    </div>`
+  ).join('');
+
+  drawer.innerHTML = TABS.map(t =>
+    `<div class="drawer-tab${t.id===activeTab?' active':''}"
+          onclick="setTab('${t.id}');closeDrawer()">
+      ${t.svg}<span>${t.label}</span>
+    </div>`
+  ).join('');
+}
+
+/* ══════════════════════════════════════════
+   RENDER: module strip
+══════════════════════════════════════════ */
+function renderStrip() {
+  document.getElementById('moduleStrip').innerHTML = MODS.map(m =>
+    `<div class="mod-item${m.id===activeMod?' active':''}" onclick="setMod('${m.id}')">
+      <div class="mod-icon-bg">${m.icon}</div>
+      <div class="mod-label">${m.label}</div>
+      <div class="mod-tail"></div>
+    </div>`
+  ).join('');
+}
+
+/* ══════════════════════════════════════════
+   RENDER: sub-reports
+══════════════════════════════════════════ */
+function renderReports() {
+  const mod = MODS.find(m => m.id === activeMod);
+  document.getElementById('rTitle').textContent =
+    mod ? `تقارير ${mod.label}` : 'التقارير';
+
+  const grid = document.getElementById('rGrid');
+  if (!mod || !mod.reports.length) {
+    grid.innerHTML = `<div class="empty-state">لا توجد تقارير متاحة لهذا القسم</div>`;
+    return;
+  }
+  grid.innerHTML = mod.reports.map(r =>
+    `<div class="report-row"><div class="dot"></div><span>${r}</span></div>`
+  ).join('');
+}
+
+/* ══════════════════════════════════════════
+   STATE SETTERS
+══════════════════════════════════════════ */
+function setTab(id) { activeTab = id; renderTabs(); }
+
+function setMod(id) {
+  activeMod = id;
+  renderStrip();
+  renderReports();
+  const strip  = document.getElementById('moduleStrip');
+  const active = strip.querySelector('.active');
+  if (active) active.scrollIntoView({ behavior:'smooth', block:'nearest', inline:'center' });
+}
+
+/* ══════════════════════════════════════════
+   DRAWER
+══════════════════════════════════════════ */
+function openDrawer() {
+  document.getElementById('drawerOverlay').classList.add('open');
+  document.body.style.overflow = 'hidden';
+}
+function closeDrawer(e) {
+  if (e && e.target !== document.getElementById('drawerOverlay')) return;
+  document.getElementById('drawerOverlay').classList.remove('open');
+  document.body.style.overflow = '';
+}
+document.getElementById('drawerOverlay').addEventListener('click', closeDrawer);
+
+/* ══════════════════════════════════════════
+   INIT
+══════════════════════════════════════════ */
+renderQBar();
+renderTabs();
+renderStrip();
+renderReports();
+</script>
+</body>
 </html>
