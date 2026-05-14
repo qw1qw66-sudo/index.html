@@ -456,6 +456,10 @@
             </div>
           </div>
           <div class="card">
+            <h3>تنبيهات المتبقي</h3>
+            <div id="remainingAlerts"></div>
+          </div>
+          <div class="card">
             <h3>أقرب الحجوزات</h3>
             <div id="homeUpcoming"></div>
             <details id="homePastSection" class="section-details">
@@ -592,6 +596,17 @@
               <option value="completed">مكتمل</option></select
             ><label>ملاحظات داخلية</label
             ><textarea id="bookingNotes"></textarea>
+            <h3>حالة المتبقي</h3>
+            <label>حالة المتبقي</label
+            ><select id="bookingRemainingStatus">
+              <option value="">— اختر —</option>
+              <option value="unreviewed">يحتاج مراجعة</option>
+              <option value="customer_pending">باقي على العميل</option>
+              <option value="worker_received">استلمه العامل</option>
+              <option value="transferred">تم التحويل / تمت التسوية</option>
+              <option value="no_remaining">لا يوجد متبقي</option></select
+            ><label>ملاحظة المتبقي</label
+            ><textarea id="bookingRemainingNote"></textarea>
             <div class="actions">
               <button class="primary" data-action="save-booking">
                 حفظ الحجز</button
@@ -967,6 +982,9 @@
                 paid: Number(b.paid || 0),
                 status: String(b.status || "confirmed"),
                 notes: String(b.notes || ""),
+                remaining_status: String(b.remaining_status || ""),
+                remaining_note: String(b.remaining_note || ""),
+                remaining_updated_at: String(b.remaining_updated_at || ""),
                 deleted_at: b.deleted_at || null,
                 created_at: b.created_at || now(),
                 updated_at: b.updated_at || now(),
@@ -1014,6 +1032,78 @@
               completed: "مكتمل",
             }[s] || s
           );
+        }
+        // ========================= JS: remaining payment helpers =========================
+        function remainingAmount(b) {
+          return Math.max(0, (+b.total || 0) - (+b.paid || 0));
+        }
+        function remainingStatusValue(b) {
+          const stored = String((b && b.remaining_status) || "");
+          if (stored) return stored;
+          return remainingAmount(b) > 0 ? "unreviewed" : "no_remaining";
+        }
+        function remainingStatusText(status) {
+          return (
+            {
+              unreviewed: "يحتاج مراجعة",
+              customer_pending: "باقي على العميل",
+              worker_received: "استلمه العامل ولم يتم تحويله بعد",
+              transferred: "تم التحويل / تمت التسوية",
+              no_remaining: "لا يوجد متبقي",
+            }[status] || ""
+          );
+        }
+        function remainingStatusClass(status) {
+          return (
+            {
+              unreviewed: "gold",
+              customer_pending: "bad",
+              worker_received: "gold",
+              transferred: "ok",
+              no_remaining: "",
+            }[status] || ""
+          );
+        }
+        function oldRemainingAlerts() {
+          const t = today();
+          return activeBookings()
+            .filter((b) => {
+              if (b.status === "cancelled") return false;
+              if (!b.booking_date || b.booking_date >= t) return false;
+              const status = remainingStatusValue(b);
+              if (status === "transferred" || status === "no_remaining")
+                return false;
+              return (
+                remainingAmount(b) > 0 ||
+                status === "unreviewed" ||
+                status === "customer_pending" ||
+                status === "worker_received"
+              );
+            })
+            .sort((a, b) => b.booking_date.localeCompare(a.booking_date));
+        }
+        async function copyRemainingReminder(id) {
+          const b = activeBookings().find((x) => x.id === id);
+          if (!b) return feedback("الحجز غير موجود", "bad");
+          const ch = getChalet(b.chalet_id);
+          const text = [
+            "السلام عليكم، تذكير بخصوص حجز " +
+              (ch ? ch.name : "—") +
+              " بتاريخ " +
+              (b.booking_date || "—") +
+              ".",
+            "المتبقي المسجل: " + money(remainingAmount(b)) + " ريال.",
+            "حالة المتبقي الحالية: " +
+              remainingStatusText(remainingStatusValue(b)) +
+              ".",
+            "يرجى التأكيد إذا تم السداد أو التحويل. شكرًا لكم.",
+          ].join("\n");
+          try {
+            await navigator.clipboard.writeText(text);
+            feedback("تم نسخ تذكير المتبقي.", "good");
+          } catch (_) {
+            feedback("تعذر نسخ تذكير المتبقي.", "bad");
+          }
         }
         function intervalFor(b) {
           const ch = getChalet(b.chalet_id),
@@ -1227,12 +1317,23 @@
           const dateBadgeClass = kind === "past" ? "bad" : "ok";
           const dateBadgeText = kind === "past" ? "قديم" : "قادم";
           const cardClass = kind === "past" ? "booking-past" : "booking-upcoming";
-          const remaining = Math.max(0, (+b.total || 0) - (+b.paid || 0));
+          const remaining = remainingAmount(b);
           const paymentWarning =
             remaining > 0 && b.status !== "cancelled"
               ? '<div class="muted"><span class="badge bad">تحذير دفع: متبقي ' +
                 money(remaining) +
                 ' ر.س</span></div>'
+              : "";
+          const remStatus = remainingStatusValue(b);
+          const remBadge =
+            b.status !== "cancelled"
+              ? '<div class="muted"><span class="badge ' +
+                remainingStatusClass(remStatus) +
+                '">المتبقي: ' +
+                money(remaining) +
+                " ر.س · " +
+                esc(remainingStatusText(remStatus)) +
+                "</span></div>"
               : "";
           return (
             '<div class="item ' +
@@ -1267,6 +1368,7 @@
             money(remaining) +
             '</div>' +
             paymentWarning +
+            remBadge +
             '</div><div class="actions"><button class="secondary tiny" data-action="voucher" data-id="' +
             esc(b.id) +
             '">السند</button><button class="secondary tiny" data-action="edit-booking" data-id="' +
@@ -1293,6 +1395,7 @@
               0,
             ),
           );
+          renderRemainingAlerts();
           $("homeUpcoming").innerHTML =
             upcoming
               .slice(0, 5)
@@ -1303,6 +1406,41 @@
             '<div class="empty">لا توجد حجوزات قديمة</div>';
           $("homePastSection").querySelector("summary").textContent =
             "الحجوزات القديمة (" + past.length + ")";
+        }
+        function remainingAlertCard(b) {
+          const ch = getChalet(b.chalet_id);
+          const status = remainingStatusValue(b);
+          return (
+            '<div class="item" data-booking-card-id="' +
+            esc(b.id) +
+            '"><div class="actions between"><div><b>' +
+            esc(b.customer_name || "بدون اسم") +
+            '</b><div class="muted">' +
+            esc(ch ? ch.name : "—") +
+            " · " +
+            esc(b.booking_date || "—") +
+            '</div><div class="muted ltr">' +
+            esc(b.customer_phone || "—") +
+            "</div></div><div><b>" +
+            money(remainingAmount(b)) +
+            ' ر.س</b><div class="muted"><span class="badge ' +
+            remainingStatusClass(status) +
+            '">' +
+            esc(remainingStatusText(status)) +
+            '</span></div></div></div><div class="actions"><button class="secondary tiny" data-action="edit-booking" data-id="' +
+            esc(b.id) +
+            '">تعديل الحجز</button><button class="secondary tiny" data-action="copy-remaining-reminder" data-id="' +
+            esc(b.id) +
+            '">نسخ تذكير</button></div></div>'
+          );
+        }
+        function renderRemainingAlerts() {
+          const el = $("remainingAlerts");
+          if (!el) return;
+          const alerts = oldRemainingAlerts();
+          el.innerHTML =
+            alerts.map((b) => remainingAlertCard(b)).join("") ||
+            '<div class="empty">لا توجد تنبيهات متبقي.</div>';
         }
         function renderChalets() {
           $("chaletList").innerHTML =
@@ -1612,6 +1750,8 @@
           updateBookingRemaining();
           $("bookingStatus").value = "confirmed";
           $("bookingNotes").value = "";
+          $("bookingRemainingStatus").value = "";
+          $("bookingRemainingNote").value = "";
           $("deleteBookingButton").classList.add("hidden");
           $("bookingEditorTitle").textContent = "حجز جديد";
           const list = $("bookingList");
@@ -1652,6 +1792,8 @@
           updateBookingRemaining();
           $("bookingStatus").value = b.status;
           $("bookingNotes").value = b.notes;
+          $("bookingRemainingStatus").value = String(b.remaining_status || "");
+          $("bookingRemainingNote").value = String(b.remaining_note || "");
           $("deleteBookingButton").classList.remove("hidden");
           $("bookingEditorTitle").textContent = "تعديل حجز";
           const card = findBookingCardForAction(id, sourceEl);
@@ -1665,6 +1807,13 @@
         function saveBooking() {
           const id = $("bookingId").value || uid(),
             old = state.bookings.find((x) => x.id === id),
+            newRemainingStatus = String($("bookingRemainingStatus").value || ""),
+            newRemainingNote = $("bookingRemainingNote").value.trim(),
+            oldRemainingStatus = String((old && old.remaining_status) || ""),
+            oldRemainingNote = String((old && old.remaining_note) || ""),
+            remainingChanged =
+              newRemainingStatus !== oldRemainingStatus ||
+              newRemainingNote !== oldRemainingNote,
             b = {
               id,
               customer_name: $("bookingCustomerName").value.trim(),
@@ -1677,6 +1826,11 @@
               paid: +$("bookingPaid").value || 0,
               status: $("bookingStatus").value,
               notes: $("bookingNotes").value.trim(),
+              remaining_status: newRemainingStatus,
+              remaining_note: newRemainingNote,
+              remaining_updated_at: remainingChanged
+                ? now()
+                : String((old && old.remaining_updated_at) || ""),
               deleted_at: null,
               created_at: old ? old.created_at : now(),
               updated_at: now(),
@@ -1874,6 +2028,22 @@
               (rev[b.chalet_id] = (rev[b.chalet_id] || 0) + (+b.total || 0)),
           );
           const bestId = Object.keys(rev).sort((a, b) => rev[b] - rev[a])[0];
+          const remTotals = {
+            unreviewed: 0,
+            customer_pending: 0,
+            worker_received: 0,
+            transferred: 0,
+            no_remaining: 0,
+          };
+          let remOverall = 0;
+          list.forEach((b) => {
+            if (b.status === "cancelled") return;
+            const amt = remainingAmount(b);
+            const st = remainingStatusValue(b);
+            if (remTotals[st] === undefined) remTotals[st] = 0;
+            remTotals[st] += amt;
+            remOverall += amt;
+          });
           currentReportText = [
             "تقرير شهر " + m,
             "الشاليه: " + (chId ? chaletName(chId) : "كل الشاليهات"),
@@ -1883,6 +2053,11 @@
             "المتبقي: " + money(remaining),
             "أفضل شاليه بالإيراد: " +
               (bestId ? chaletName(bestId) : "البيانات غير كافية لحكم دقيق."),
+            "إجمالي المتبقي: " + money(remOverall),
+            "باقي على العميل: " + money(remTotals.customer_pending),
+            "مستلم عند العامل: " + money(remTotals.worker_received),
+            "تم تحويله/تسويته: " + money(remTotals.transferred),
+            "يحتاج مراجعة: " + money(remTotals.unreviewed),
           ].join("\n");
           $("reportBox").innerHTML =
             '<div class="grid3"><div class="item"><div class="muted">العدد</div><div class="stat">' +
@@ -1891,6 +2066,16 @@
             money(total) +
             '</div></div><div class="item"><div class="muted">المتبقي</div><div class="stat">' +
             money(remaining) +
+            '</div></div></div><div class="grid3"><div class="item"><div class="muted">إجمالي المتبقي</div><div class="stat">' +
+            money(remOverall) +
+            '</div></div><div class="item"><div class="muted">باقي على العميل</div><div class="stat">' +
+            money(remTotals.customer_pending) +
+            '</div></div><div class="item"><div class="muted">مستلم عند العامل</div><div class="stat">' +
+            money(remTotals.worker_received) +
+            '</div></div></div><div class="grid"><div class="item"><div class="muted">تم تحويله/تسويته</div><div class="stat">' +
+            money(remTotals.transferred) +
+            '</div></div><div class="item"><div class="muted">يحتاج مراجعة</div><div class="stat">' +
+            money(remTotals.unreviewed) +
             "</div></div></div>";
           if (showMsg) feedback("تم إنشاء التقرير", "good");
         }
@@ -1928,6 +2113,7 @@
           if (a === "close-voucher") return closeVoucher();
           if (a === "run-report") return runReport(true);
           if (a === "copy-report") return copyReport();
+          if (a === "copy-remaining-reminder") return copyRemainingReminder(id);
           if (a === "save-settings") return saveSettings();
         }
         // ========================= JS: event binding =========================
