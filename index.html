@@ -55,6 +55,15 @@
       html[data-theme="dark"] button:hover:not(:disabled) {
         background: #3a3a3c;
       }
+      html[data-theme="dark"] .primary:hover:not(:disabled) {
+        background: #ffffff;
+      }
+      html[data-theme="dark"] .secondary:hover:not(:disabled) {
+        background: #3a3a3c;
+      }
+      html[data-theme="dark"] .danger:hover:not(:disabled) {
+        background: rgba(255, 105, 97, 0.22);
+      }
       /* ========================= CSS: base layout ========================= */
       * {
         box-sizing: border-box;
@@ -199,7 +208,7 @@
       }
       .primary {
         background: var(--t);
-        color: #fff;
+        color: var(--card);
       }
       .primary:hover:not(:disabled) {
         background: #000;
@@ -293,7 +302,7 @@
         align-items: center;
         justify-content: center;
         background: var(--t);
-        color: #fff;
+        color: var(--card);
         font-size: 15px;
         font-weight: 600;
         letter-spacing: -0.01em;
@@ -803,6 +812,15 @@
                 <label>المتبقي</label
                 ><input id="bookingRemaining" type="number" readonly />
               </div>
+            </div>
+            <div class="actions">
+              <button
+                class="secondary"
+                data-action="mark-payment-complete"
+                type="button"
+              >
+                المبلغ اكتمل
+              </button>
             </div>
             <label>الحالة</label
             ><select id="bookingStatus">
@@ -1314,6 +1332,44 @@
             p = getPeriod(c, pId);
           return p ? p.label : "—";
         }
+        function formatTime12(value) {
+          const s = String(value || "").trim();
+          const m = s.match(/^(\d{1,2}):(\d{1,2})$/);
+          if (!m) return s;
+          const h = parseInt(m[1], 10);
+          const min = parseInt(m[2], 10);
+          if (
+            isNaN(h) ||
+            isNaN(min) ||
+            h < 0 ||
+            h > 23 ||
+            min < 0 ||
+            min > 59
+          )
+            return s;
+          const suffix = h < 12 ? "ص" : "م";
+          let h12 = h % 12;
+          if (h12 === 0) h12 = 12;
+          return h12 + ":" + String(min).padStart(2, "0") + " " + suffix;
+        }
+        function periodTimeRange(chId, pId) {
+          const c = getChalet(chId),
+            p = getPeriod(c, pId);
+          if (!p || !p.start || !p.end) return "";
+          return formatTime12(p.start) + " - " + formatTime12(p.end);
+        }
+        function normalizeDigits(value) {
+          const map = {
+            "٠": "0", "١": "1", "٢": "2", "٣": "3", "٤": "4",
+            "٥": "5", "٦": "6", "٧": "7", "٨": "8", "٩": "9",
+            "۰": "0", "۱": "1", "۲": "2", "۳": "3", "۴": "4",
+            "۵": "5", "۶": "6", "۷": "7", "۸": "8", "۹": "9"
+          };
+          return String(value || "").replace(
+            /[٠-٩۰-۹]/g,
+            (ch) => map[ch] || ch,
+          );
+        }
         function statusText(s) {
           return (
             {
@@ -1672,6 +1728,9 @@
             esc(chaletName(b.chalet_id)) +
             " · " +
             esc(periodName(b.chalet_id, b.period_id)) +
+            (periodTimeRange(b.chalet_id, b.period_id)
+              ? " (" + esc(periodTimeRange(b.chalet_id, b.period_id)) + ")"
+              : "") +
             " · " +
             esc(b.booking_date || "—") +
             '</div><span class="badge ' +
@@ -1909,9 +1968,32 @@
           feedback("تم فتح تعديل الشاليه");
         }
         // ========================= JS: period logic =========================
+        function periodsOverlap(a, b) {
+          if (!a.start || !a.end || !b.start || !b.end) return false;
+          const base = "2000-01-01T";
+          const aStart = new Date(base + a.start + ":00").getTime();
+          let aEnd = new Date(base + a.end + ":00").getTime();
+          if (aEnd <= aStart) aEnd += 86400000;
+          const bStart = new Date(base + b.start + ":00").getTime();
+          let bEnd = new Date(base + b.end + ":00").getTime();
+          if (bEnd <= bStart) bEnd += 86400000;
+          return aStart < bEnd && aEnd > bStart;
+        }
+        function hasOverlappingActivePeriods(periods) {
+          const actives = (periods || []).filter((p) => p.active);
+          for (let i = 0; i < actives.length; i++) {
+            for (let j = i + 1; j < actives.length; j++) {
+              if (periodsOverlap(actives[i], actives[j])) return true;
+            }
+          }
+          return false;
+        }
         function renderPeriodEditor() {
           editingChaletPeriods = defaultPeriods(editingChaletPeriods);
-          $("periodEditorList").innerHTML = editingChaletPeriods
+          const warning = hasOverlappingActivePeriods(editingChaletPeriods)
+            ? '<div class="feedback bad">تنبيه: توجد فترات متداخلة في هذا الشاليه وقد تمنع أكثر من حجز في نفس اليوم.</div>'
+            : "";
+          $("periodEditorList").innerHTML = warning + editingChaletPeriods
             .map(
               (p, i) =>
                 '<div class="period-card" data-period-id="' +
@@ -2038,9 +2120,9 @@
                 '">' +
                 esc(p.label) +
                 " (" +
-                esc(p.start) +
-                "-" +
-                esc(p.end) +
+                esc(formatTime12(p.start)) +
+                " - " +
+                esc(formatTime12(p.end)) +
                 ")</option>",
             )
             .join("");
@@ -2051,6 +2133,16 @@
           const total = +$("bookingTotal").value || 0,
             paid = +$("bookingPaid").value || 0;
           $("bookingRemaining").value = String(total - paid);
+        }
+        function markPaymentComplete() {
+          const total = +$("bookingTotal").value || 0;
+          $("bookingPaid").value = String(total);
+          $("bookingRemaining").value = "0";
+          $("bookingRemainingStatus").value = "no_remaining";
+          feedback(
+            "تم تجهيز الحجز كمكتمل الدفع، اضغط حفظ الحجز للتأكيد.",
+            "good",
+          );
         }
         // ========================= JS: booking logic =========================
         function newBooking() {
@@ -2166,13 +2258,31 @@
             return feedback("لا يمكن إدخال مبالغ سالبة.", "bad");
           if (b.paid > b.total)
             return feedback("المدفوع لا يمكن أن يتجاوز الإجمالي.", "bad");
-          if (findConflict(b))
+          const conflict = findConflict(b);
+          if (conflict) {
+            const cch = getChalet(conflict.chalet_id);
+            const cp = getPeriod(cch, conflict.period_id);
+            const detail = cp
+              ? " الفترة: " +
+                cp.label +
+                " (" +
+                formatTime12(cp.start) +
+                " - " +
+                formatTime12(cp.end) +
+                ")."
+              : "";
             return feedback(
-              "يوجد حجز مؤكد متعارض في نفس الشاليه والفترة.",
+              "يوجد حجز مؤكد متعارض في نفس الشاليه والفترة." + detail,
               "bad",
             );
-          if (old) Object.assign(old, b);
-          else state.bookings.push(b);
+          }
+          if (old) {
+            Object.assign(old, b);
+            log("[OK] Booking updated", { id: b.id });
+          } else {
+            state.bookings.push(b);
+            log("[OK] Booking created", { id: b.id });
+          }
           $("bookingEditor").classList.add("hidden");
           setDirty(true, "save booking");
           renderAll();
@@ -2215,8 +2325,8 @@
             "الجوال: " + b.customer_phone,
             "التاريخ: " + b.booking_date,
             "الفترة: " + p.label,
-            "وقت الدخول: " + p.start,
-            "وقت الخروج: " + p.end,
+            "وقت الدخول: " + formatTime12(p.start),
+            "وقت الخروج: " + formatTime12(p.end),
             "الضيوف: " + b.guests,
             "الإجمالي: " + money(b.total),
             "المدفوع: " + money(b.paid),
@@ -2253,7 +2363,8 @@
           return digits;
         }
         function normalizePhoneForWhatsApp(phone) {
-          const raw = String(phone || "").replace(/[\s\-()+]/g, "");
+          const normalized = normalizeDigits(phone);
+          const raw = normalized.replace(/[\s\-()+]/g, "");
           const digits = raw.replace(/[^\d]/g, "");
           if (!digits) return "";
           if (/^05\d{8}$/.test(digits)) return "966" + digits.slice(1);
@@ -2453,6 +2564,7 @@
           if (a === "copy-remaining-reminder") return copyRemainingReminder(id);
           if (a === "save-settings") return saveSettings();
           if (a === "open-customer-whatsapp") return openCustomerWhatsApp(id);
+          if (a === "mark-payment-complete") return markPaymentComplete();
         }
         // ========================= JS: event binding =========================
         document.addEventListener("DOMContentLoaded", () => {
