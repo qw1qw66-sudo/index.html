@@ -1,0 +1,3 @@
+# Server-side Excel exporter dependencies (used by scripts/export_bookings_excel.py
+# and the GitHub Action in PR 2). Install with: pip install -r scripts/requirements.txt
+openpyxl==3.1.5

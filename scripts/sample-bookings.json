@@ -1,0 +1,56 @@
+{
+  "_comment": "Sample input for scripts/export_bookings_excel.py. Mirrors the app's normalized workspace shape (chalets + bookings). Exercises every exporter branch: written slots, محجوز fallback, conflict, period overflow (5th), inactive period, pending/cancelled/deleted/completed exclusion, non-template chalet, and out-of-range date.",
+  "schema_version": 3,
+  "chalets": [
+    {
+      "id": "ch-tulum",
+      "name": "تولوم",
+      "deleted_at": null,
+      "periods": [
+        { "id": "p1", "label": "الفترة الصباحية", "start": "07:00", "end": "12:00", "active": true, "sort": 1 },
+        { "id": "p2", "label": "الفترة الظهيرية", "start": "13:00", "end": "17:00", "active": true, "sort": 2 },
+        { "id": "p3", "label": "الفترة المسائية", "start": "19:00", "end": "23:00", "active": true, "sort": 3 },
+        { "id": "p4", "label": "الفترة الليلية", "start": "23:30", "end": "05:00", "active": true, "sort": 4 },
+        { "id": "p5", "label": "فترة إضافية خامسة", "start": "06:00", "end": "07:00", "active": true, "sort": 5 },
+        { "id": "p6", "label": "فترة معطلة", "start": "05:00", "end": "06:00", "active": false, "sort": 6 }
+      ]
+    },
+    {
+      "id": "ch-sky",
+      "name": "سكاي",
+      "deleted_at": null,
+      "periods": [
+        { "id": "q1", "label": "صباحي سكاي", "start": "08:00", "end": "13:00", "active": true, "sort": 1 },
+        { "id": "q2", "label": "ظهيرة سكاي", "start": "13:00", "end": "18:00", "active": true, "sort": 2 },
+        { "id": "q3", "label": "مساء سكاي", "start": "18:00", "end": "23:00", "active": true, "sort": 3 },
+        { "id": "q4", "label": "ليل سكاي", "start": "23:00", "end": "04:00", "active": true, "sort": 4 }
+      ]
+    },
+    {
+      "id": "ch-nakheel",
+      "name": "نخيل",
+      "deleted_at": null,
+      "periods": [
+        { "id": "n1", "label": "فترة نخيل", "start": "07:00", "end": "17:00", "active": true, "sort": 1 }
+      ]
+    }
+  ],
+  "bookings": [
+    { "id": "b1", "chalet_id": "ch-tulum", "booking_date": "2026-01-01", "period_id": "p1", "customer_name": "عميل 1", "customer_phone": "0501111111", "total": 500, "status": "confirmed", "created_at": "2026-01-01T08:00:00Z", "deleted_at": null },
+    { "id": "b2", "chalet_id": "ch-tulum", "booking_date": "2026-01-01", "period_id": "p2", "customer_name": "عميل 2", "customer_phone": "", "total": 600, "status": "confirmed", "created_at": "2026-01-01T08:05:00Z", "deleted_at": null },
+    { "id": "b3", "chalet_id": "ch-tulum", "booking_date": "2026-01-01", "period_id": "p3", "customer_name": "عميل 3", "customer_phone": "0503333333", "total": 700, "status": "confirmed", "created_at": "2026-01-01T08:10:00Z", "deleted_at": null },
+    { "id": "b4", "chalet_id": "ch-tulum", "booking_date": "2026-01-01", "period_id": "p4", "customer_name": "عميل 4", "customer_phone": "0504444444", "total": 800, "status": "confirmed", "created_at": "2026-01-01T08:15:00Z", "deleted_at": null },
+    { "id": "b6-late", "chalet_id": "ch-tulum", "booking_date": "2026-01-02", "period_id": "p1", "customer_name": "عميل متأخر", "customer_phone": "0506666666", "total": 950, "status": "confirmed", "created_at": "2026-01-02T11:00:00Z", "deleted_at": null },
+    { "id": "b5-early", "chalet_id": "ch-tulum", "booking_date": "2026-01-02", "period_id": "p1", "customer_name": "عميل مبكر", "customer_phone": "0505555555", "total": 900, "status": "confirmed", "created_at": "2026-01-02T09:00:00Z", "deleted_at": null },
+    { "id": "b7", "chalet_id": "ch-sky", "booking_date": "2026-01-01", "period_id": "q1", "customer_name": "عميل سكاي 1", "customer_phone": "0557777777", "total": 1000, "status": "confirmed", "created_at": "2026-01-01T08:00:00Z", "deleted_at": null },
+    { "id": "b8", "chalet_id": "ch-sky", "booking_date": "2026-01-01", "period_id": "q4", "customer_name": "عميل سكاي 2", "customer_phone": "0558888888", "total": 1100, "status": "confirmed", "created_at": "2026-01-01T08:20:00Z", "deleted_at": null },
+    { "id": "b9-overflow", "chalet_id": "ch-tulum", "booking_date": "2026-01-03", "period_id": "p5", "customer_name": "عميل فترة 5", "customer_phone": "0509999999", "total": 1200, "status": "confirmed", "created_at": "2026-01-03T08:00:00Z", "deleted_at": null },
+    { "id": "b10-inactive", "chalet_id": "ch-tulum", "booking_date": "2026-01-03", "period_id": "p6", "customer_name": "عميل فترة معطلة", "customer_phone": "0500000010", "total": 100, "status": "confirmed", "created_at": "2026-01-03T08:05:00Z", "deleted_at": null },
+    { "id": "b11-pending", "chalet_id": "ch-tulum", "booking_date": "2026-01-04", "period_id": "p1", "customer_name": "عميل معلق", "customer_phone": "0500000011", "total": 200, "status": "pending", "created_at": "2026-01-04T08:00:00Z", "deleted_at": null },
+    { "id": "b12-cancelled", "chalet_id": "ch-tulum", "booking_date": "2026-01-04", "period_id": "p2", "customer_name": "عميل ملغي", "customer_phone": "0500000012", "total": 200, "status": "cancelled", "created_at": "2026-01-04T08:05:00Z", "deleted_at": null },
+    { "id": "b13-deleted", "chalet_id": "ch-tulum", "booking_date": "2026-01-05", "period_id": "p1", "customer_name": "عميل محذوف", "customer_phone": "0500000013", "total": 200, "status": "confirmed", "created_at": "2026-01-05T08:00:00Z", "deleted_at": "2026-02-01T00:00:00Z" },
+    { "id": "b14-nontemplate", "chalet_id": "ch-nakheel", "booking_date": "2026-01-01", "period_id": "n1", "customer_name": "عميل نخيل", "customer_phone": "0500000014", "total": 200, "status": "confirmed", "created_at": "2026-01-01T08:00:00Z", "deleted_at": null },
+    { "id": "b15-outofrange", "chalet_id": "ch-tulum", "booking_date": "2027-06-01", "period_id": "p1", "customer_name": "عميل خارج السنة", "customer_phone": "0500000015", "total": 200, "status": "confirmed", "created_at": "2027-06-01T08:00:00Z", "deleted_at": null },
+    { "id": "b16-completed", "chalet_id": "ch-tulum", "booking_date": "2026-01-06", "period_id": "p1", "customer_name": "عميل مكتمل", "customer_phone": "0500000016", "total": 200, "status": "completed", "created_at": "2026-01-06T08:00:00Z", "deleted_at": null }
+  ]
+}

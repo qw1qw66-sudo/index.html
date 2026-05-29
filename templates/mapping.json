@@ -1,0 +1,36 @@
+{
+  "_comment": "Geometry mapping for templates/booking-template.xlsx. The exporter (scripts/export_bookings_excel.py) is fully data-driven from this file so the template's exact styled layout is preserved. Phase 1 supports the two template chalets only.",
+  "sheet": "ورقة1",
+  "first_data_row": 2,
+  "rows_per_date": 2,
+  "max_periods_per_chalet": 4,
+  "included_statuses": ["confirmed"],
+  "phone_missing_value": "محجوز",
+  "period_text": "label_or_time_range",
+  "blocks": [
+    {
+      "chalet_name": "تولوم",
+      "name_col": "A",
+      "gregorian_col": "B",
+      "hijri_col": "C",
+      "slots": [
+        { "row_offset": 0, "period_col": "D", "phone_col": "E", "amount_col": "F" },
+        { "row_offset": 0, "period_col": "G", "phone_col": "H", "amount_col": "I" },
+        { "row_offset": 1, "period_col": "D", "phone_col": "E", "amount_col": "F" },
+        { "row_offset": 1, "period_col": "G", "phone_col": "H", "amount_col": "I" }
+      ]
+    },
+    {
+      "chalet_name": "سكاي",
+      "name_col": "J",
+      "gregorian_col": "K",
+      "hijri_col": "L",
+      "slots": [
+        { "row_offset": 0, "period_col": "M", "phone_col": "N", "amount_col": "O" },
+        { "row_offset": 0, "period_col": "P", "phone_col": "Q", "amount_col": "R" },
+        { "row_offset": 1, "period_col": "M", "phone_col": "N", "amount_col": "O" },
+        { "row_offset": 1, "period_col": "P", "phone_col": "Q", "amount_col": "R" }
+      ]
+    }
+  ]
+}
