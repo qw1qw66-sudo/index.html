@@ -1,0 +1,75 @@
+name: Export bookings to Excel
+
+# Server-side, template-based Excel export (Issue #60, Phase 1).
+# Fetches workspace data from Supabase via the public read-only RPC (workspace
+# key + PIN come from repo secrets — NO service-role key), fills the styled
+# template with openpyxl, and commits the generated file + report back to the
+# repo. No frontend write tokens are involved.
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    # Every 30 minutes (UTC). Adjust as needed.
+    - cron: "*/30 * * * *"
+
+# Least-privilege: only allow writing repository contents (for the commit step).
+permissions:
+  contents: write
+
+# Never run two exports at once (avoids commit races).
+concurrency:
+  group: export-bookings
+  cancel-in-progress: false
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r scripts/requirements.txt
+
+      - name: Verify template exists
+        run: |
+          test -f templates/booking-template.xlsx || { echo "Missing templates/booking-template.xlsx (merge PR #59 first)"; exit 1; }
+          test -f templates/mapping.json || { echo "Missing templates/mapping.json (merge PR #61 first)"; exit 1; }
+
+      - name: Fetch workspace from Supabase
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          EXPORT_WORKSPACE_KEY: ${{ secrets.EXPORT_WORKSPACE_KEY }}
+          EXPORT_ACCESS_PIN: ${{ secrets.EXPORT_ACCESS_PIN }}
+        run: |
+          python scripts/fetch_supabase_workspace.py --output workspace-input.json
+
+      - name: Generate Excel + report
+        run: |
+          python scripts/export_bookings_excel.py \
+            --input workspace-input.json \
+            --template templates/booking-template.xlsx \
+            --mapping templates/mapping.json \
+            --output-dir exports
+
+      - name: Remove transient input
+        if: always()
+        run: rm -f workspace-input.json
+
+      - name: Commit generated files
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add exports/bookings-*.xlsx exports/bookings-*-report.json
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "chore(export): refresh bookings Excel [skip ci]"
+            git push
+          fi
