@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-05-29T23:03:08.810285+00:00",
+  "generated_at": "2026-05-29T23:22:46.068026+00:00",
   "template": "templates/booking-template.xlsx",
   "sheet": "ورقة1",
   "year": 2026,
@@ -12,36 +12,113 @@
     ],
     "max_periods_per_chalet": 4,
     "supported_chalets": [
-      "تولوم",
-      "سكاي"
+      "شاليه تولوم",
+      "شاليه سكاي"
     ],
     "full_rebuild": true,
     "overwrite_conflicts": false
   },
   "summary": {
     "total_input_bookings": 11,
-    "written": 0,
+    "written": 4,
     "excluded": 5,
-    "skipped": 6,
+    "skipped": 2,
     "conflicts": 0
   },
   "blocks": [
     {
-      "chalet_name": "تولوم",
-      "matched_chalet_id": null,
+      "chalet_name": "شاليه تولوم",
+      "matched_chalet_id": "b05eaffe-79c8-46ab-83c9-2209095a61a5",
       "ambiguous_duplicate_ids": [],
-      "periods_mapped": {},
-      "periods_overflow": []
+      "periods_mapped": {
+        "70021831-83fd-4e7a-aec9-8ed90cb9b438": 0,
+        "21ee4033-418e-4c00-91a6-7eb569f1902c": 1,
+        "7c22f323-b1b6-45d9-91ec-9e27dbd6b8dd": 2,
+        "b78f98ec-edb3-4fba-a90d-f6a6bff5d24f": 3
+      },
+      "periods_overflow": [
+        {
+          "period_id": "b5c19d62-ba37-4aeb-8832-e7332c91d07d",
+          "label": "فترة 5",
+          "sort": 4
+        },
+        {
+          "period_id": "23e81420-5309-4acb-a3de-52844a96edf5",
+          "label": "الفترة 6",
+          "sort": 6
+        }
+      ]
     },
     {
-      "chalet_name": "سكاي",
-      "matched_chalet_id": null,
+      "chalet_name": "شاليه سكاي",
+      "matched_chalet_id": "fc521533-0b32-4b72-93f5-9e45b532d3be",
       "ambiguous_duplicate_ids": [],
-      "periods_mapped": {},
-      "periods_overflow": []
+      "periods_mapped": {
+        "8301f07b-e15d-438e-abeb-9bafdb9261ea": 0,
+        "cefa0d8e-e595-4d46-be59-8bebaa761624": 1,
+        "019681fc-15ca-4492-9e85-231b3768c1e6": 2,
+        "f1f9df0b-ec6b-4ed1-bc43-3ab3bed355a7": 3
+      },
+      "periods_overflow": [
+        {
+          "period_id": "a0fad7e6-7abb-467a-bb51-3ccfd7a4340e",
+          "label": "٧ مساءً إلى ٥ صباح",
+          "sort": 4
+        },
+        {
+          "period_id": "28a21f6e-5420-4adc-ab8c-d60e4a7f4079",
+          "label": "الفترة 6",
+          "sort": 6
+        }
+      ]
     }
   ],
-  "written": [],
+  "written": [
+    {
+      "id": "9d454757-97ac-435c-9ed0-29f1672437e1",
+      "chalet": "شاليه سكاي",
+      "date": "2026-05-10",
+      "slot_index": 0,
+      "cells": {
+        "period": "M260",
+        "phone": "N260",
+        "amount": "O260"
+      }
+    },
+    {
+      "id": "5da6058c-d2dc-4e4d-a976-27d7faeac64a",
+      "chalet": "شاليه تولوم",
+      "date": "2026-05-11",
+      "slot_index": 3,
+      "cells": {
+        "period": "G263",
+        "phone": "H263",
+        "amount": "I263"
+      }
+    },
+    {
+      "id": "b4e0145d-e48c-4e82-b00b-a7411a688a09",
+      "chalet": "شاليه تولوم",
+      "date": "2026-05-12",
+      "slot_index": 0,
+      "cells": {
+        "period": "D264",
+        "phone": "E264",
+        "amount": "F264"
+      }
+    },
+    {
+      "id": "c8ee620d-9c54-4cfc-a373-6f19a30cd5cd",
+      "chalet": "شاليه تولوم",
+      "date": "2026-05-25",
+      "slot_index": 3,
+      "cells": {
+        "period": "G291",
+        "phone": "H291",
+        "amount": "I291"
+      }
+    }
+  ],
   "excluded": [
     {
       "id": "9341f578-f529-4c28-9d82-35548df2c17c",
@@ -67,33 +144,15 @@
   "skipped": [
     {
       "id": "0420c5d3-9cd5-4509-9d67-9a3141bfd73c",
-      "reason": "chalet_not_in_template",
-      "chalet": "شاليه تولوم"
-    },
-    {
-      "id": "9d454757-97ac-435c-9ed0-29f1672437e1",
-      "reason": "chalet_not_in_template",
-      "chalet": "شاليه سكاي"
-    },
-    {
-      "id": "5da6058c-d2dc-4e4d-a976-27d7faeac64a",
-      "reason": "chalet_not_in_template",
-      "chalet": "شاليه تولوم"
+      "reason": "period_not_in_first_4_or_inactive",
+      "chalet": "شاليه تولوم",
+      "period_id": "b5c19d62-ba37-4aeb-8832-e7332c91d07d"
     },
     {
       "id": "4a93e3ef-e09d-4569-9115-524d52c9eb90",
-      "reason": "chalet_not_in_template",
-      "chalet": "شاليه تولوم"
-    },
-    {
-      "id": "b4e0145d-e48c-4e82-b00b-a7411a688a09",
-      "reason": "chalet_not_in_template",
-      "chalet": "شاليه تولوم"
-    },
-    {
-      "id": "c8ee620d-9c54-4cfc-a373-6f19a30cd5cd",
-      "reason": "chalet_not_in_template",
-      "chalet": "شاليه تولوم"
+      "reason": "period_not_in_first_4_or_inactive",
+      "chalet": "شاليه تولوم",
+      "period_id": "b5c19d62-ba37-4aeb-8832-e7332c91d07d"
     }
   ],
   "conflicts": []
