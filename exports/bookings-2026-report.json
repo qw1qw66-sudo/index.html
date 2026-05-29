@@ -1,0 +1,100 @@
+{
+  "generated_at": "2026-05-29T23:03:08.810285+00:00",
+  "template": "templates/booking-template.xlsx",
+  "sheet": "ورقة1",
+  "year": 2026,
+  "input": "workspace-input.json",
+  "output_xlsx": "exports/bookings-2026.xlsx",
+  "phase": 1,
+  "rules": {
+    "included_statuses": [
+      "confirmed"
+    ],
+    "max_periods_per_chalet": 4,
+    "supported_chalets": [
+      "تولوم",
+      "سكاي"
+    ],
+    "full_rebuild": true,
+    "overwrite_conflicts": false
+  },
+  "summary": {
+    "total_input_bookings": 11,
+    "written": 0,
+    "excluded": 5,
+    "skipped": 6,
+    "conflicts": 0
+  },
+  "blocks": [
+    {
+      "chalet_name": "تولوم",
+      "matched_chalet_id": null,
+      "ambiguous_duplicate_ids": [],
+      "periods_mapped": {},
+      "periods_overflow": []
+    },
+    {
+      "chalet_name": "سكاي",
+      "matched_chalet_id": null,
+      "ambiguous_duplicate_ids": [],
+      "periods_mapped": {},
+      "periods_overflow": []
+    }
+  ],
+  "written": [],
+  "excluded": [
+    {
+      "id": "9341f578-f529-4c28-9d82-35548df2c17c",
+      "reason": "deleted"
+    },
+    {
+      "id": "2ba05666-bc3b-4d9c-8a15-e5aa12fce688",
+      "reason": "deleted"
+    },
+    {
+      "id": "b4250469-6c6a-433c-9a6b-8a6450018de5",
+      "reason": "deleted"
+    },
+    {
+      "id": "f68748c6-c346-4f6f-83ed-89e966de75ba",
+      "reason": "deleted"
+    },
+    {
+      "id": "822f9cf4-3ea4-4c8e-a210-cd60d553d14d",
+      "reason": "deleted"
+    }
+  ],
+  "skipped": [
+    {
+      "id": "0420c5d3-9cd5-4509-9d67-9a3141bfd73c",
+      "reason": "chalet_not_in_template",
+      "chalet": "شاليه تولوم"
+    },
+    {
+      "id": "9d454757-97ac-435c-9ed0-29f1672437e1",
+      "reason": "chalet_not_in_template",
+      "chalet": "شاليه سكاي"
+    },
+    {
+      "id": "5da6058c-d2dc-4e4d-a976-27d7faeac64a",
+      "reason": "chalet_not_in_template",
+      "chalet": "شاليه تولوم"
+    },
+    {
+      "id": "4a93e3ef-e09d-4569-9115-524d52c9eb90",
+      "reason": "chalet_not_in_template",
+      "chalet": "شاليه تولوم"
+    },
+    {
+      "id": "b4e0145d-e48c-4e82-b00b-a7411a688a09",
+      "reason": "chalet_not_in_template",
+      "chalet": "شاليه تولوم"
+    },
+    {
+      "id": "c8ee620d-9c54-4cfc-a373-6f19a30cd5cd",
+      "reason": "chalet_not_in_template",
+      "chalet": "شاليه تولوم"
+    }
+  ],
+  "conflicts": []
+}
