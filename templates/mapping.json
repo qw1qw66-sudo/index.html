@@ -9,7 +9,7 @@
   "period_text": "label_or_time_range",
   "blocks": [
     {
-      "chalet_name": "تولوم",
+      "chalet_name": "شاليه تولوم",
       "name_col": "A",
       "gregorian_col": "B",
       "hijri_col": "C",
@@ -21,7 +21,7 @@
       ]
     },
     {
-      "chalet_name": "سكاي",
+      "chalet_name": "شاليه سكاي",
       "name_col": "J",
       "gregorian_col": "K",
       "hijri_col": "L",
