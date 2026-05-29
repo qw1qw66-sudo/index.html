@@ -915,6 +915,18 @@
             </div>
             <div id="reportBox"></div>
           </div>
+          <div class="card">
+            <h3>ملف Excel الأونلاين</h3>
+            <p class="muted">
+              يفتح أحدث ملف حجوزات Excel المُولَّد على الخادم للسنة الحالية
+              (للقراءة والتنزيل فقط).
+            </p>
+            <div class="actions">
+              <button class="primary" data-action="open-online-excel">
+                فتح ملف Excel الأونلاين
+              </button>
+            </div>
+          </div>
         </section>
         <!-- ========================= HTML: settings tab ========================= -->
         <section id="tab-settings" class="view">
@@ -2599,6 +2611,18 @@
             feedback("تعذر نسخ التقرير: " + e.message, "bad");
           }
         }
+        // Read-only link to the server-generated online Excel file (Issue #60).
+        // Opens the current year's file committed by the export GitHub Action.
+        // No tokens, no writes, no booking-data changes.
+        function openOnlineExcel() {
+          const year = new Date().getFullYear();
+          const url =
+            "https://raw.githubusercontent.com/qw1qw66-sudo/index.html/main/exports/bookings-" +
+            year +
+            ".xlsx";
+          window.open(url, "_blank", "noopener,noreferrer");
+          feedback("تم فتح ملف Excel الأونلاين للسنة الحالية (إن كان متوفرًا).", "good");
+        }
         function handleAction(a, id, sourceEl) {
           if (a === "upload") return uploadChanges();
           if (a === "set-theme-light") return setTheme("light");
@@ -2630,6 +2654,7 @@
           if (a === "save-settings") return saveSettings();
           if (a === "open-customer-whatsapp") return openCustomerWhatsApp(id);
           if (a === "mark-payment-complete") return markPaymentComplete();
+          if (a === "open-online-excel") return openOnlineExcel();
         }
         // ========================= JS: event binding =========================
         document.addEventListener("DOMContentLoaded", () => {
