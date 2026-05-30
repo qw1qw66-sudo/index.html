@@ -206,6 +206,13 @@
       .between {
         justify-content: space-between;
       }
+      /* Separate destructive delete from the primary Save to avoid mobile mis-taps. */
+      .delete-row {
+        margin-top: 18px;
+      }
+      .delete-row .danger {
+        margin-inline-start: auto;
+      }
       .primary {
         background: var(--t);
         color: var(--card);
@@ -741,8 +748,11 @@
               <button class="primary" data-action="save-chalet">
                 حفظ الشاليه والفترات</button
               ><button class="secondary" data-action="cancel-chalet">
-                إلغاء</button
-              ><button
+                إلغاء
+              </button>
+            </div>
+            <div class="actions delete-row">
+              <button
                 id="deleteChaletButton"
                 class="danger"
                 data-action="delete-chalet"
@@ -845,13 +855,16 @@
               <button class="primary" data-action="save-booking">
                 حفظ الحجز</button
               ><button class="secondary" data-action="cancel-booking">
-                إلغاء</button
-              ><button
+                إلغاء
+              </button>
+            </div>
+            <div class="actions delete-row">
+              <button
                 id="deleteBookingButton"
                 class="danger"
                 data-action="delete-booking"
               >
-                حذف
+                حذف الحجز
               </button>
             </div>
           </div>
@@ -1037,6 +1050,14 @@
           state = emptyData();
         const SESSION_SNAPSHOT_KEY = "active_workspace_session";
         const SESSION_PIN_KEY = "active_session_pin";
+        // Arabic safety prompts (P0 fixes): protect unsaved local changes and
+        // confirm destructive deletes.
+        const CLOUD_OVERWRITE_WARNING =
+          "لديك تغييرات محلية لم يتم رفعها. سحب البيانات من السحابة قد يستبدل هذه التغييرات. هل تريد المتابعة؟";
+        const DELETE_BOOKING_WARNING =
+          "هل أنت متأكد من حذف هذا الحجز؟ لا يمكن التراجع عن الحذف إلا من النسخ الاحتياطية.";
+        const DELETE_CHALET_WARNING =
+          "حذف الشاليه قد يؤثر على حجوزاته المرتبطة. هل أنت متأكد من حذف الشاليه؟ سيتم إخفاء العنصر من النظام وقد يؤثر على التقارير والتصدير.";
         // ========================= JS: utility helpers =========================
         function emptyData() {
           return {
@@ -1323,14 +1344,22 @@
             (p) => p.id === id && p.active,
           );
         }
+        // Resolve a period by id even if it is INACTIVE. Used everywhere an
+        // existing/historical booking must keep working (display, conflict
+        // detection, voucher, edit). New-booking selection still uses the
+        // active-only getPeriod / activePeriods.
+        function getPeriodAny(ch, id) {
+          return (ch && ch.periods ? ch.periods : []).find((p) => p.id === id);
+        }
         function chaletName(id) {
           const c = getChalet(id);
           return c ? c.name : "—";
         }
         function periodName(chId, pId) {
           const c = getChalet(chId),
-            p = getPeriod(c, pId);
-          return p ? p.label : "—";
+            p = getPeriodAny(c, pId);
+          if (!p) return "—";
+          return p.active ? p.label : p.label + " (غير مفعلة)";
         }
         function formatTime12(value) {
           const s = String(value || "").trim();
@@ -1354,7 +1383,7 @@
         }
         function periodTimeRange(chId, pId) {
           const c = getChalet(chId),
-            p = getPeriod(c, pId);
+            p = getPeriodAny(c, pId);
           if (!p || !p.start || !p.end) return "";
           return formatTime12(p.start) + " - " + formatTime12(p.end);
         }
@@ -1486,7 +1515,7 @@
         }
         function intervalFor(b) {
           const ch = getChalet(b.chalet_id),
-            p = getPeriod(ch, b.period_id);
+            p = getPeriodAny(ch, b.period_id);
           if (!ch || !p || !b.booking_date || !p.start || !p.end) return null;
           const s = new Date(b.booking_date + "T" + p.start + ":00").getTime();
           let e = new Date(b.booking_date + "T" + p.end + ":00").getTime();
@@ -1530,6 +1559,10 @@
         }
         async function pullWorkspace() {
           log("Login clicked");
+          if (dirty && !confirm(CLOUD_OVERWRITE_WARNING)) {
+            feedback("تم إلغاء السحب للحفاظ على تغييراتك المحلية.", "bad");
+            return;
+          }
           $("pullButton").disabled = true;
           $("createButton").disabled = true;
           try {
@@ -1559,6 +1592,10 @@
         }
         async function createWorkspace() {
           log("Create account clicked");
+          if (dirty && !confirm(CLOUD_OVERWRITE_WARNING)) {
+            feedback("تم إلغاء العملية للحفاظ على تغييراتك المحلية.", "bad");
+            return;
+          }
           $("pullButton").disabled = true;
           $("createButton").disabled = true;
           try {
@@ -2070,6 +2107,7 @@
         function softDeleteChalet(id) {
           const c = state.chalets.find((x) => x.id === id);
           if (!c) return;
+          if (!confirm(DELETE_CHALET_WARNING)) return;
           c.deleted_at = now();
           c.updated_at = now();
           activeBookings().forEach((b) => {
@@ -2128,6 +2166,27 @@
             .join("");
           if (old && list.some((p) => p.id === old))
             $("bookingPeriodId").value = old;
+        }
+        // When editing a booking whose period is now inactive/removed, inject a
+        // selectable fallback option so the original period_id is preserved on
+        // save (editing unrelated fields must never blank/replace it). New
+        // bookings never call this, so they still cannot pick inactive periods.
+        function ensureInactivePeriodOption(chId, pId) {
+          const sel = $("bookingPeriodId");
+          if (!sel || !pId) return;
+          if (Array.from(sel.options).some((o) => o.value === pId)) return;
+          const p = getPeriodAny(getChalet(chId), pId);
+          const opt = document.createElement("option");
+          opt.value = pId;
+          opt.textContent = p
+            ? p.label +
+              " (" +
+              formatTime12(p.start) +
+              " - " +
+              formatTime12(p.end) +
+              ") — غير مفعلة"
+            : "الفترة القديمة (غير متوفرة)";
+          sel.insertBefore(opt, sel.firstChild);
         }
         function updateBookingRemaining() {
           const total = +$("bookingTotal").value || 0,
@@ -2193,6 +2252,7 @@
           fillBookingSelects();
           $("bookingChaletId").value = b.chalet_id;
           fillPeriodSelect();
+          ensureInactivePeriodOption(b.chalet_id, b.period_id);
           $("bookingPeriodId").value = b.period_id;
           $("bookingDate").value = b.booking_date;
           $("bookingGuests").value = b.guests;
@@ -2249,7 +2309,11 @@
             return feedback("اختر الشاليه والفترة", "bad");
           if (!b.booking_date) return feedback("التاريخ مطلوب", "bad");
           const selectedChalet = getChalet(b.chalet_id);
-          const selectedPeriod = getPeriod(selectedChalet, b.period_id);
+          // getPeriodAny so editing a booking whose period was later
+          // deactivated still validates (its period_id is preserved). New
+          // bookings can only pick active periods from the dropdown, so this
+          // never lets a new booking choose an inactive period.
+          const selectedPeriod = getPeriodAny(selectedChalet, b.period_id);
           if (!selectedChalet || !selectedPeriod)
             return feedback("الفترة المختارة غير متاحة لهذا الشاليه.", "bad");
           if (b.guests < 1)
@@ -2261,7 +2325,7 @@
           const conflict = findConflict(b);
           if (conflict) {
             const cch = getChalet(conflict.chalet_id);
-            const cp = getPeriod(cch, conflict.period_id);
+            const cp = getPeriodAny(cch, conflict.period_id);
             const detail = cp
               ? " الفترة: " +
                 cp.label +
@@ -2291,6 +2355,7 @@
         function softDeleteBooking(id) {
           const b = state.bookings.find((x) => x.id === id);
           if (!b) return;
+          if (!confirm(DELETE_BOOKING_WARNING)) return;
           b.deleted_at = now();
           b.updated_at = now();
           $("bookingEditor").classList.add("hidden");
@@ -2313,9 +2378,9 @@
         // ========================= JS: voucher logic =========================
         function voucherText(b) {
           const ch = getChalet(b.chalet_id),
-            p = getPeriod(ch, b.period_id);
+            p = getPeriodAny(ch, b.period_id);
           if (!ch || !p)
-            return "لا يمكن عرض السند لأن الشاليه أو الفترة غير مفعلة.";
+            return "لا يمكن عرض السند لأن الشاليه أو الفترة غير موجودة.";
           const rem = (+b.total || 0) - (+b.paid || 0);
           return [
             "سند حجز",
