@@ -144,12 +144,14 @@ test('conflict and voucher use selected period exactly', async ({ page }) => {
   await page.locator('[data-action="save-booking"]').click();
   await expect(page.locator('#feedback')).toContainText('يوجد حجز مؤكد متعارض في نفس الشاليه والفترة.');
 
-  await page.locator('[data-action="voucher"]').first().click();
+  await page.locator('#bookingList [data-action="voucher"]').first().click();
   await expect(page.locator('#voucherBox')).toContainText('QA Facility');
   await expect(page.locator('#voucherBox')).toContainText('Tulum');
   await expect(page.locator('#voucherBox')).toContainText('Morning');
-  await expect(page.locator('#voucherBox')).toContainText('07:00');
-  await expect(page.locator('#voucherBox')).toContainText('17:00');
+  // The voucher displays the selected period's times in the app's 12h Arabic
+  // format (formatTime12): 07:00 -> "7:00 ص", 17:00 -> "5:00 م".
+  await expect(page.locator('#voucherBox')).toContainText('7:00 ص');
+  await expect(page.locator('#voucherBox')).toContainText('5:00 م');
 });
 
 test('source has no old public auth or redirect patterns', async ({ page }) => {
