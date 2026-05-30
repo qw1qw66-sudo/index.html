@@ -1099,7 +1099,7 @@
         // Arabic safety prompts (P0 fixes): protect unsaved local changes and
         // confirm destructive deletes.
         const CLOUD_OVERWRITE_WARNING =
-          "لديك تغييرات محلية لم يتم رفعها. سحب البيانات من السحابة قد يستبدل هذه التغييرات. هل تريد المتابعة؟";
+          "تحذير: لديك تغييرات محلية لم يتم رفعها إلى السحابة. سحب البيانات الآن سيستبدل تغييراتك المحلية نهائيًا ولا يمكن التراجع. هل تريد المتابعة وفقدان تغييراتك المحلية؟";
         const DELETE_BOOKING_WARNING =
           "هل أنت متأكد من حذف هذا الحجز؟ لا يمكن التراجع عن الحذف إلا من النسخ الاحتياطية.";
         const DELETE_CHALET_WARNING =
@@ -1174,6 +1174,55 @@
           }
           const lm = $("loginMessage");
           if (lm && !loadedWorkspace) lm.textContent = m || "";
+          if (t === "bad") revealFeedback();
+        }
+        // ========================= JS: mobile visibility & clipboard helpers =========================
+        // Scroll an element into view only when it is actually off-screen or
+        // hidden behind the fixed bottom navigation — avoids aggressive jumps
+        // when it is already visible. Safe no-op for hidden/zero-size elements.
+        function scrollIntoViewIfNeeded(el) {
+          if (!el || typeof el.getBoundingClientRect !== "function") return;
+          const r = el.getBoundingClientRect();
+          if (r.width === 0 && r.height === 0) return;
+          const vh =
+            window.innerHeight || document.documentElement.clientHeight || 0;
+          const bottomSafe = vh - 110; // leave room for the fixed bottom-nav
+          if (r.top >= 0 && r.top < bottomSafe) return;
+          try {
+            el.scrollIntoView({ behavior: "smooth", block: "nearest" });
+          } catch (e) {
+            el.scrollIntoView();
+          }
+        }
+        // Ensure an important (error) feedback message is on screen.
+        function revealFeedback() {
+          scrollIntoViewIfNeeded($("feedback"));
+        }
+        // Copy text with a fallback for older/insecure mobile browsers that lack
+        // the async clipboard API. Returns true on success.
+        async function copyToClipboard(text) {
+          if (!text) return false;
+          try {
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+              await navigator.clipboard.writeText(text);
+              return true;
+            }
+          } catch (e) {}
+          try {
+            const ta = document.createElement("textarea");
+            ta.value = text;
+            ta.setAttribute("readonly", "");
+            ta.style.position = "fixed";
+            ta.style.top = "-1000px";
+            ta.style.opacity = "0";
+            document.body.appendChild(ta);
+            ta.select();
+            const ok = document.execCommand("copy");
+            document.body.removeChild(ta);
+            return ok;
+          } catch (e) {
+            return false;
+          }
         }
         function normalizeWorkspaceKey(v) {
           return String(v || "")
@@ -1561,12 +1610,9 @@
               ".",
             "يرجى التأكيد إذا تم السداد أو التحويل. شكرًا لكم.",
           ].join("\n");
-          try {
-            await navigator.clipboard.writeText(text);
+          if (await copyToClipboard(text))
             feedback("تم نسخ تذكير المتبقي.", "good");
-          } catch (_) {
-            feedback("تعذر نسخ تذكير المتبقي.", "bad");
-          }
+          else feedback("تعذر نسخ تذكير المتبقي.", "bad");
         }
         function intervalFor(b) {
           const ch = getChalet(b.chalet_id),
@@ -1724,7 +1770,7 @@
             (lastCloudCounts.chalets > 0 || lastCloudCounts.bookings > 0)
           )
             return feedback(
-              "تم إيقاف الرفع: البيانات المحلية فارغة وقد تستبدل بيانات موجودة.",
+              "تم إيقاف الرفع لحماية بياناتك: لا توجد بيانات محلية بينما توجد بيانات في السحابة، والرفع الآن سيحذف بيانات السحابة الموجودة. اسحب البيانات أولًا ثم أعد المحاولة.",
               "bad",
             );
           {
@@ -2035,6 +2081,7 @@
           $("chaletEditorTitle").textContent = "شاليه جديد";
           $("chaletEditor").classList.remove("hidden");
           renderPeriodEditor();
+          scrollIntoViewIfNeeded($("chaletEditor"));
           feedback("تم فتح نموذج شاليه جديد");
         }
         function editChalet(id) {
@@ -2056,6 +2103,7 @@
           $("chaletEditorTitle").textContent = "تعديل الشاليه";
           $("chaletEditor").classList.remove("hidden");
           renderPeriodEditor();
+          scrollIntoViewIfNeeded($("chaletEditor"));
           feedback("تم فتح تعديل الشاليه");
         }
         // ========================= JS: period logic =========================
@@ -2282,6 +2330,7 @@
           const editor = $("bookingEditor");
           if (list && list.parentNode) list.parentNode.insertBefore(editor, list);
           $("bookingEditor").classList.remove("hidden");
+          scrollIntoViewIfNeeded(editor);
           feedback("تم فتح نموذج حجز جديد");
         }
         function findBookingCardForAction(id, sourceEl) {
@@ -2325,8 +2374,7 @@
           const editor = $("bookingEditor");
           if (card && card.parentNode) card.insertAdjacentElement("afterend", editor);
           $("bookingEditor").classList.remove("hidden");
-          if (card && card.scrollIntoView)
-            card.scrollIntoView({ behavior: "smooth", block: "start" });
+          scrollIntoViewIfNeeded(card || editor);
           feedback("تم فتح تعديل الحجز");
         }
         function saveBooking() {
@@ -2538,12 +2586,8 @@
         async function copyVoucher() {
           const text = $("voucherTextarea").value;
           if (!text) return feedback("نص السند فارغ.", "bad");
-          try {
-            await navigator.clipboard.writeText(text);
-            feedback("تم نسخ السند.", "good");
-          } catch (_) {
-            feedback("تعذر نسخ السند.", "bad");
-          }
+          if (await copyToClipboard(text)) feedback("تم نسخ السند.", "good");
+          else feedback("تعذر نسخ السند.", "bad");
         }
         function sendVoucherToWhatsapp() {
           const text = $("voucherTextarea").value;
@@ -2660,12 +2704,9 @@
         }
         async function copyReport() {
           if (!currentReportText) runReport(false);
-          try {
-            await navigator.clipboard.writeText(currentReportText);
+          if (await copyToClipboard(currentReportText))
             feedback("تم نسخ التقرير", "good");
-          } catch (e) {
-            feedback("تعذر نسخ التقرير: " + e.message, "bad");
-          }
+          else feedback("تعذر نسخ التقرير.", "bad");
         }
         // Read-only link to the server-generated online Excel file (Issue #60).
         // Opens the current year's file committed by the export GitHub Action.
