@@ -812,11 +812,21 @@
             <div class="grid3">
               <div>
                 <label>الإجمالي</label
-                ><input id="bookingTotal" type="number" min="0" />
+                ><input
+                  id="bookingTotal"
+                  type="text"
+                  inputmode="decimal"
+                  class="ltr"
+                />
               </div>
               <div>
                 <label>المدفوع</label
-                ><input id="bookingPaid" type="number" min="0" />
+                ><input
+                  id="bookingPaid"
+                  type="text"
+                  inputmode="decimal"
+                  class="ltr"
+                />
               </div>
               <div>
                 <label>المتبقي</label
@@ -1411,6 +1421,15 @@
             (ch) => map[ch] || ch,
           );
         }
+        // Parse a money field tolerantly: Arabic/Persian/English digits, trims
+        // spaces, drops thousands separators, preserves decimals. Empty -> 0.
+        // Returns NaN for a non-empty invalid value (caller shows an error).
+        function parseMoneyInput(value) {
+          const s = normalizeDigits(value).replace(/[,\s]/g, "");
+          if (s === "") return 0;
+          const n = Number(s);
+          return isFinite(n) ? n : NaN;
+        }
         function statusText(s) {
           return (
             {
@@ -1826,10 +1845,9 @@
           $("homeChalets").textContent = activeChalets().length;
           $("homeBookings").textContent = bs.length;
           $("homeDue").textContent = money(
-            bs.reduce(
-              (s, b) => s + Math.max(0, (+b.total || 0) - (+b.paid || 0)),
-              0,
-            ),
+            bs
+              .filter((b) => b.status !== "cancelled")
+              .reduce((s, b) => s + remainingAmount(b), 0),
           );
           renderRemainingAlerts();
           $("homeUpcoming").innerHTML =
@@ -2201,13 +2219,15 @@
           sel.insertBefore(opt, sel.firstChild);
         }
         function updateBookingRemaining() {
-          const total = +$("bookingTotal").value || 0,
-            paid = +$("bookingPaid").value || 0;
-          $("bookingRemaining").value = String(total - paid);
+          const total = parseMoneyInput($("bookingTotal").value);
+          const paid = parseMoneyInput($("bookingPaid").value);
+          const t = isFinite(total) ? total : 0;
+          const p = isFinite(paid) ? paid : 0;
+          $("bookingRemaining").value = String(Math.max(0, t - p));
         }
         function markPaymentComplete() {
-          const total = +$("bookingTotal").value || 0;
-          $("bookingPaid").value = String(total);
+          const total = parseMoneyInput($("bookingTotal").value);
+          $("bookingPaid").value = String(isFinite(total) ? total : 0);
           $("bookingRemaining").value = "0";
           $("bookingRemainingStatus").value = "no_remaining";
           feedback(
@@ -2303,8 +2323,8 @@
               booking_date: $("bookingDate").value,
               period_id: $("bookingPeriodId").value,
               guests: +$("bookingGuests").value || 1,
-              total: +$("bookingTotal").value || 0,
-              paid: +$("bookingPaid").value || 0,
+              total: parseMoneyInput($("bookingTotal").value),
+              paid: parseMoneyInput($("bookingPaid").value),
               status: $("bookingStatus").value,
               notes: $("bookingNotes").value.trim(),
               remaining_status: newRemainingStatus,
@@ -2330,10 +2350,27 @@
             return feedback("الفترة المختارة غير متاحة لهذا الشاليه.", "bad");
           if (b.guests < 1)
             return feedback("عدد الضيوف يجب أن يكون 1 على الأقل.", "bad");
+          if (!isFinite(b.total) || !isFinite(b.paid))
+            return feedback("المبلغ غير صالح.", "bad");
           if (b.total < 0 || b.paid < 0)
             return feedback("لا يمكن إدخال مبالغ سالبة.", "bad");
           if (b.paid > b.total)
             return feedback("المدفوع لا يمكن أن يتجاوز الإجمالي.", "bad");
+          // Keep remaining_status consistent with the derived remaining amount.
+          // Preserves settlement states (transferred / worker_received).
+          const remAfter = Math.max(0, b.total - b.paid);
+          if (remAfter > 0) {
+            if (b.remaining_status === "no_remaining")
+              b.remaining_status = "unreviewed";
+          } else if (
+            b.remaining_status === "" ||
+            b.remaining_status === "unreviewed" ||
+            b.remaining_status === "customer_pending"
+          ) {
+            b.remaining_status = "no_remaining";
+          }
+          if (b.remaining_status !== newRemainingStatus)
+            b.remaining_updated_at = now();
           const conflict = findConflict(b);
           if (conflict) {
             const cch = getChalet(conflict.chalet_id);
@@ -2393,7 +2430,7 @@
             p = getPeriodAny(ch, b.period_id);
           if (!ch || !p)
             return "لا يمكن عرض السند لأن الشاليه أو الفترة غير موجودة.";
-          const rem = (+b.total || 0) - (+b.paid || 0);
+          const rem = remainingAmount(b);
           return [
             "سند حجز",
             "المنشأة: " + (state.settings.facility_name || "—"),
@@ -2433,21 +2470,22 @@
               .join("") +
             "</div>";
         }
-        function cleanWhatsappPhone(phone) {
-          const digits = String(phone || "").replace(/[^\d]/g, "");
-          if (!digits) return "";
-          if (/^05\d{8}$/.test(digits)) return "966" + digits.slice(1);
-          return digits;
-        }
+        // Single canonical WhatsApp normalizer used by BOTH the customer chat
+        // button and the voucher send/share link, so they never disagree.
         function normalizePhoneForWhatsApp(phone) {
           const normalized = normalizeDigits(phone);
           const raw = normalized.replace(/[\s\-()+]/g, "");
           const digits = raw.replace(/[^\d]/g, "");
           if (!digits) return "";
+          if (/^00966\d{9}$/.test(digits)) return digits.slice(2);
           if (/^05\d{8}$/.test(digits)) return "966" + digits.slice(1);
           if (/^5\d{8}$/.test(digits)) return "966" + digits;
           if (/^966\d{9}$/.test(digits)) return digits;
           return "";
+        }
+        // Backward-compatible alias: delegate to the canonical normalizer.
+        function cleanWhatsappPhone(phone) {
+          return normalizePhoneForWhatsApp(phone);
         }
         function openCustomerWhatsApp(id) {
           const b = activeBookings().find((x) => x.id === id);
@@ -2488,17 +2526,9 @@
           if (!text) return feedback("نص السند فارغ.", "bad");
           const bid = $("voucherPanel").dataset.bookingId || "",
             b = activeBookings().find((x) => x.id === bid);
-          if (!b || !String(b.customer_phone || "").trim())
-            return feedback(
-              "رقم العميل غير موجود لإرسال السند عبر واتساب.",
-              "bad",
-            );
-          const phone = cleanWhatsappPhone(b.customer_phone);
-          if (!phone)
-            return feedback(
-              "رقم العميل غير موجود لإرسال السند عبر واتساب.",
-              "bad",
-            );
+          if (!b) return feedback("الحجز غير موجود", "bad");
+          const phone = normalizePhoneForWhatsApp(b.customer_phone);
+          if (!phone) return feedback("رقم العميل غير صالح لواتساب.", "bad");
           const url =
             "https://wa.me/" + phone + "?text=" + encodeURIComponent(text);
           const w = window.open(url, "_blank");
@@ -2542,11 +2572,13 @@
             if (showMsg) feedback(currentReportText, "bad");
             return;
           }
-          const total = list.reduce((s, b) => s + (+b.total || 0), 0),
-            paid = list.reduce((s, b) => s + (+b.paid || 0), 0),
+          // Cancelled bookings do not count toward active income/remaining.
+          const active = list.filter((b) => b.status !== "cancelled");
+          const total = active.reduce((s, b) => s + (+b.total || 0), 0),
+            paid = active.reduce((s, b) => s + (+b.paid || 0), 0),
             remaining = total - paid,
             rev = {};
-          list.forEach(
+          active.forEach(
             (b) =>
               (rev[b.chalet_id] = (rev[b.chalet_id] || 0) + (+b.total || 0)),
           );
