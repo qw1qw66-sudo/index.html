@@ -1036,6 +1036,36 @@
               </button>
             </div>
           </div>
+          <div id="excelSyncCard" class="card">
+            <h3>مزامنة Excel اللحظية</h3>
+            <p class="muted settings-line">
+              تحدّث ملف Excel على OneDrive عبر خدمة آمنة. المزامنة تقرأ البيانات
+              من السحابة، لذا ارفع التعديلات أولًا ثم اضغط مزامنة.
+            </p>
+            <div>
+              <label>رابط خدمة المزامنة (اختياري)</label
+              ><input
+                id="excelSyncEndpoint"
+                class="ltr"
+                placeholder="https://...supabase.co/functions/v1/excel-sync"
+              />
+            </div>
+            <p class="muted settings-line">
+              حالة المزامنة: <span id="excelSyncStatus">—</span>
+            </p>
+            <p class="muted settings-line">
+              آخر مزامنة Excel: <span id="excelSyncLast" class="ltr">—</span>
+            </p>
+            <div class="actions">
+              <button
+                id="excelSyncButton"
+                class="primary"
+                data-action="sync-excel-now"
+              >
+                مزامنة Excel الآن
+              </button>
+            </div>
+          </div>
         </section>
         <!-- ========================= HTML: bottom navigation ========================= -->
         <nav class="bottom-nav">
@@ -2072,6 +2102,102 @@
             lc.textContent =
               "الشاليهات " + c.chalets + " · الحجوزات " + c.bookings;
           }
+          renderExcelSyncStatus();
+        }
+        // ========================= JS: live Excel sync (foundation) =========================
+        // Manual trigger only in this first version (no auto-trigger on save).
+        // The endpoint is a Supabase Edge Function URL (NOT a secret) the user
+        // configures after deploy; the real write secret (Power Automate / Graph)
+        // lives server-side in the function env, never in this file. Empty
+        // endpoint => feature is not enabled yet. See docs/LIVE_EXCEL_SYNC.md.
+        const EXCEL_SYNC_ENDPOINT_KEY = "excel_sync_endpoint";
+        const EXCEL_SYNC_STATE_KEY = "excel_sync_last";
+        function getExcelSyncEndpoint() {
+          try {
+            return String(
+              localStorage.getItem(EXCEL_SYNC_ENDPOINT_KEY) || "",
+            ).trim();
+          } catch (e) {
+            return "";
+          }
+        }
+        function readExcelSyncState() {
+          try {
+            return JSON.parse(localStorage.getItem(EXCEL_SYNC_STATE_KEY) || "null");
+          } catch (e) {
+            return null;
+          }
+        }
+        function writeExcelSyncState(status) {
+          try {
+            localStorage.setItem(
+              EXCEL_SYNC_STATE_KEY,
+              JSON.stringify({ status: status, at: now() }),
+            );
+          } catch (e) {}
+          renderExcelSyncStatus();
+        }
+        function renderExcelSyncStatus() {
+          const epInput = $("excelSyncEndpoint");
+          if (epInput && document.activeElement !== epInput)
+            epInput.value = getExcelSyncEndpoint();
+          const st = readExcelSyncState();
+          const map = {
+            pending: '<span class="badge gold">قيد المزامنة</span>',
+            success: '<span class="badge ok">ناجحة</span>',
+            failed: '<span class="badge bad">فاشلة</span>',
+          };
+          const statusEl = $("excelSyncStatus");
+          if (statusEl)
+            statusEl.innerHTML = st && map[st.status] ? map[st.status] : "—";
+          const lastEl = $("excelSyncLast");
+          if (lastEl) lastEl.textContent = st && st.at ? st.at : "—";
+        }
+        async function syncExcelNow() {
+          const endpoint = getExcelSyncEndpoint();
+          if (!endpoint) {
+            feedback("مزامنة Excel اللحظية غير مفعلة بعد.", "bad");
+            return;
+          }
+          if (!loadedWorkspace || !workspaceKey || !accessPin) {
+            feedback("سجّل الدخول أولًا قبل مزامنة Excel.", "bad");
+            return;
+          }
+          const btn = $("excelSyncButton");
+          if (btn) btn.disabled = true;
+          writeExcelSyncState("pending");
+          feedback("جاري مزامنة Excel...", "");
+          try {
+            const res = await fetch(endpoint, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                p_workspace_key: workspaceKey,
+                p_access_pin: accessPin,
+              }),
+            });
+            let body = null;
+            try {
+              body = await res.json();
+            } catch (_) {
+              body = null;
+            }
+            if (res.ok && body && body.ok === true) {
+              writeExcelSyncState("success");
+              feedback("تم تحديث ملف Excel", "good");
+              log("[OK] Excel live sync");
+            } else {
+              writeExcelSyncState("failed");
+              feedback("فشلت مزامنة Excel. تحقق من الاتصال أو الإعدادات.", "bad");
+              log("Excel live sync failed", { status: res.status });
+            }
+          } catch (e) {
+            writeExcelSyncState("failed");
+            feedback("فشلت مزامنة Excel. تحقق من الاتصال أو الإعدادات.", "bad");
+            log("Excel live sync error", { message: e.message });
+          } finally {
+            if (btn) btn.disabled = false;
+          }
         }
         // ========================= JS: chalet logic =========================
         function newChalet() {
@@ -2760,6 +2886,7 @@
           if (a === "open-customer-whatsapp") return openCustomerWhatsApp(id);
           if (a === "mark-payment-complete") return markPaymentComplete();
           if (a === "open-online-excel") return openOnlineExcel();
+          if (a === "sync-excel-now") return syncExcelNow();
         }
         // ========================= JS: event binding =========================
         document.addEventListener("DOMContentLoaded", () => {
@@ -2796,6 +2923,18 @@
           });
           $("reportMonth").addEventListener("change", () => runReport(false));
           $("reportChalet").addEventListener("change", () => runReport(false));
+          const epInput = $("excelSyncEndpoint");
+          if (epInput)
+            epInput.addEventListener("change", () => {
+              try {
+                localStorage.setItem(
+                  EXCEL_SYNC_ENDPOINT_KEY,
+                  String(epInput.value || "").trim(),
+                );
+              } catch (e) {}
+              renderExcelSyncStatus();
+            });
+          renderExcelSyncStatus();
           if (!restoreSessionFromStorage()) clearSessionSnapshot();
           log("Ready");
         });
