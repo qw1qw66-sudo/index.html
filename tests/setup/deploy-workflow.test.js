@@ -9,13 +9,19 @@ import { describe, expect, it } from "vitest";
 const wf = readFileSync(".github/workflows/deploy-supabase-staging.yml", "utf8");
 
 describe("deploy-supabase-staging workflow", () => {
-  it("is manual-only (workflow_dispatch) and never triggers on push/PR", () => {
+  it("triggers on manual dispatch and backend pushes to main only (never PR/schedule)", () => {
     expect(wf).toContain("workflow_dispatch:");
-    expect(wf).not.toMatch(/^\s*push:/m);
-    expect(wf).not.toMatch(/^\s*pull_request:/m);
-    expect(wf).not.toMatch(/^\s*schedule:/m);
     expect(wf).toContain("deploy_ref:");
     expect(wf).toContain('default: "main"');
+    // Backend continuous deploy: push-to-main, path-filtered to server code,
+    // so merged backend fixes reach staging without a manual click.
+    expect(wf).toMatch(/push:\s*\n\s*branches:\s*\n\s*- main/);
+    expect(wf).toContain('- "supabase/**"');
+    expect(wf).toContain('- ".github/workflows/deploy-supabase-staging.yml"');
+    // Frontend-only pushes must NOT deploy the backend.
+    expect(wf).not.toMatch(/paths:[\s\S]{0,200}index\.html/);
+    expect(wf).not.toMatch(/^\s*pull_request:/m);
+    expect(wf).not.toMatch(/^\s*schedule:/m);
   });
 
   it("uses the staging GitHub Environment and guards the repository (no forks)", () => {
