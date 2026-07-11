@@ -83,6 +83,58 @@ describe("environment badge", () => {
   });
 });
 
+describe("canonical environment routing (no ?env=staging needed)", () => {
+  it("the DEFAULT constants point at the approved project with only public values", () => {
+    expect(html).toMatch(/APP_SUPABASE_URL = "https:\/\/fkqidesfrtpwzjcimjoe\.supabase\.co"/);
+    expect(html).toMatch(/APP_SUPABASE_ANON_KEY = "sb_publishable_/);
+    // The misleading PROD_-named split is gone.
+    expect(html).not.toContain("PROD_SUPABASE_URL");
+    expect(html).not.toContain("PROD_SUPABASE_ANON_KEY");
+  });
+
+  it("a full setup check runs automatically after login (rows + badge, no manual tap)", () => {
+    expect(html).toMatch(/checkSetupConnection\(\{\s*quiet:\s*true\s*\}\)/);
+  });
+});
+
+describe("setup status states are distinct and honest", () => {
+  it("initial rows read «لم يُفحص بعد» — never a false «غير مربوط» before any probe", () => {
+    const rowsBlock = jsRegion('<div class="setup-rows"', "setupCheckResult");
+    expect(rowsBlock).toContain("لم يُفحص بعد");
+    expect(rowsBlock).not.toContain("غير مربوط");
+  });
+
+  it("the state map distinguishes probe-failure from server-confirmed-missing", () => {
+    const map = jsRegion("function setSetupRow", "async function checkSetupConnection");
+    expect(map).toContain("تعذّر الفحص"); // unknown (probe failed)
+    expect(map).toContain("لم يُفحص بعد"); // unchecked (no probe yet)
+    expect(map).toContain("غير متاح مؤقتاً"); // model_down (observed outage)
+    expect(map).toContain("غير مربوط"); // reserved: server said it's missing
+  });
+
+  it("a network failure never repaints rows as «غير مربوط» and auth/server errors are distinct", () => {
+    const fn = jsRegion("async function checkSetupConnection", "function normalizeWorkspaceKey");
+    // network branch uses the unknown state, not unlinked
+    expect(fn).toMatch(/outcome === "network"[\s\S]{0,400}setSetupRow\("setupStatusDeepseek", "unknown"\)/);
+    expect(fn).toContain('outcome = "auth"');
+    expect(fn).toContain('outcome = "server"');
+    expect(fn).toContain("فشل التحقق من الدخول أثناء الفحص");
+    // «غير مربوط» is applied ONLY from server booleans, never in a failure
+    // branch: the whole failure region (network → server, before the success
+    // mapping) must not contain the unlinked state.
+    const from = fn.indexOf('if (outcome === "network")');
+    const to = fn.indexOf("تعذّر الفحص من الخادم");
+    expect(from).toBeGreaterThan(-1);
+    expect(to).toBeGreaterThan(from);
+    expect(fn.slice(from, to)).not.toContain('"unlinked"');
+  });
+
+  it("an observed assistant outage mirrors onto the DeepSeek row as «غير متاح مؤقتاً»", () => {
+    const branch = jsRegion("if (body.assistant_unavailable)", "} else if (body.ok)");
+    expect(branch).toContain('setSetupRow("setupStatusDeepseek", "model_down")');
+  });
+});
+
 // ---- Pages artifact: simulate the workflow build (copy + sed) ----
 describe("Pages artifact", () => {
   const FAKE_SHA = "abcdef0123456789abcdef0123456789abcdef01";

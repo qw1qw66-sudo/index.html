@@ -65,7 +65,8 @@ describe("assistant handler: safety rules", () => {
 
   it("model unavailable => fail closed, no action", async () => {
     const deps = makeDeps({ model: { ok: false, error: "DEEPSEEK_KEY_MISSING" } });
-    const res = await handleAssistant(chat({ workspace_key: WS, access_pin: "123456", message: "شنو حجوزات اليوم؟" }), deps);
+    // A prepare-style request NEEDS the model (deterministic reads don't).
+    const res = await handleAssistant(chat({ workspace_key: WS, access_pin: "123456", message: "جهز حجز جديد لبكرة" }), deps);
     const b = await res.json();
     expect(b.assistant_unavailable).toBe(true);
     expect(deps.executed).toHaveLength(0);
@@ -73,7 +74,7 @@ describe("assistant handler: safety rules", () => {
 
   it("read tool from the model executes without confirmation", async () => {
     const deps = makeDeps({ model: { ok: true, reply: "حجوزات اليوم", toolCalls: [{ name: "get_today_bookings", arguments: {} }] } });
-    const res = await handleAssistant(chat({ workspace_key: WS, access_pin: "123456", message: "شنو حجوزات اليوم؟" }), deps);
+    const res = await handleAssistant(chat({ workspace_key: WS, access_pin: "123456", message: "حجوزات اليوم؟" }), deps);
     const b = await res.json();
     expect(b.tool_results[0]).toMatchObject({ tool: "get_today_bookings", ok: true, kind: "read" });
   });

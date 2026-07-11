@@ -107,6 +107,16 @@ describe("deepseek client (fail closed, redaction, strict json)", () => {
   it("does not silently substitute a missing model", () => {
     expect(deepseekConfig({ DEEPSEEK_API_KEY: "k", DEEPSEEK_MODEL: "" }).model).toBe("deepseek-v4-flash"); // documented default, not obsolete
   });
+  it("honours the configured model and base URL in the real request", async () => {
+    let sentUrl = null, sentBody = null;
+    const fetchImpl = async (url, opts) => { sentUrl = url; sentBody = opts.body; return { ok: true, text: async () => JSON.stringify({ choices: [{ message: { content: '{"reply":"تمام"}' } }], usage: {} }) }; };
+    await callDeepSeek({
+      env: { DEEPSEEK_API_KEY: "k", DEEPSEEK_MODEL: "deepseek-v4-pro", DEEPSEEK_BASE_URL: "https://api.deepseek.com/" },
+      systemPrompt: "sys", history: [], fetchImpl,
+    });
+    expect(sentUrl).toBe("https://api.deepseek.com/chat/completions"); // trailing slash normalized
+    expect(JSON.parse(sentBody).model).toBe("deepseek-v4-pro");
+  });
   it("redacts phone numbers from history before the call", async () => {
     let sentBody = null;
     const fetchImpl = async (_url, opts) => { sentBody = opts.body; return { ok: true, text: async () => JSON.stringify({ choices: [{ message: { content: '{"reply":"تمام"}' } }], usage: {} }) }; };
