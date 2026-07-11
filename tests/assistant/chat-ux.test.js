@@ -89,11 +89,63 @@ describe("two-stage chat reply", () => {
       ],
       readResult: () => ({ date: "2026-07-11", bookings: [] }),
     });
-    const b = await chat(deps, "شنو حجوزات اليوم؟");
+    // «ما هي …» is deliberately the MODEL-path phrasing (the deploy smoke uses
+    // it to prove a real two-stage round-trip).
+    const b = await chat(deps, "ما هي حجوزات اليوم؟");
     expect(b.model_calls).toBe(2);
     expect(b.reply_ar).toBe("لا توجد حجوزات اليوم.");
     expect(b.reply_ar).not.toContain("جاري");
     expect(b.reply_ar).not.toContain("get_today_bookings");
+  });
+
+  it("«شنو حجوزات اليوم؟» answers deterministically even when the model is down", async () => {
+    const deps = makeDeps({
+      modelSeq: [{ ok: false, error: "DEEPSEEK_UNREACHABLE" }],
+      readResult: () => ({ date: "2026-07-11", bookings: [{ booking_id: "b1" }] }),
+    });
+    const b = await chat(deps, "شنو حجوزات اليوم؟");
+    expect(b.ok).toBe(true);
+    expect(b.model_calls).toBe(0);
+    expect(deps._modelCalls).toHaveLength(0);
+    expect(b.reply_ar).toContain("حجز");
+    expect(b.reply_ar).not.toContain("get_today_bookings");
+  });
+
+  it("retries a transient stage-1 failure and succeeds without surfacing assistant_unavailable", async () => {
+    const deps = makeDeps({
+      modelSeq: [
+        { ok: false, error: "DEEPSEEK_TIMEOUT" },
+        { ok: false, error: "DEEPSEEK_HTTP_503" },
+        { ok: true, reply: "أهلاً! كيف أقدر أساعدك؟", toolCalls: [] },
+      ],
+    });
+    const b = await chat(deps, "مرحبا");
+    expect(b.ok).toBe(true);
+    expect(b.assistant_unavailable).toBeUndefined();
+    expect(deps._modelCalls).toHaveLength(3); // two transient failures + success
+    expect(b.reply_ar).toBe("أهلاً! كيف أقدر أساعدك؟");
+  });
+
+  it("a configuration error is NOT retried and fails closed immediately", async () => {
+    const deps = makeDeps({ modelSeq: [{ ok: false, error: "DEEPSEEK_KEY_MISSING" }] });
+    const b = await chat(deps, "مرحبا");
+    expect(b.assistant_unavailable).toBe(true);
+    expect(deps._modelCalls).toHaveLength(1); // no retry on a missing key
+  });
+
+  it("retries a transient grounding (stage-2) failure once and returns the grounded reply", async () => {
+    const deps = makeDeps({
+      modelSeq: [
+        { ok: true, reply: "لحظة...", toolCalls: [{ name: "get_today_bookings", arguments: {} }] },
+        { ok: false, error: "DEEPSEEK_TIMEOUT" },
+        { ok: true, reply: "لا توجد حجوزات اليوم.", toolCalls: [] },
+      ],
+      readResult: () => ({ bookings: [] }),
+    });
+    const b = await chat(deps, "حجوزات اليوم؟");
+    expect(b.ok).toBe(true);
+    expect(deps._modelCalls).toHaveLength(3); // stage1 + failed stage2 + retried stage2
+    expect(b.reply_ar).toBe("لا توجد حجوزات اليوم.");
   });
 
   it("second-stage failure => deterministic Arabic fallback: no seed, no tool name, no error code", async () => {
@@ -128,7 +180,7 @@ describe("two-stage chat reply", () => {
     // handler's tool loop calls executeTool which awaits runReadTool. Simulate a
     // returned error instead:
     deps.runReadTool = async () => ({ error: "PGRST202" });
-    const b = await chat(deps, "شنو حجوزات اليوم؟");
+    const b = await chat(deps, "حجوزات اليوم؟");
     expect(b.reply_ar).not.toContain("PGRST");
     expect(b.reply_ar).not.toContain("get_today_bookings");
   });

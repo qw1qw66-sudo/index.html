@@ -115,10 +115,10 @@ describe("mobile setup page — security & structure", () => {
     expect(html).toMatch(/\^\[a-z0-9\]\{15,30\}\$/);
   });
 
-  it("staging mode is opt-in (?env=staging) and never redirects the production default", () => {
+  it("staging mode is opt-in (?env=staging) and never redirects the canonical default", () => {
     expect(html).toContain('get("env") === "staging"');
-    expect(html).toContain("PROD_SUPABASE_URL");
-    // The production URL remains the default assignment.
-    expect(html).toMatch(/IS_STAGING_MODE\s*\?\s*"https:\/\/"\s*\+\s*STAGING_CONFIG\.ref[\s\S]{0,120}PROD_SUPABASE_URL/);
+    expect(html).toContain("APP_SUPABASE_URL");
+    // The approved default URL remains the default assignment.
+    expect(html).toMatch(/IS_STAGING_MODE\s*\?\s*"https:\/\/"\s*\+\s*STAGING_CONFIG\.ref[\s\S]{0,120}APP_SUPABASE_URL/);
   });
 });

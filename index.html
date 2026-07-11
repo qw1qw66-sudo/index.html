@@ -1303,29 +1303,32 @@
               اربط المساعد الذكي من جوالك خطوة بخطوة. لا تُدخل أي مفتاح داخل هذا
               البرنامج — المفاتيح تُضاف فقط في صفحة Supabase الرسمية.
             </p>
+            <!-- Rows start NEUTRAL («لم يُفحص بعد») — never a false «غير مربوط».
+                 A real check runs automatically right after login and fills in
+                 the true state; the button below re-runs it on demand. -->
             <div class="setup-rows" id="setupStatusRows">
               <div class="setup-row">
                 <span class="setup-label">مشروع Supabase</span
                 ><span id="setupStatusSupabase" class="setup-status setup-muted"
-                  >غير مربوط</span
+                  >لم يُفحص بعد</span
                 >
               </div>
               <div class="setup-row">
                 <span class="setup-label">وظائف الخادم</span
                 ><span id="setupStatusFunctions" class="setup-status setup-muted"
-                  >غير مربوط</span
+                  >لم يُفحص بعد</span
                 >
               </div>
               <div class="setup-row">
                 <span class="setup-label">DeepSeek</span
                 ><span id="setupStatusDeepseek" class="setup-status setup-muted"
-                  >غير مربوط</span
+                  >لم يُفحص بعد</span
                 >
               </div>
               <div class="setup-row">
                 <span class="setup-label">مفتاح التأكيد</span
                 ><span id="setupStatusConfirm" class="setup-status setup-muted"
-                  >غير مربوط</span
+                  >لم يُفحص بعد</span
                 >
               </div>
               <div class="setup-row">
@@ -1527,12 +1530,15 @@
         function buildInjected(v) {
           return typeof v === "string" && v.indexOf("__APP_BUILD") !== 0;
         }
-        // Production Supabase (the default, unchanged). A SEPARATE staging
-        // project can be opened explicitly via ?env=staging using ONLY
-        // non-secret values (Project Ref + publishable key) saved from the
-        // setup page. The live production default is never redirected.
-        const PROD_SUPABASE_URL = "https://fkqidesfrtpwzjcimjoe.supabase.co",
-          PROD_SUPABASE_ANON_KEY = "sb_publishable_Uks_PYr6aqY5wnNBjDjTgg_z2Ic6_al";
+        // DEFAULT (approved) Supabase project — the canonical GitHub Pages app
+        // connects here directly with NO query param and NO stored setup
+        // values. Only these two PUBLIC values ever live in the browser. The
+        // server reports its own tier via app_env (currently "staging", shown
+        // as «بيئة التجربة — Staging»); the app never labels it production.
+        // A SEPARATE experimental project can still be opened explicitly via
+        // ?env=staging using non-secret values saved from the setup page.
+        const APP_SUPABASE_URL = "https://fkqidesfrtpwzjcimjoe.supabase.co",
+          APP_SUPABASE_ANON_KEY = "sb_publishable_Uks_PYr6aqY5wnNBjDjTgg_z2Ic6_al";
         const STAGING_REF_STORAGE_KEY = "staging_project_ref",
           STAGING_PUBLISHABLE_STORAGE_KEY = "staging_publishable_key";
         function readStagingConfig() {
@@ -1567,10 +1573,10 @@
         })();
         const SUPABASE_URL = IS_STAGING_MODE
             ? "https://" + STAGING_CONFIG.ref + ".supabase.co"
-            : PROD_SUPABASE_URL,
+            : APP_SUPABASE_URL,
           SUPABASE_ANON_KEY = IS_STAGING_MODE
             ? STAGING_CONFIG.anon
-            : PROD_SUPABASE_ANON_KEY;
+            : APP_SUPABASE_ANON_KEY;
         // ========================= JS: theme preference (light/dark) =========================
         const THEME_STORAGE_KEY = "ui_theme_preference";
         function readStoredTheme() {
@@ -1837,31 +1843,6 @@
           }
           b.textContent = "بيئة التجربة — Staging";
         }
-        // Learn app_env quietly after login (setup-status is PIN-gated). Never
-        // blocks and fails silently.
-        async function refreshEnvBadge() {
-          if (!loadedWorkspace || !workspaceKey || !accessPin) return;
-          try {
-            const res = await fetch(
-              SUPABASE_URL + "/functions/v1/chalet-setup-status",
-              {
-                method: "POST",
-                headers: {
-                  apikey: SUPABASE_ANON_KEY,
-                  Authorization: "Bearer " + SUPABASE_ANON_KEY,
-                  "Content-Type": "application/json",
-                },
-                body: JSON.stringify({
-                  workspace_key: workspaceKey,
-                  access_pin: accessPin,
-                }),
-              },
-            );
-            if (!res.ok) return;
-            const b = await res.json().catch(() => null);
-            if (b && b.ok) applyEnvBadge(b.app_env);
-          } catch (e) {}
-        }
         function openCurrentVersion() {
           const base = location.origin + location.pathname;
           const url = buildInjected(APP_BUILD_SHA)
@@ -1895,14 +1876,27 @@
             needs_deploy: ["يحتاج نشر", "setup-warn"],
             disabled: ["غير مفعل", "setup-muted"],
             checking: ["...جارٍ الفحص", "setup-muted"],
+            // A check that could not complete is NOT the same as "غير مربوط":
+            // unknown = the probe failed; unchecked = no probe has run yet.
+            unknown: ["تعذّر الفحص", "setup-warn"],
+            unchecked: ["لم يُفحص بعد", "setup-muted"],
+            model_down: ["غير متاح مؤقتاً", "setup-warn"],
           };
           const entry = map[state] || ["—", "setup-muted"];
           el.textContent = entry[0];
           el.className = "setup-status " + entry[1];
         }
-        async function checkSetupConnection() {
-          if (!loadedWorkspace || !workspaceKey || !accessPin)
+        // Full setup probe. Runs automatically (quiet) right after login and
+        // manually from the «فحص الربط» button. Each failure class maps to a
+        // DISTINCT state — one failed request must never repaint every row as
+        // «غير مربوط» (that label is reserved for a server-confirmed missing
+        // piece).
+        async function checkSetupConnection(opts) {
+          const quiet = Boolean(opts && opts.quiet);
+          if (!loadedWorkspace || !workspaceKey || !accessPin) {
+            if (quiet) return;
             return feedback("سجّل الدخول أولًا", "bad");
+          }
           const rows = [
             "setupStatusSupabase",
             "setupStatusFunctions",
@@ -1915,8 +1909,7 @@
           const result = $("setupCheckResult");
           if (result) result.textContent = "...جارٍ فحص الربط";
           let body = null,
-            notDeployed = false,
-            authFail = false;
+            outcome = "ok";
           try {
             const res = await fetch(
               SUPABASE_URL + "/functions/v1/chalet-setup-status",
@@ -1933,21 +1926,40 @@
                 }),
               },
             );
-            if (res.status === 404) notDeployed = true;
-            else if (res.status === 401) authFail = true;
+            if (res.status === 404) outcome = "not_deployed";
+            else if (res.status === 401) outcome = "auth";
+            else if (!res.ok) outcome = "server";
             else {
               const text = await res.text();
               body = text ? JSON.parse(text) : null;
+              if (!body || body.ok !== true) outcome = "server";
             }
           } catch (e) {
-            notDeployed = true;
+            // fetch threw: network down, DNS, or a blocked/failed CORS
+            // preflight — the request never produced an HTTP decision. This is
+            // NOT "functions missing".
+            outcome = "network";
+            log("Setup check network failure", { message: e && e.message });
           }
-          // Reaching a decision means the Supabase project itself is configured.
+          if (outcome === "network") {
+            setSetupRow("setupStatusSupabase", "unknown");
+            setSetupRow("setupStatusFunctions", "unknown");
+            setSetupRow("setupStatusDeepseek", "unknown");
+            setSetupRow("setupStatusConfirm", "unknown");
+            setSetupRow("setupStatusAutopilot", "disabled");
+            setSetupRow("setupStatusWhatsapp", "disabled");
+            if (result)
+              result.textContent =
+                "تعذّر الوصول إلى الخادم (الشبكة أو الحماية). لم يتغيّر شيء — تحقق من الإنترنت ثم أعد المحاولة.";
+            return;
+          }
+          // An HTTP answer arrived, so the Supabase project itself responded.
           setSetupRow("setupStatusSupabase", "linked");
-          if (notDeployed) {
+          if (outcome === "not_deployed") {
             setSetupRow("setupStatusFunctions", "needs_deploy");
-            setSetupRow("setupStatusDeepseek", "unlinked");
-            setSetupRow("setupStatusConfirm", "unlinked");
+            // Cannot know these until the functions exist — say so, honestly.
+            setSetupRow("setupStatusDeepseek", "unchecked");
+            setSetupRow("setupStatusConfirm", "unchecked");
             setSetupRow("setupStatusAutopilot", "disabled");
             setSetupRow("setupStatusWhatsapp", "disabled");
             if (result)
@@ -1955,9 +1967,25 @@
                 "وظائف الخادم غير منشورة بعد. أضف المفاتيح ثم افتح صفحة النشر.";
             return;
           }
-          if (authFail || !body || !body.ok) {
+          if (outcome === "auth") {
+            setSetupRow("setupStatusFunctions", "linked");
+            setSetupRow("setupStatusDeepseek", "unknown");
+            setSetupRow("setupStatusConfirm", "unknown");
+            setSetupRow("setupStatusAutopilot", "disabled");
+            setSetupRow("setupStatusWhatsapp", "disabled");
             if (result)
-              result.textContent = "تعذّر الفحص. تأكد من تسجيل الدخول ثم أعد المحاولة.";
+              result.textContent =
+                "فشل التحقق من الدخول أثناء الفحص. سجّل الخروج ثم ادخل مرة أخرى.";
+            return;
+          }
+          if (outcome === "server") {
+            setSetupRow("setupStatusFunctions", "unknown");
+            setSetupRow("setupStatusDeepseek", "unknown");
+            setSetupRow("setupStatusConfirm", "unknown");
+            setSetupRow("setupStatusAutopilot", "disabled");
+            setSetupRow("setupStatusWhatsapp", "disabled");
+            if (result)
+              result.textContent = "تعذّر الفحص من الخادم حالياً. أعد المحاولة بعد قليل.";
             return;
           }
           setSetupRow("setupStatusFunctions", "linked");
@@ -2432,9 +2460,10 @@
             lastCloudUpdatedAt,
           });
           persistSessionSnapshot();
-          // Quietly learn the environment (staging vs production) to show the
-          // non-blocking badge. Never blocks login; fails silently.
-          refreshEnvBadge();
+          // The REAL setup state, automatically: fills every setup row and the
+          // environment badge right after login, so the owner never reads the
+          // stale pre-check placeholders. Fire-and-forget — never blocks login.
+          checkSetupConnection({ quiet: true });
         }
         async function pullWorkspace() {
           log("Login clicked");
@@ -4295,8 +4324,11 @@
           try {
             const body = await assistantCall({ message });
             if (body.assistant_unavailable) {
-              // The model/assistant service is down — NOT connected.
+              // The model/assistant service is down — NOT connected. Mirror
+              // the observed outage on the setup card's DeepSeek row so the
+              // status page and the chat never contradict each other.
               setAssistantConn("غير متاح مؤقتاً", "bad");
+              setSetupRow("setupStatusDeepseek", "model_down");
               assistantAppend(
                 "bot",
                 "تعذّر الوصول إلى المساعد حالياً، ولم يتم تنفيذ أي إجراء.",

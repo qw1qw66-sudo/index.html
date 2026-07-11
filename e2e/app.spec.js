@@ -292,6 +292,63 @@ test('assistant: an unavailable model is NOT shown as connected (§5)', async ({
   );
 });
 
+test('canonical login auto-fills the REAL setup status (no ?env=staging, no manual tap)', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockRpc(page);
+  await page.route('**/functions/v1/chalet-setup-status', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: true,
+        assistant_function_deployed: true,
+        deepseek_configured: true,
+        assistant_confirm_secret_configured: true,
+        autopilot_secret_configured: true,
+        whatsapp_configured: false,
+        app_env: 'staging',
+      }),
+    }),
+  );
+  await page.goto('/'); // canonical URL — NO env param, NO stored staging config
+  await create(page);
+  // The rows populate from the automatic post-login check — no button tap.
+  await expect(page.locator('#setupStatusSupabase')).toHaveText('مربوط');
+  await expect(page.locator('#setupStatusFunctions')).toHaveText('مربوط');
+  await expect(page.locator('#setupStatusDeepseek')).toHaveText('مربوط');
+  await expect(page.locator('#setupStatusConfirm')).toHaveText('مربوط');
+  await expect(page.locator('#setupStatusAutopilot')).toHaveText('غير مفعل');
+  await expect(page.locator('#setupStatusWhatsapp')).toHaveText('غير مفعل');
+  // The server says staging → the badge shows, without ?env=staging.
+  await expect(page.locator('#stagingBadge')).toBeVisible();
+  await expect(page.locator('#stagingBadge')).toContainText('بيئة التجربة');
+  // No secret-shaped value may live in browser storage after login.
+  const stored = await page.evaluate(() =>
+    JSON.stringify([Object.entries(localStorage), Object.entries(sessionStorage)]),
+  );
+  expect(stored).not.toMatch(/sk-[A-Za-z0-9]{16,}/);
+  expect(stored).not.toMatch(/sb_secret_/);
+  expect(stored).not.toMatch(/service_?role/i);
+});
+
+test('a failed status probe shows «تعذّر الفحص» — never a false «غير مربوط» on every row', async ({ page }) => {
+  await mockRpc(page);
+  await page.route('**/functions/v1/chalet-setup-status', (route) =>
+    route.fulfill({ status: 500, contentType: 'application/json', body: '{"ok":false}' }),
+  );
+  await page.goto('/');
+  await create(page);
+  await page.locator('[data-tab="settings"]').click();
+  await page.locator('[data-action="setup-check"]').click();
+  // The project DID answer (HTTP 500) → project row is linked; the rest are
+  // "probe failed", explicitly distinct from a server-confirmed «غير مربوط».
+  await expect(page.locator('#setupStatusSupabase')).toHaveText('مربوط');
+  await expect(page.locator('#setupStatusDeepseek')).toHaveText('تعذّر الفحص');
+  await expect(page.locator('#setupStatusConfirm')).toHaveText('تعذّر الفحص');
+  await expect(page.locator('#setupCheckResult')).toContainText('أعد المحاولة');
+  const bad = await page.locator('.setup-status', { hasText: 'غير مربوط' }).count();
+  expect(bad).toBe(0);
+});
+
 test('assistant: a prepared action renders a confirmation card (still gated)', async ({ page }) => {
   await mockRpc(page);
   await routeAssistant(page, {

@@ -40,6 +40,32 @@ function json(status, body) {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 }
 
+// Transient model failures (timeout, unreachable, rate limit, 5xx, stochastic
+// bad output) are retried a bounded number of times before the turn is
+// declared assistant_unavailable — a single flaky call must not take the whole
+// assistant down (the deploy smoke needed exactly this retry to pass).
+// Configuration errors (missing key/model, 4xx auth) fail immediately.
+const TRANSIENT_MODEL_ERRORS = new Set([
+  "DEEPSEEK_TIMEOUT",
+  "DEEPSEEK_UNREACHABLE",
+  "DEEPSEEK_READ_FAILED",
+  "DEEPSEEK_BAD_JSON",
+  "MODEL_OUTPUT_INVALID",
+]);
+export function isTransientModelError(code) {
+  const c = String(code || "");
+  return TRANSIENT_MODEL_ERRORS.has(c) || /^DEEPSEEK_HTTP_(429|5\d\d)$/.test(c);
+}
+async function callModelWithRetry(deps, arg, attempts) {
+  let last = null;
+  for (let i = 1; i <= attempts; i++) {
+    last = await deps.callModel(arg);
+    if (last && (last.ok || !isTransientModelError(last.error))) return last;
+    if (i < attempts) await new Promise((r) => setTimeout(r, i * 400));
+  }
+  return last;
+}
+
 // Every sensitive tool (confirm_* and the owner-triggered create_payment_link)
 // is blocked from model execution — only the owner, via a direct invoke_tool
 // request, can run them.
@@ -142,8 +168,9 @@ export async function handleAssistant(req, deps) {
   // confirmation) so it can only ever name a tool that exists.
   const systemPrompt = CHALET_SYSTEM_PROMPT + "\n\n" + buildToolCatalogText() + "\n\n" + STRICT_JSON_INSTRUCTION;
 
-  // Stage 1: the model may request tools.
-  const first = await deps.callModel({ systemPrompt, history });
+  // Stage 1: the model may request tools. Transient provider failures are
+  // retried (3 attempts) before giving up.
+  const first = await callModelWithRetry(deps, { systemPrompt, history }, 3);
   if (!first.ok) {
     // Fail closed: no action, clear Arabic error.
     return json(200, {
@@ -185,7 +212,7 @@ export async function handleAssistant(req, deps) {
       { role: "assistant", content: first.reply || "" },
       { role: "tool", content: JSON.stringify(sanitizeResultsForModel(results)).slice(0, 6000) },
     ]);
-    const second = await deps.callModel({ systemPrompt: systemPrompt + "\n\n" + SECOND_STAGE_INSTRUCTION, history: grounded });
+    const second = await callModelWithRetry(deps, { systemPrompt: systemPrompt + "\n\n" + SECOND_STAGE_INSTRUCTION, history: grounded }, 2);
     if (second && second.ok && second.reply) {
       replyAr = second.reply;
       usage = second.usage;
@@ -472,6 +499,16 @@ function deterministicReadIntent(message) {
   if (asksAvailability) return { name: "find_empty_dates", arguments: { days_ahead: 1 } };
   const asksCatalog = /(شاليه|شاليهات)/.test(text) && /(ما\s*هي|وش|ايش|اعرض|اظهر|قائمة|المسجل|عندي|لديك)/.test(text) && !/(احجز|حجز|جهز|سج[ّل]+\s+حجز)/.test(text);
   if (asksCatalog) return { name: "list_chalets", arguments: {} };
+  // «شنو/وش/ايش/اعرض حجوزات اليوم؟» answers from the workspace even when the
+  // model provider is down. Deliberately narrow: «ما هي حجوزات اليوم؟» stays on
+  // the model path (the deploy smoke uses it to prove a REAL two-stage
+  // DeepSeek round-trip), and any wording that smells like a write is excluded.
+  const asksTodayBookings =
+    /(شنو|وش|ايش|اعرض|اظهر)/.test(text) &&
+    /(حجوزات|الحجوزات)/.test(text) &&
+    /(اليوم|لليوم|هذا اليوم)/.test(text) &&
+    !/(احجز|جهز|سج[ّل]|أضف|اضف|الغ|ألغ|امسح|احذف|عدل|عدّل)/.test(text);
+  if (asksTodayBookings) return { name: "get_today_bookings", arguments: {} };
   return null;
 }
 
