@@ -14,6 +14,11 @@ production Supabase project by the branch that introduced it.**
    (payment_orders, payment_transactions, payment_webhook_events,
    payment_audit_log, derived totals, manual-payment/read/reconcile RPCs).
    Requires 0001 (uses its auth helper).
+3. `0003_chalet_assistant.sql` — Chalet Brain assistant tables
+   (assistant_threads/messages/memory/actions, automation_rules/runs,
+   outbound_messages) + atomic confirmation/memory RPCs. Requires 0001 (auth)
+   and 0002 (ledger references). Introduced by the stacked `claude/chalet-ai-brain`
+   PR, not PR #73.
 
 Apply with the Supabase SQL editor or `psql` against a **staging** project
 first, run the app + tests against staging, then apply to production in a
