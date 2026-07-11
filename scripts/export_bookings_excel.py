@@ -126,6 +126,17 @@ def created_key(b):
     return c if c else "9999-12-31T23:59:59Z"
 
 
+def redact_phone(value, marker):
+    """Public-safe phone value. The exported workbook is (historically) committed
+    to a PUBLIC repository, so a full customer number must never appear in it
+    (audit AUD-003). We drop the number entirely and show only the "booked"
+    marker — the public calendar needs to show the slot is taken, not who took
+    it. The owner's private copy of contact details stays inside the app. Use
+    --no-redact only for a private, non-published run.
+    """
+    return marker
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Template-based Excel booking exporter (Phase 1)")
     ap.add_argument("--input", required=True, help="Path to bookings JSON (workspace shape)")
@@ -133,7 +144,12 @@ def main(argv=None):
     ap.add_argument("--mapping", default="templates/mapping.json")
     ap.add_argument("--output-dir", default="exports")
     ap.add_argument("--year", type=int, default=None, help="Override output year (default: inferred from template)")
+    ap.add_argument("--no-redact", action="store_true",
+                    help="Write full customer phone numbers (PRIVATE runs only; the "
+                         "default redacts them because the output may be committed publicly)")
     args = ap.parse_args(argv)
+    # Default: redact PII from public output. Owner opts out only for a private run.
+    redact = not args.no_redact
 
     for path in (args.input, args.template, args.mapping):
         if not os.path.isfile(path):
@@ -271,7 +287,10 @@ def main(argv=None):
         chosen = chalet  # the booking's own chalet (== matched chalet)
         period_obj = next((p for p in (chosen.get("periods") or []) if str(p.get("id")) == pid), {})
         ptext = period_text(period_obj, text_mode)
-        phone = str(b.get("customer_phone") or "").strip() or phone_missing
+        if redact:
+            phone = redact_phone(b.get("customer_phone"), phone_missing)
+        else:
+            phone = str(b.get("customer_phone") or "").strip() or phone_missing
         amount = b.get("total")
         try:
             amount = float(amount)
@@ -307,6 +326,7 @@ def main(argv=None):
             "supported_chalets": [b["chalet_name"] for b in mapping["blocks"]],
             "full_rebuild": True,
             "overwrite_conflicts": False,
+            "phone_redacted": redact,
         },
         "summary": {
             "total_input_bookings": len(bookings),

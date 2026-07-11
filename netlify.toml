@@ -1,0 +1,13 @@
+# Netlify configuration.
+#
+# Without this file Netlify published the repository ROOT, which exposed
+# exports/ (customer data) and all dev files (reverse-audit §1.1). The build
+# below emits a dedicated publish directory containing ONLY the public app.
+#
+# GitHub Pages is separate and unaffected (see .github/workflows/pages.yml).
+
+[build]
+  command = "node scripts/build-netlify.mjs"
+  publish = "netlify-dist"
+
+# No secrets here. Payment/DeepSeek keys live only in Supabase Edge secrets.
