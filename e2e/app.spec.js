@@ -241,6 +241,84 @@ test('assistant tab is present and degrades safely when the backend is absent', 
   await expect(page.locator('#assistantLog')).toContainText('غير مفعّل');
 });
 
+// Mock the assistant Edge Function with a scripted JSON reply so the chat DOM
+// behaviour (§3 one clean answer, §5 connection states) is verified end-to-end.
+async function routeAssistant(page, body, status = 200) {
+  await page.route('**/functions/v1/chalet-assistant', (route) =>
+    route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) }),
+  );
+}
+
+test('assistant: a successful read shows ONE natural answer (no tool name, no «تم جلب البيانات»)', async ({ page }) => {
+  await mockRpc(page);
+  await routeAssistant(page, {
+    ok: true,
+    thread_id: 'th-1',
+    reply_ar: 'لا توجد حجوزات اليوم.',
+    tool_results: [
+      { kind: 'read', ok: true, tool: 'get_today_bookings', result: { date: '2026-07-11', bookings: [] } },
+    ],
+    model_calls: 2,
+  });
+  await page.goto('/');
+  await create(page);
+  await page.locator('[data-tab="assistant"]').click();
+  await page.locator('#assistantInput').fill('شنو حجوزات اليوم؟');
+  await page.locator('[data-action="assistant-send"]').click();
+  // The single grounded answer appears and the connection reads "متصل".
+  await expect(page.locator('#assistantLog')).toContainText('لا توجد حجوزات اليوم.');
+  await expect(page.locator('#assistantConn')).toHaveText('متصل');
+  // Nothing leaks the internal tool name, a data-fetched filler, or stage-1 wording.
+  const logText = await page.locator('#assistantLog').innerText();
+  expect(logText).not.toContain('get_today_bookings');
+  expect(logText).not.toContain('تم جلب البيانات');
+  expect(logText).not.toContain('جاري');
+  // A plain read renders no confirmation card.
+  await expect(page.locator('#assistantActions .action-card')).toHaveCount(0);
+});
+
+test('assistant: an unavailable model is NOT shown as connected (§5)', async ({ page }) => {
+  await mockRpc(page);
+  await routeAssistant(page, { assistant_unavailable: true });
+  await page.goto('/');
+  await create(page);
+  await page.locator('[data-tab="assistant"]').click();
+  await page.locator('#assistantInput').fill('شنو حجوزات اليوم؟');
+  await page.locator('[data-action="assistant-send"]').click();
+  await expect(page.locator('#assistantConn')).toHaveText('غير متاح مؤقتاً');
+  await expect(page.locator('#assistantConn')).not.toHaveText('متصل');
+  await expect(page.locator('#assistantLog')).toContainText(
+    'تعذّر الوصول إلى المساعد حالياً، ولم يتم تنفيذ أي إجراء.',
+  );
+});
+
+test('assistant: a prepared action renders a confirmation card (still gated)', async ({ page }) => {
+  await mockRpc(page);
+  await routeAssistant(page, {
+    ok: true,
+    thread_id: 'th-1',
+    reply_ar: 'جهّزت الحجز، بانتظار تأكيدك.',
+    tool_results: [
+      {
+        kind: 'prepared_action',
+        ok: true,
+        action_id: 'act-1',
+        confirmation_token: 'tok-xyz',
+        confirm_tool: 'confirm_booking_create',
+        summary_ar: 'حجز جديد لعلي بتاريخ 2099-06-01.',
+      },
+    ],
+  });
+  await page.goto('/');
+  await create(page);
+  await page.locator('[data-tab="assistant"]').click();
+  await page.locator('#assistantInput').fill('جهز حجز');
+  await page.locator('[data-action="assistant-send"]').click();
+  await expect(page.locator('#assistantActions .action-card')).toHaveCount(1);
+  await expect(page.locator('#assistantActions')).toContainText('إجراء مُجهّز');
+  await expect(page.locator('#assistantActions [data-action="assistant-confirm"]')).toBeVisible();
+});
+
 test('mobile setup page: iPhone-sized, button-only, opens official pages, checks connection', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await mockRpc(page);
@@ -362,7 +440,8 @@ test('staging mode (?env=staging): badge, staging-ready completion, and assistan
   await page.goto('/?env=staging');
   // The staging banner is unmissable and the app talks to the staging host.
   await expect(page.locator('#stagingBadge')).toBeVisible();
-  await expect(page.locator('#stagingBadge')).toContainText('بيئة Staging');
+  await expect(page.locator('#stagingBadge')).toContainText('بيئة التجربة');
+  await expect(page.locator('#stagingBadge')).toContainText('Staging');
   await create(page);
   await page.locator('[data-tab="settings"]').click();
   await page.locator('[data-action="setup-check"]').click();
