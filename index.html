@@ -3688,6 +3688,9 @@
               assistantAppend("bot", body.reply_ar || "تعذّر تنفيذ الطلب. لم يتغيّر شيء.");
             } else if (body.ok) {
               setAssistantConn("متصل", "ok");
+              // The server owns thread creation; reuse the id it returns so the
+              // whole conversation stays on ONE real, workspace-scoped thread.
+              if (body.thread_id) assistantThreadId = body.thread_id;
               if (body.reply_ar) assistantAppend("bot", body.reply_ar);
               renderToolResults(body.tool_results);
             } else {
@@ -3789,7 +3792,9 @@
           }
         }
         function assistantNew() {
-          assistantThreadId = uid();
+          // null => the server opens a fresh workspace-scoped thread on the next
+          // message and returns its id (we never mint thread ids on the client).
+          assistantThreadId = null;
           $("assistantLog").innerHTML = "";
           $("assistantActions").innerHTML = "";
           assistantAppend(

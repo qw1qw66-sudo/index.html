@@ -9,12 +9,17 @@
 //   supabase functions deploy chalet-assistant
 //   supabase secrets set DEEPSEEK_API_KEY=... DEEPSEEK_MODEL=deepseek-v4-flash \
 //     DEEPSEEK_BASE_URL=https://api.deepseek.com ASSISTANT_CONFIRM_SECRET=...
+//
+// ASSISTANT_CONFIRM_SECRET is MANDATORY for any sensitive action (there is no
+// fallback); without it the handler fails those closed.
 
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { handleAssistant } from "./handler.mjs";
 import { callDeepSeek } from "../_shared/assistant/deepseek.mjs";
 import { redactObject } from "../_shared/assistant/redact.mjs";
 import { executeConfirmedAction } from "../_shared/assistant/executors.mjs";
+import { corsWrap } from "../_shared/cors.mjs";
+import { riyadhToday, addDays, availablePeriodsOn, isSlotAvailable } from "../_shared/assistant/availability.mjs";
 
 // deno-lint-ignore no-explicit-any
 declare const Deno: any;
@@ -22,14 +27,100 @@ declare const Deno: any;
 function makeDeps() {
   const env = Deno.env.toObject();
   const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
+  const nowMs = Date.now();
 
   async function workspaceDoc(wsKey: string) {
     const { data } = await supabase.from("shared_workspaces").select("data, updated_at").eq("workspace_key", wsKey).maybeSingle();
     return data;
   }
 
+  // Net-paid halalas per booking straight from the ledger view (NOT booking.paid).
+  async function ledgerTotals(wsKey: string) {
+    const { data } = await supabase.from("v_booking_payment_totals")
+      .select("booking_id, net_paid_halalas, gross_paid_halalas, refunded_halalas").eq("workspace_key", wsKey);
+    const m = new Map<string, { net: number; gross: number; refunded: number }>();
+    for (const r of data ?? []) m.set(String(r.booking_id), { net: Number(r.net_paid_halalas) || 0, gross: Number(r.gross_paid_halalas) || 0, refunded: Number(r.refunded_halalas) || 0 });
+    return m;
+  }
+
+  // Ledger-backed outstanding balances (source of truth = payment_transactions).
+  async function outstandingFromLedger(wsKey: string) {
+    const d = await workspaceDoc(wsKey);
+    const bookings = ((d?.data?.bookings ?? []) as Array<Record<string, unknown>>).filter((b) => !b.deleted_at && b.status !== "cancelled");
+    const totals = await ledgerTotals(wsKey);
+    const rows = bookings.map((b) => {
+      const totalHalalas = Math.round((Number(b.total) || 0) * 100);
+      const net = totals.get(String(b.id))?.net ?? 0;
+      const remaining = totalHalalas - net;
+      return { booking_id: b.id, customer_name: b.customer_name, booking_date: b.booking_date, chalet_id: b.chalet_id, total_halalas: totalHalalas, net_paid_halalas: net, remaining_halalas: remaining };
+    }).filter((r) => r.remaining_halalas > 0)
+      .sort((a, b) => b.remaining_halalas - a.remaining_halalas);
+    return { source: "ledger", bookings: rows };
+  }
+
+  async function recentPayments(wsKey: string, args: Record<string, unknown>) {
+    const limit = Math.max(1, Math.min(50, Number(args.limit) || 10));
+    const { data } = await supabase.from("payment_transactions")
+      .select("id, booking_id, transaction_type, payment_method, direction, amount_halalas, currency, status, occurred_at, provider")
+      .eq("workspace_key", wsKey).order("occurred_at", { ascending: false }).limit(limit);
+    return { source: "ledger", payments: data ?? [] };
+  }
+
+  async function automationStatus(wsKey: string) {
+    const { data } = await supabase.from("automation_rules")
+      .select("id, chalet_id, enabled, scan_days_ahead, minimum_price_halalas, maximum_daily_messages, contact_cooldown_hours, automatic_send_enabled, owner_approval_required, updated_at")
+      .eq("workspace_key", wsKey);
+    return { rules: data ?? [] };
+  }
+
+  async function campaignResults(wsKey: string, args: Record<string, unknown>) {
+    const limit = Math.max(1, Math.min(50, Number(args.limit) || 5));
+    const { data } = await supabase.from("automation_runs")
+      .select("id, rule_id, vacancy_key, status, eligible_contacts, drafted_messages, approved_messages, sent_messages, converted_booking_id, attributed_revenue_halalas, started_at, completed_at")
+      .eq("workspace_key", wsKey).order("started_at", { ascending: false }).limit(limit);
+    return { runs: data ?? [] };
+  }
+
+  async function attributedRevenue(wsKey: string) {
+    const { data } = await supabase.from("automation_runs")
+      .select("attributed_revenue_halalas, converted_booking_id, sent_messages").eq("workspace_key", wsKey);
+    let revenue = 0; let conversions = 0; let sent = 0;
+    for (const r of data ?? []) {
+      revenue += Number(r.attributed_revenue_halalas) || 0;
+      if (r.converted_booking_id) conversions++;
+      sent += Number(r.sent_messages) || 0;
+    }
+    return { attributed_revenue_halalas: revenue, conversions, messages_sent: sent };
+  }
+
+  async function outboundStatus(wsKey: string, args: Record<string, unknown>) {
+    const { data } = await supabase.from("outbound_messages")
+      .select("id, booking_id, channel, mode, status, created_at, sent_at, delivered_at, failed_at")
+      .eq("workspace_key", wsKey).eq("id", args.message_id).maybeSingle();
+    return data ?? { error: "NOT_FOUND" };
+  }
+
+  // Ledger-aware facts for message drafting (remaining from the ledger).
+  async function bookingDraftFacts(wsKey: string, bookingId: string, intent?: string) {
+    const d = await workspaceDoc(wsKey);
+    const doc = (d?.data ?? {}) as { chalets?: Array<Record<string, unknown>>; bookings?: Array<Record<string, unknown>> };
+    const b = (doc.bookings ?? []).find((x) => x.id === bookingId && !x.deleted_at);
+    if (!b) return { error: "NOT_FOUND" };
+    const chalet = (doc.chalets ?? []).find((c) => c.id === b.chalet_id);
+    const period = ((chalet?.periods ?? []) as Array<Record<string, unknown>>).find((p) => p.id === b.period_id);
+    const totalHalalas = Math.round((Number(b.total) || 0) * 100);
+    const net = (await ledgerTotals(wsKey)).get(String(b.id))?.net ?? 0;
+    return {
+      booking_id: b.id, customer_name: b.customer_name, booking_date: b.booking_date,
+      chalet_name: chalet?.name ?? "", period_label: period?.label ?? "",
+      total_halalas: totalHalalas, net_paid_halalas: net, remaining_halalas: totalHalalas - net,
+      intent: intent ?? "",
+    };
+  }
+
   return {
     env,
+    newId: () => crypto.randomUUID(),
     async auth(k: string, pin: string) {
       const { data } = await supabase.rpc("workspace_auth", { p_workspace_key: k, p_access_pin: pin }).single();
       return data ?? { ok: false, error_code: "AUTH_FAILED" };
@@ -43,6 +134,33 @@ function makeDeps() {
         .eq("workspace_key", wsKey).eq("status", "active");
       return data ?? [];
     },
+
+    // ---- thread lifecycle (workspace-scoped) ----
+    async createThread(wsKey: string, title: string) {
+      const { data, error } = await supabase.from("assistant_threads")
+        .insert({ workspace_key: wsKey, title: String(title || "").slice(0, 120) }).select("id").single();
+      if (error || !data) return { ok: false, error: "THREAD_CREATE_FAILED" };
+      return { ok: true, thread_id: data.id };
+    },
+    async listThreads(wsKey: string) {
+      const { data } = await supabase.from("assistant_threads")
+        .select("id, title, status, updated_at").eq("workspace_key", wsKey)
+        .order("updated_at", { ascending: false }).limit(50);
+      return data ?? [];
+    },
+    async archiveThread(wsKey: string, threadId: string) {
+      const { data, error } = await supabase.from("assistant_threads")
+        .update({ status: "archived", updated_at: new Date().toISOString() })
+        .eq("workspace_key", wsKey).eq("id", threadId).select("id");
+      if (error) return { ok: false, error: "THREAD_ARCHIVE_FAILED" };
+      if (!data || data.length !== 1) return { ok: false, error: "THREAD_NOT_FOUND" };
+      return { ok: true };
+    },
+    async threadBelongsToWorkspace(wsKey: string, threadId: string) {
+      const { data } = await supabase.from("assistant_threads")
+        .select("id").eq("workspace_key", wsKey).eq("id", threadId).maybeSingle();
+      return Boolean(data);
+    },
     async loadHistory(wsKey: string, threadId: string | null) {
       if (!threadId) return [];
       const { data } = await supabase.from("assistant_messages")
@@ -52,32 +170,54 @@ function makeDeps() {
     },
     async appendMessages(wsKey: string, threadId: string | null, rows: Record<string, unknown>[]) {
       if (!threadId) return;
-      await supabase.from("assistant_messages").insert(rows.map((r) => ({ ...r, workspace_key: wsKey, thread_id: threadId })));
+      const { error } = await supabase.from("assistant_messages").insert(rows.map((r) => ({ ...r, workspace_key: wsKey, thread_id: threadId })));
+      if (error) throw { code: (error as { code?: string }).code ?? "APPEND_FAILED" };
     },
     async getWorkspaceRevision(wsKey: string) {
       const d = await workspaceDoc(wsKey);
       return d?.updated_at ?? null;
     },
-    async runReadTool(wsKey: string, name: string, args: Record<string, unknown>) {
-      // Read tools return only redacted, minimal data. Unimplemented tools
-      // return an explicit marker — NEVER invented data.
+
+    // ---- read tools: real data only; unimplemented tools cannot exist (every
+    // registered read tool is handled). The PIN is forwarded so ledger RPCs
+    // re-authenticate the SAME workspace/pin the request already proved. ----
+    async runReadTool(wsKey: string, name: string, args: Record<string, unknown>, pin: string) {
       switch (name) {
         case "get_booking_payment_history":
         case "get_payment_link_status": {
           const { data } = await supabase.rpc("get_booking_payments", {
-            p_workspace_key: wsKey, p_access_pin: null, p_booking_id: args.booking_id,
+            p_workspace_key: wsKey, p_access_pin: pin, p_booking_id: args.booking_id,
           });
           return redactObject(data ?? { error: "NO_DATA" });
+        }
+        case "list_outstanding_balances": return redactObject(await outstandingFromLedger(wsKey));
+        case "list_recent_payments": return redactObject(await recentPayments(wsKey, args));
+        case "get_automation_status": return redactObject(await automationStatus(wsKey));
+        case "get_campaign_results": return redactObject(await campaignResults(wsKey, args));
+        case "get_attributed_revenue": return redactObject(await attributedRevenue(wsKey));
+        case "get_outbound_message_status": return redactObject(await outboundStatus(wsKey, args));
+        case "draft_payment_reminder": {
+          const facts = await bookingDraftFacts(wsKey, String(args.booking_id || ""));
+          return redactObject(buildDraft("draft_payment_reminder", facts));
+        }
+        case "draft_booking_confirmation": {
+          const facts = await bookingDraftFacts(wsKey, String(args.booking_id || ""));
+          return redactObject(buildDraft("draft_booking_confirmation", facts));
+        }
+        case "draft_customer_message": {
+          const facts = await bookingDraftFacts(wsKey, String(args.booking_id || ""), String(args.intent || ""));
+          return redactObject(buildDraft("draft_customer_message", facts));
         }
         default: {
           const d = await workspaceDoc(wsKey);
           const doc = d?.data ?? {};
-          return redactObject(readFromDoc(name, args, doc));
+          return redactObject(readFromDoc(name, args, doc, nowMs));
         }
       }
     },
+
     async prepareSensitive(wsKey: string, spec: Record<string, unknown>) {
-      const { data } = await supabase.from("assistant_actions").insert({
+      const { data, error } = await supabase.from("assistant_actions").insert({
         workspace_key: wsKey,
         action_type: spec.actionType,
         tool_name: spec.name,
@@ -88,7 +228,8 @@ function makeDeps() {
         expected_workspace_revision: spec.expectedRevision ?? null,
         status: "prepared",
       }).select("id").single();
-      return { action_id: data?.id };
+      if (error || !data) throw { code: (error as { code?: string })?.code ?? "PREPARE_FAILED" };
+      return { action_id: data.id };
     },
     async getConfirmationContext(wsKey: string, actionId: string) {
       const { data } = await supabase.from("assistant_actions")
@@ -104,10 +245,17 @@ function makeDeps() {
       });
       return data ?? { ok: false, error: "CONSUME_FAILED" };
     },
-    async getActionOutcome(_wsKey: string, actionId: string) {
+    async getActionOutcome(wsKey: string, actionId: string) {
       const { data } = await supabase.from("assistant_actions")
-        .select("status, safe_result_json, error_code").eq("id", actionId).eq("workspace_key", _wsKey).maybeSingle();
+        .select("status, safe_result_json, error_code").eq("id", actionId).eq("workspace_key", wsKey).maybeSingle();
       return data ? { status: data.status, safe_result: data.safe_result_json, error_code: data.error_code } : {};
+    },
+    // Recover an action left "running" by a crash between confirm and finalize:
+    // report its stored outcome so the caller can replay safely.
+    async getRunningAction(wsKey: string, actionId: string) {
+      const { data } = await supabase.from("assistant_actions")
+        .select("status, tool_name, action_type, normalized_payload_json").eq("id", actionId).eq("workspace_key", wsKey).maybeSingle();
+      return data ?? null;
     },
     // Route a CONFIRMED action through the shared narrow dispatcher and the
     // EXISTING contracts. No duplicate engines; the PIN is used only here.
@@ -148,7 +296,8 @@ function makeDeps() {
         },
         async getBookingPayments(k: string, pin: string, bookingId: string) {
           const { data } = await supabase.rpc("get_booking_payments", { p_workspace_key: k, p_access_pin: pin, p_booking_id: bookingId });
-          return data ?? {};
+          if (!data) return { ok: false, error: "PAYMENT_READ_FAILED" };
+          return data;
         },
         async resolveCustomerPhone(k: string, _pin: string, bookingId: string) {
           const d = await workspaceDoc(k);
@@ -169,25 +318,54 @@ function makeDeps() {
         execDeps,
       );
     },
-    async finalizeAction(_wsKey: string, actionId: string, patch: Record<string, unknown>) {
-      await supabase.from("assistant_actions").update({ ...patch, updated_at: new Date().toISOString() }).eq("id", actionId);
+    // Finalize an action's outcome — ALWAYS scoped to (workspace_key, id) and
+    // verified to touch exactly one row.
+    async finalizeAction(wsKey: string, actionId: string, patch: Record<string, unknown>) {
+      const { data, error } = await supabase.from("assistant_actions")
+        .update({ ...patch, updated_at: new Date().toISOString() })
+        .eq("id", actionId).eq("workspace_key", wsKey).select("id");
+      if (error) throw { code: (error as { code?: string }).code ?? "FINALIZE_FAILED" };
+      if (!data || data.length !== 1) throw { code: "FINALIZE_ROW_MISMATCH" };
     },
   };
 }
 
-// Read-from-document helpers (server-side, authoritative source). All return
-// REAL workspace data (never demo values); phone numbers are redacted by the
-// caller via redactObject before anything is returned or sent to the model.
-function readFromDoc(name: string, args: Record<string, unknown>, doc: { chalets?: unknown[]; bookings?: unknown[] }) {
+// Deterministic Arabic drafts from ledger-aware facts. The model may refine
+// these in the second stage; even without it the owner gets usable text.
+function riyals(halalas: unknown) { return ((Number(halalas) || 0) / 100).toFixed(2); }
+function buildDraft(kind: string, facts: Record<string, unknown>) {
+  if (facts && (facts as { error?: string }).error) return facts;
+  const name = String(facts.customer_name || "").trim() || "عميلنا الكريم";
+  const date = String(facts.booking_date || "");
+  const chalet = String(facts.chalet_name || "");
+  const period = String(facts.period_label || "");
+  const remaining = Number(facts.remaining_halalas) || 0;
+  let draft = "";
+  if (kind === "draft_booking_confirmation") {
+    draft = `مرحباً ${name}، تم تأكيد حجزك في ${chalet}${period ? ` (${period})` : ""} بتاريخ ${date}. بانتظارك، وأي استفسار نحن في الخدمة.`;
+  } else if (kind === "draft_payment_reminder") {
+    draft = remaining > 0
+      ? `مرحباً ${name}، تذكير ودّي بخصوص حجز ${date}: المبلغ المتبقّي ${riyals(remaining)} ر.س. نقدّر إتمام السداد قبل الموعد. شكراً لك.`
+      : `مرحباً ${name}، شكراً لك — لا يوجد مبلغ متبقٍ على حجز ${date}.`;
+  } else {
+    const intent = String(facts.intent || "").trim();
+    draft = `مرحباً ${name}${intent ? `، بخصوص: ${intent}` : ""}. بخصوص حجزك بتاريخ ${date}${chalet ? ` في ${chalet}` : ""}، نحن في الخدمة لأي استفسار.`;
+  }
+  return { ...facts, draft };
+}
+
+// Pure document reads (authoritative source). All REAL workspace data; phone
+// numbers are redacted by the caller before anything is returned/sent to the
+// model. "today"/date math use Asia/Riyadh, and availability uses time-overlap.
+function readFromDoc(name: string, args: Record<string, unknown>, doc: { chalets?: unknown[]; bookings?: unknown[] }, nowMs: number) {
   const bookings = (doc.bookings ?? []) as Array<Record<string, unknown>>;
   const chalets = (doc.chalets ?? []) as Array<Record<string, unknown>>;
   const activeB = bookings.filter((b) => !b.deleted_at);
   const activeC = chalets.filter((c) => !c.deleted_at);
-  const today = new Date().toISOString().slice(0, 10);
-  const remaining = (b: Record<string, unknown>) => (Number(b.total) || 0) - (Number(b.paid) || 0);
+  const today = riyadhToday(nowMs);
   switch (name) {
     case "get_today_bookings":
-      return { bookings: activeB.filter((b) => b.booking_date === today) };
+      return { date: today, bookings: activeB.filter((b) => b.booking_date === today) };
     case "list_bookings": {
       const from = String(args.from || "");
       const to = String(args.to || "");
@@ -199,40 +377,42 @@ function readFromDoc(name: string, args: Record<string, unknown>, doc: { chalets
           (!status || b.status === status)),
       };
     }
-    case "list_outstanding_balances":
-      return { bookings: activeB.filter((b) => b.status !== "cancelled" && remaining(b) > 0) };
     case "get_booking_details":
       return activeB.find((b) => b.id === args.booking_id) ?? { error: "NOT_FOUND" };
     case "get_chalet_details":
       return activeC.find((c) => c.id === args.chalet_id) ?? { error: "NOT_FOUND" };
     case "find_available_periods": {
-      const chalet = activeC.find((c) => c.id === args.chalet_id);
-      if (!chalet) return { error: "NOT_FOUND" };
-      const date = String(args.date || "");
-      const periods = ((chalet.periods ?? []) as Array<Record<string, unknown>>).filter((p) => p.active);
-      const taken = new Set(activeB.filter((b) => b.status === "confirmed" && b.chalet_id === chalet.id && b.booking_date === date).map((b) => b.period_id));
-      return { chalet_id: chalet.id, date, available: periods.filter((p) => !taken.has(p.id)) };
+      const date = String(args.date || today);
+      return availablePeriodsOn(doc as never, String(args.chalet_id || ""), date);
     }
     case "find_empty_dates": {
       const daysAhead = Math.max(1, Math.min(120, Number(args.days_ahead) || 14));
       const chaletIds = args.chalet_id ? [String(args.chalet_id)] : activeC.map((c) => String(c.id));
       const out: Array<Record<string, unknown>> = [];
-      for (let i = 0; i < daysAhead; i++) {
-        const dt = new Date(Date.now() + i * 86400000).toISOString().slice(0, 10);
+      for (let i = 0; i < daysAhead && out.length < 100; i++) {
+        const dt = addDays(today, i);
         for (const cid of chaletIds) {
-          const chalet = activeC.find((c) => c.id === cid);
+          const chalet = activeC.find((c) => String(c.id) === cid);
           if (!chalet) continue;
           for (const p of ((chalet.periods ?? []) as Array<Record<string, unknown>>).filter((x) => x.active)) {
-            const booked = activeB.some((b) => b.status === "confirmed" && b.chalet_id === cid && b.booking_date === dt && b.period_id === p.id);
-            if (!booked) out.push({ chalet_id: cid, date: dt, period_id: p.id });
+            if (isSlotAvailable(doc as never, cid, dt, p)) out.push({ chalet_id: cid, date: dt, period_id: p.id, period_label: p.label });
           }
         }
       }
       return { empty: out.slice(0, 100) };
     }
+    case "draft_vacancy_offer": {
+      const chalet = activeC.find((c) => c.id === args.chalet_id);
+      if (!chalet) return { error: "NOT_FOUND" };
+      const date = String(args.date || "");
+      return { chalet_id: chalet.id, chalet_name: chalet.name, date, draft: `فرصة متاحة في ${chalet.name}${date ? ` بتاريخ ${date}` : ""} — تواصل معنا للحجز قبل نفاد الموعد.` };
+    }
     default:
+      // Every registered read tool is handled above; anything else is a
+      // programming error (a tool advertised but not implemented).
       return { error: "TOOL_NOT_IMPLEMENTED", tool: name };
   }
 }
 
-Deno.serve((req: Request) => handleAssistant(req, makeDeps()));
+// Browser-facing: preflight + CORS on every response (allowlisted origins).
+Deno.serve((req: Request) => corsWrap(req, Deno.env.toObject(), () => handleAssistant(req, makeDeps())));

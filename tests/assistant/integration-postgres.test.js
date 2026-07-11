@@ -188,4 +188,26 @@ d("REAL Postgres: confirmed assistant actions write real rows", () => {
     const res = await call({ workspace_key: "WSREAL", access_pin: "000000", invoke_tool: { name: "confirm_manual_payment", arguments: { action_id: p.action_id, confirmation_token: p.confirmation_token } } });
     expect(res.status).toBe(401);
   });
+
+  it("composite workspace FK blocks a message referencing another workspace's thread (Stage 5)", async () => {
+    await pool.query("select public.create_shared_workspace($1,$2,$3::jsonb)", ["WS2", "654321", JSON.stringify({ schema_version: 3, settings: {}, chalets: [], bookings: [] })]);
+    const t1 = (await pool.query("insert into public.assistant_threads(workspace_key,title) values('WSREAL','t') returning id")).rows[0].id;
+    // Same workspace: allowed.
+    await expect(pool.query("insert into public.assistant_messages(workspace_key,thread_id,role,safe_content) values('WSREAL',$1,'user','hi')", [t1])).resolves.toBeTruthy();
+    // Cross-workspace: the composite (workspace_key, thread_id) FK rejects it.
+    await expect(pool.query("insert into public.assistant_messages(workspace_key,thread_id,role,safe_content) values('WS2',$1,'user','x')", [t1])).rejects.toThrow();
+  });
+
+  it("automation_runs uniqueness is atomic and outbound links stay in-workspace (Stage 8)", async () => {
+    const ruleId = (await pool.query("insert into public.automation_rules(workspace_key,chalet_id) values('WSREAL','cX') returning id")).rows[0].id;
+    await pool.query("insert into public.automation_runs(workspace_key,rule_id,vacancy_key,idempotency_key) values('WSREAL',$1,'v','dupkey')", [ruleId]);
+    // A second run with the same (workspace_key, idempotency_key) is rejected —
+    // this uniqueness is the authoritative duplicate guard the planner relies on.
+    await expect(pool.query("insert into public.automation_runs(workspace_key,rule_id,vacancy_key,idempotency_key) values('WSREAL',$1,'v','dupkey')", [ruleId])).rejects.toThrow();
+    const runId = (await pool.query("select id from public.automation_runs where workspace_key='WSREAL' and idempotency_key='dupkey'")).rows[0].id;
+    // An outbound message can link that run within the same workspace...
+    await expect(pool.query("insert into public.outbound_messages(workspace_key,automation_run_id,status) values('WSREAL',$1,'awaiting_approval')", [runId])).resolves.toBeTruthy();
+    // ...but not from a different workspace (composite FK).
+    await expect(pool.query("insert into public.outbound_messages(workspace_key,automation_run_id,status) values('WS2',$1,'awaiting_approval')", [runId])).rejects.toThrow();
+  });
 });

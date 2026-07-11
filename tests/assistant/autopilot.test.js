@@ -28,23 +28,27 @@ function rule(over = {}) {
 }
 
 function baseDeps(over = {}) {
-  const runs = [];
+  const runsMap = new Map(); // run_id -> row (createRun + updateRun patches)
   const queued = [];
-  return {
-    runs, queued,
+  let seq = 0;
+  const deps = {
+    runsMap, queued,
     nowMs: NOW, todayIso: TODAY,
     async listEnabledRules() { return [rule()]; },
     async getWorkspaceDoc() { return chaletDoc(); },
-    async findRun() { return null; },
+    async messagesSentToday() { return 0; },
+    async createRun(row) { const id = "run-" + (++seq); runsMap.set(id, { run_id: id, ...row }); return { ok: true, run_id: id }; },
+    async updateRun(id, patch) { const r = runsMap.get(id); if (r) { const { safe_summary_patch: _omit, ...cols } = patch; Object.assign(r, cols); } },
     async priorContacts() { return new Map(); },
     async optedOut() { return new Set(); },
     customerRefOf: (ws, phone) => customerReference(ws, phone),
     async draftOffer() { return { ok: true, body: "عرض خاص للأيام الفاضية" }; },
     async whatsappMode() { return "disconnected"; },
-    async recordRun(r) { runs.push(r); return { run_id: "run-" + runs.length }; },
     async queueMessage(m) { queued.push(m); },
     ...over,
   };
+  Object.defineProperty(deps, "runs", { get: () => Array.from(runsMap.values()) });
+  return deps;
 }
 
 describe("autopilot: safety and determinism", () => {
@@ -58,17 +62,46 @@ describe("autopilot: safety and determinism", () => {
     const deps = baseDeps();
     const s = await runAutopilot(deps);
     expect(s.vacancies_found).toBeGreaterThan(0);
-    expect(s.queued_official).toBe(0);
+    expect(s.queued).toBe(0);
     // every queued message awaits approval; none is "sent"
     expect(deps.queued.every((m) => m.status === "awaiting_approval")).toBe(true);
     expect(deps.queued.some((m) => m.status === "sent")).toBe(false);
+    // every message is linked to a REAL run id (never null)
+    expect(deps.queued.every((m) => typeof m.automation_run_id === "string" && m.automation_run_id.length > 0)).toBe(true);
   });
 
-  it("duplicate vacancy runs are skipped (no spam)", async () => {
-    const deps = baseDeps({ findRun: async () => ({ id: "existing" }) });
+  it("duplicate vacancy runs are skipped atomically before any message (no spam)", async () => {
+    // The DB unique(workspace_key, idempotency_key) rejects the insert.
+    const deps = baseDeps({ createRun: async () => ({ duplicate: true }) });
     const s = await runAutopilot(deps);
     expect(s.duplicates_skipped).toBeGreaterThan(0);
     expect(s.runs_created).toBe(0);
+    expect(deps.queued).toHaveLength(0); // nothing queued for a duplicate
+  });
+
+  it("the global daily cap (per rule / Saudi day) bounds messages; cap 0 => zero", async () => {
+    // Already at the cap today -> no run, no message.
+    const atCap = baseDeps({ messagesSentToday: async () => 10 });
+    const s1 = await runAutopilot(atCap);
+    expect(s1.runs_created).toBe(0);
+    expect(atCap.queued).toHaveLength(0);
+    expect(s1.capped).toBeGreaterThan(0);
+    // maximum_daily_messages = 0 -> zero messages regardless of vacancies.
+    const zero = baseDeps({ listEnabledRules: async () => [rule({ maximum_daily_messages: 0 })] });
+    const s2 = await runAutopilot(zero);
+    expect(zero.queued).toHaveLength(0);
+    expect(s2.capped).toBeGreaterThan(0);
+  });
+
+  it("partial remaining cap limits the number of messages across the run", async () => {
+    // 9 already sent today, cap 10 -> at most ONE more message may be generated.
+    const doc = { chalets: chaletDoc().chalets, bookings: [
+      { id: "x1", chalet_id: "c1", customer_phone: "0501111111", status: "confirmed", created_at: "2026-01-01", deleted_at: null },
+      { id: "x2", chalet_id: "c1", customer_phone: "0502222222", status: "confirmed", created_at: "2026-01-02", deleted_at: null },
+    ] };
+    const deps = baseDeps({ getWorkspaceDoc: async () => doc, messagesSentToday: async () => 9 });
+    await runAutopilot(deps);
+    expect(deps.queued.length).toBeLessThanOrEqual(1);
   });
 
   it("a vacancy booked before processing is stopped (stopped_booked)", async () => {
@@ -132,10 +165,12 @@ describe("autopilot: safety and determinism", () => {
       whatsappMode: async () => "official_cloud_api",
     });
     const s = await runAutopilot(deps);
-    expect(s.queued_official).toBeGreaterThan(0);
-    // Even when auto-sending, the run's sent_messages stays 0 until a Cloud API
-    // webhook confirms delivery — never invented.
+    expect(s.queued).toBeGreaterThan(0);
+    // Even when auto-sending is enabled, messages are only QUEUED and the run's
+    // sent_messages stays 0 until a Cloud API webhook confirms delivery.
+    expect(deps.queued.every((m) => m.status === "queued")).toBe(true);
     expect(deps.runs.every((r) => r.sent_messages === 0)).toBe(true);
+    expect(deps.runs.every((r) => r.status === "queued")).toBe(true);
   });
 
   it("no revenue is invented (attributed_revenue starts at 0)", async () => {

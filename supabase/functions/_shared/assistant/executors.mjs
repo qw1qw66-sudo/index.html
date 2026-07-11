@@ -23,13 +23,14 @@
 
 import { riyalsNumberToHalalas } from "../ledger-core.mjs";
 import { resolveOutbound, detectMode } from "./whatsapp.mjs";
+import { isSlotAvailable } from "./availability.mjs";
 
 const ALLOWED = new Set([
   "confirm_booking_create",
   "confirm_booking_update",
   "confirm_booking_cancel",
   "confirm_manual_payment",
-  "create_payment_link",
+  "confirm_payment_link",
   "confirm_outbound_message",
 ]);
 
@@ -41,6 +42,26 @@ function findPeriod(chalet, id) {
 }
 function findBooking(doc, id) {
   return (doc.bookings || []).find((b) => b.id === id && !b.deleted_at);
+}
+
+// Validate a RESULTING booking against the authoritative document. Used by both
+// create and update so a write can never persist an invalid booking (unknown/
+// inactive chalet, period not belonging to that chalet, bad date, over-capacity
+// guests, non-finite/negative or sub-halala total, or a blank customer name).
+function validateResultingBooking(doc, booking) {
+  const chalet = findChalet(doc, String(booking.chalet_id || ""));
+  if (!chalet) return { ok: false, error: "CHALET_NOT_FOUND" };
+  if (!findPeriod(chalet, String(booking.period_id || ""))) return { ok: false, error: "PERIOD_NOT_FOUND" };
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(booking.booking_date || ""))) return { ok: false, error: "INVALID_DATE" };
+  if (!String(booking.customer_name || "").trim()) return { ok: false, error: "CUSTOMER_NAME_REQUIRED" };
+  const guests = Number(booking.guests);
+  if (!Number.isInteger(guests) || guests < 1) return { ok: false, error: "INVALID_GUESTS" };
+  const capacity = Number(chalet.capacity) || 0; // 0 => capacity not set (no cap)
+  if (capacity > 0 && guests > capacity) return { ok: false, error: "GUESTS_EXCEED_CAPACITY" };
+  const total = Number(booking.total);
+  const halalas = riyalsNumberToHalalas(total);
+  if (!halalas.ok) return { ok: false, error: "INVALID_TOTAL" };
+  return { ok: true };
 }
 
 /**
@@ -63,7 +84,7 @@ export async function executeConfirmedAction(ctx, deps) {
       return await bookingCancel(wsKey, pin, args, deps);
     case "confirm_manual_payment":
       return await manualPayment(wsKey, pin, args, actionId, deps);
-    case "create_payment_link":
+    case "confirm_payment_link":
       return await paymentLink(wsKey, pin, args, actionId, deps);
     case "confirm_outbound_message":
       return await outboundMessage(wsKey, pin, args, deps);
@@ -80,27 +101,34 @@ async function bookingCreate(wsKey, pin, args, deps) {
   const snap = await deps.getWorkspaceDoc(wsKey);
   if (!snap || !snap.data) return { ok: false, error: "WORKSPACE_NOT_FOUND" };
   const doc = snap.data;
+
+  // The booking id is bound at PREPARE time (handler) and travels in the
+  // confirmed payload. Fall back to a fresh id only if one was not bound.
+  const bookingId = String(args.booking_id || "") || (typeof deps.newId === "function" ? deps.newId() : "");
+  if (!bookingId) return { ok: false, error: "BOOKING_ID_MISSING" };
+
+  // Crash-retry idempotency: if this id already exists, the confirmed create
+  // already ran — return it instead of writing a second booking.
+  const already = (doc.bookings || []).find((b) => String(b.id) === bookingId);
+  if (already) {
+    return { ok: true, result_reference: bookingId, safe_result: { booking_id: bookingId, updated_at: snap.updated_at, action: "booking_created", duplicate: true } };
+  }
+
   const chalet = findChalet(doc, String(args.chalet_id || ""));
   if (!chalet) return { ok: false, error: "CHALET_NOT_FOUND" };
   const period = findPeriod(chalet, String(args.period_id || ""));
   if (!period) return { ok: false, error: "PERIOD_NOT_FOUND" };
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(args.booking_date || ""))) {
-    return { ok: false, error: "INVALID_DATE" };
-  }
-  if (!String(args.customer_name || "").trim()) return { ok: false, error: "CUSTOMER_NAME_REQUIRED" };
-  const total = Number(args.total) || 0;
-  if (total < 0) return { ok: false, error: "INVALID_TOTAL" };
 
   const now = new Date().toISOString();
   const booking = {
-    id: deps.newId(),
-    customer_name: String(args.customer_name).trim(),
+    id: bookingId,
+    customer_name: String(args.customer_name || "").trim(),
     customer_phone: String(args.customer_phone || "").trim(),
     chalet_id: chalet.id,
-    booking_date: String(args.booking_date),
+    booking_date: String(args.booking_date || ""),
     period_id: period.id,
     guests: Math.max(1, Number(args.guests) || 1),
-    total,
+    total: Number(args.total) || 0,
     paid: 0,
     status: "confirmed",
     notes: String(args.notes || "").trim(),
@@ -111,6 +139,13 @@ async function bookingCreate(wsKey, pin, args, deps) {
     created_at: now,
     updated_at: now,
   };
+  const valid = validateResultingBooking(doc, booking);
+  if (!valid.ok) return valid;
+  // Overlap-aware conflict check (mirrors the app's findConflict time rule).
+  if (!isSlotAvailable(doc, booking.chalet_id, booking.booking_date, period)) {
+    return { ok: false, error: "BOOKING_CONFLICT" };
+  }
+
   const nextDoc = { ...doc, bookings: [...(doc.bookings || []), booking] };
   const saved = await deps.saveWorkspaceV2(wsKey, pin, nextDoc, snap.updated_at);
   if (!saved.ok) return { ok: false, error: saved.error || "SAVE_FAILED" };
@@ -132,25 +167,27 @@ async function bookingUpdate(wsKey, pin, args, deps) {
   // Apply ONLY the normalized patch fields. Never change id or paid.
   const patch = {};
   if (args.customer_name !== undefined) patch.customer_name = String(args.customer_name).trim();
-  if (args.chalet_id !== undefined) {
-    if (!findChalet(doc, String(args.chalet_id))) return { ok: false, error: "CHALET_NOT_FOUND" };
-    patch.chalet_id = String(args.chalet_id);
-  }
+  if (args.chalet_id !== undefined) patch.chalet_id = String(args.chalet_id);
   if (args.period_id !== undefined) patch.period_id = String(args.period_id);
-  if (args.booking_date !== undefined) {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(args.booking_date))) return { ok: false, error: "INVALID_DATE" };
-    patch.booking_date = String(args.booking_date);
-  }
+  if (args.booking_date !== undefined) patch.booking_date = String(args.booking_date);
   if (args.guests !== undefined) patch.guests = Math.max(1, Number(args.guests) || 1);
-  if (args.total !== undefined) {
-    if (Number(args.total) < 0) return { ok: false, error: "INVALID_TOTAL" };
-    patch.total = Number(args.total);
-  }
+  if (args.total !== undefined) patch.total = Number(args.total);
   if (args.notes !== undefined) patch.notes = String(args.notes).trim();
 
-  const bookings = (doc.bookings || []).map((b) =>
-    b.id === bookingId ? { ...b, ...patch, id: b.id, paid: b.paid, updated_at: new Date().toISOString() } : b,
-  );
+  // Build the RESULTING booking and validate the whole thing (not just the
+  // patch), so an update can never leave a booking pointing at an inactive
+  // chalet, a period that is not that chalet's, an over-capacity guest count,
+  // or an invalid total.
+  const resulting = { ...existing, ...patch, id: existing.id, paid: existing.paid, updated_at: new Date().toISOString() };
+  const valid = validateResultingBooking(doc, resulting);
+  if (!valid.ok) return valid;
+  const chalet = findChalet(doc, String(resulting.chalet_id));
+  const period = findPeriod(chalet, String(resulting.period_id));
+  if (resulting.status === "confirmed" && !isSlotAvailable(doc, resulting.chalet_id, resulting.booking_date, period, { excludeBookingId: bookingId })) {
+    return { ok: false, error: "BOOKING_CONFLICT" };
+  }
+
+  const bookings = (doc.bookings || []).map((b) => (b.id === bookingId ? resulting : b));
   const saved = await deps.saveWorkspaceV2(wsKey, pin, { ...doc, bookings }, snap.updated_at);
   if (!saved.ok) return { ok: false, error: saved.error || "SAVE_FAILED" };
   return { ok: true, result_reference: bookingId, safe_result: { booking_id: bookingId, updated_at: saved.updated_at, action: "booking_updated" } };
@@ -165,19 +202,33 @@ async function bookingCancel(wsKey, pin, args, deps) {
   if (!existing) return { ok: false, error: "BOOKING_NOT_FOUND" };
 
   // Do NOT physically delete or auto-refund. Existing policy = status cancelled.
-  // If the ledger shows recorded payments, proceed but flag for owner review.
-  let warning = null;
+  // The ledger MUST be consulted first and it must answer: a payment check that
+  // fails or is unavailable FAILS CLOSED — we never cancel a booking blind to
+  // whether the customer has already paid.
+  let paidHalalas;
   try {
     const pay = await deps.getBookingPayments(wsKey, pin, bookingId);
-    if (pay && Number(pay.net_paid_halalas) > 0) warning = "HAS_RECORDED_PAYMENTS_NO_AUTO_REFUND";
-  } catch { /* ledger unavailable — cancellation still proceeds */ }
+    if (!pay || pay.ok === false) return { ok: false, error: "PAYMENT_CHECK_FAILED" };
+    paidHalalas = Number(pay.net_paid_halalas || pay.summary?.net_paid_halalas || 0) || 0;
+  } catch {
+    return { ok: false, error: "PAYMENT_CHECK_FAILED" };
+  }
+  const warning = paidHalalas > 0 ? "HAS_RECORDED_PAYMENTS_NO_AUTO_REFUND" : null;
 
   const bookings = (doc.bookings || []).map((b) =>
     b.id === bookingId ? { ...b, status: "cancelled", updated_at: new Date().toISOString() } : b,
   );
   const saved = await deps.saveWorkspaceV2(wsKey, pin, { ...doc, bookings }, snap.updated_at);
   if (!saved.ok) return { ok: false, error: saved.error || "SAVE_FAILED" };
-  return { ok: true, result_reference: bookingId, safe_result: { booking_id: bookingId, updated_at: saved.updated_at, action: "booking_cancelled", warning } };
+  return {
+    ok: true,
+    result_reference: bookingId,
+    safe_result: {
+      booking_id: bookingId, updated_at: saved.updated_at, action: "booking_cancelled",
+      paid_halalas: paidHalalas, warning,
+      note_ar: warning ? "الحجز مدفوع جزئياً/كلياً — لن يتم استرداد تلقائي؛ راجع الاسترداد يدوياً." : null,
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------

@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { handleAssistant } from "../../supabase/functions/chalet-assistant/handler.mjs";
 import { executeConfirmedAction } from "../../supabase/functions/_shared/assistant/executors.mjs";
-import { hashToken, hashPayload, prepareConfirmation } from "../../supabase/functions/_shared/assistant/confirmation.mjs";
 
 // Drives the REAL handler + REAL executeConfirmedAction dispatcher against a
 // faithful in-memory contract layer (revision-atomic save, workspace-scoped
@@ -72,7 +71,7 @@ function makeHarness({ workspaces, memories = [], providerConfigured = false, wh
       ledger.set(lk, net + p.amount_halalas);
       return { ok: true, transaction_id: tx };
     },
-    async createPaymentSession(k, pin, p) {
+    async createPaymentSession(_k, _pin, _p) {
       if (!providerConfigured) return { ok: false, error: "NO_PROVIDER_CONFIGURED" };
       return { ok: true, order: { id: "ord-1", payment_url: "https://pay.test.invalid/x", status: "pending", amount_halalas: 50000, currency: "SAR" } };
     },
@@ -220,10 +219,12 @@ describe("payment + communication executors (real dispatcher)", () => {
     expect(deps._ledger.get("WSA|b1")).toBe(20000);
   });
 
-  it("8. payment link fails safely with NO_PROVIDER_CONFIGURED and no fake URL", async () => {
+  it("8. payment link (prepare/confirm) fails safely with NO_PROVIDER_CONFIGURED and no fake URL", async () => {
     const { deps } = makeHarness({ workspaces: { WSA: bookingDoc() }, providerConfigured: false });
-    const res = await handleAssistant(req({ workspace_key: "WSA", access_pin: "123456", invoke_tool: { name: "create_payment_link", arguments: { booking_id: "b1" } } }), deps);
-    const body = await res.json();
+    const prep = await prepare(deps, "WSA", "123456", "prepare_payment_link", { booking_id: "b1" });
+    expect(prep.kind).toBe("prepared_action");
+    expect(prep.confirm_tool).toBe("confirm_payment_link");
+    const { body } = await confirm(deps, "WSA", "123456", "confirm_payment_link", prep.action_id, prep.confirmation_token);
     expect(body.ok).toBe(false);
     expect(body.error).toBe("NO_PROVIDER_CONFIGURED");
     expect(JSON.stringify(body)).not.toContain("http");
@@ -292,7 +293,9 @@ describe("cross-cutting safety (real dispatcher)", () => {
 
   it("15. the model cannot self-confirm or self-trigger a sensitive action", async () => {
     const { deps } = makeHarness();
-    deps.callModel = async () => ({ ok: true, reply: "", toolCalls: [{ name: "create_payment_link", arguments: { booking_id: "b1" } }, { name: "confirm_manual_payment", arguments: { action_id: "x", confirmation_token: "y" } }] });
+    // Every sensitive tool is now a confirmation (prepare/confirm pair); the
+    // model may not name any of them for execution.
+    deps.callModel = async () => ({ ok: true, reply: "", toolCalls: [{ name: "confirm_payment_link", arguments: { action_id: "x", confirmation_token: "y" } }, { name: "confirm_manual_payment", arguments: { action_id: "x", confirmation_token: "y" } }] });
     const res = await handleAssistant(req({ workspace_key: "WSA", access_pin: "123456", message: "ادفع" }), deps);
     const b = await res.json();
     expect(b.tool_results.every((r) => r.ok === false && r.error === "CONFIRMATION_REQUIRES_OWNER")).toBe(true);

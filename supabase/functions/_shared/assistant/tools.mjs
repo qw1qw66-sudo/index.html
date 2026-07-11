@@ -70,7 +70,11 @@ export const TOOL_REGISTRY = {
   // ---------------- PAYMENTS (existing PR #73 contracts only) ----------------
   prepare_manual_payment: { class: "read", schema: { booking_id: reqStr(), amount_halalas: { type: "integer", required: true, min: 1 }, payment_method: { type: "string", required: true, enum: ["cash", "bank_transfer", "pos", "worker", "other"] }, reason: { type: "string", maxLen: 500 }, actor_label: { type: "string", maxLen: 120 } }, desc: "تجهيز دفعة يدوية", usesContract: "record_manual_payment", prepares: "confirm_manual_payment" },
   confirm_manual_payment: { class: "sensitive", schema: confSchema(), desc: "تأكيد دفعة يدوية", usesContract: "record_manual_payment" },
-  create_payment_link: { class: "sensitive", schema: { booking_id: reqStr(), amount_halalas: { type: "integer", min: 1 } }, desc: "إنشاء رابط دفع", usesContract: "create-payment-session" },
+  // Payment links are a two-step prepare/confirm like every other sensitive
+  // action: the model may only prepare; the owner confirms. The confirmed
+  // action's id is the create-payment-session idempotency key (crash-safe).
+  prepare_payment_link: { class: "read", schema: { booking_id: reqStr(), amount_halalas: { type: "integer", min: 1 } }, desc: "تجهيز رابط دفع", usesContract: "create-payment-session", prepares: "confirm_payment_link" },
+  confirm_payment_link: { class: "sensitive", schema: confSchema(), desc: "تأكيد إنشاء رابط دفع", usesContract: "create-payment-session" },
   get_payment_link_status: { class: "read", schema: { booking_id: reqStr() }, desc: "حالة رابط الدفع", usesContract: "get_booking_payments" },
 
   // ---------------- COMMUNICATION ----------------
@@ -80,7 +84,10 @@ export const TOOL_REGISTRY = {
   draft_vacancy_offer: { class: "read", schema: { chalet_id: reqStr(), date: { type: "date" } }, desc: "صياغة عرض للأيام الفاضية" },
   prepare_outbound_message: { class: "read", schema: { booking_id: { type: "string", maxLen: 64 }, body: reqStr(2000) }, desc: "تجهيز رسالة للإرسال", prepares: "confirm_outbound_message" },
   confirm_outbound_message: { class: "sensitive", schema: confSchema(), desc: "تأكيد إرسال/جدولة رسالة" },
-  open_manual_whatsapp: { class: "read", schema: { booking_id: reqStr() }, desc: "فتح واتساب يدوياً (لا يُعدّ إرسالاً)" },
+  // (Manual WhatsApp opening is the disconnected-mode outcome of the
+  // prepare/confirm_outbound_message flow, whose confirm response carries the
+  // real wa.me link to the frontend — so there is no separate read tool that
+  // would leak a live phone into model context.)
   get_outbound_message_status: { class: "read", schema: { message_id: reqStr() }, desc: "حالة رسالة صادرة" },
 };
 
@@ -129,7 +136,42 @@ export function normalizeToolCall(call) {
   return { ok: true, name, args: value, spec };
 }
 
-// The set of tool names exposed to the model (for the JSON contract / prompt).
+// A one-line argument signature, e.g. "booking_id*, amount_halalas" (* = required).
+function toolSignature(schema) {
+  const parts = Object.entries(schema || {}).map(([field, rule]) => {
+    const req = rule.required ? "*" : "";
+    const en = rule.enum ? `=${rule.enum.join("|")}` : "";
+    return `${field}${req}${en}`;
+  });
+  return parts.join(", ");
+}
+
+// The tools the MODEL is allowed to request. This is the SINGLE source of truth
+// for the model catalog: it exposes ONLY the read + prepare tools. Every
+// sensitive/confirm tool (class "sensitive") is withheld — the model can never
+// even name a confirmation; only the owner confirms via a direct invoke_tool.
+export function modelToolRegistry() {
+  return Object.entries(TOOL_REGISTRY).filter(([, s]) => s.class === "read");
+}
+
+// The set of tool names + descriptions exposed to the model (JSON contract).
 export function toolCatalogForModel() {
-  return Object.entries(TOOL_REGISTRY).map(([name, s]) => ({ name, description: s.desc }));
+  return modelToolRegistry().map(([name, s]) => ({
+    name,
+    description: s.desc,
+    arguments: toolSignature(s.schema),
+    ...(s.prepares ? { prepares_confirm: s.prepares } : {}),
+  }));
+}
+
+// Human/model-readable catalog block appended to the system prompt so the model
+// knows exactly which tools exist and their arguments. Confirm tools are never
+// listed; instead the prepare tools carry a note that the owner confirms.
+export function buildToolCatalogText() {
+  const lines = modelToolRegistry().map(([name, s]) => {
+    const sig = toolSignature(s.schema);
+    const note = s.prepares ? " — يُجهّز فقط، والتأكيد من صاحب المكان" : "";
+    return `- ${name}(${sig}): ${s.desc}${note}`;
+  });
+  return "الأدوات المتاحة (استخدم أسماءها حرفياً فقط):\n" + lines.join("\n");
 }

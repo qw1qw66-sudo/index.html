@@ -27,20 +27,26 @@ create table if not exists public.assistant_threads (
   title text not null default '',
   status text not null default 'active' check (status in ('active', 'archived')),
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  updated_at timestamptz not null default now(),
+  -- Target for composite (workspace_key, id) foreign keys so children can never
+  -- reference a thread that belongs to a DIFFERENT workspace.
+  unique (workspace_key, id)
 );
 create index if not exists assistant_threads_ws_idx on public.assistant_threads (workspace_key, updated_at desc);
 
 create table if not exists public.assistant_messages (
   id uuid primary key default gen_random_uuid(),
   workspace_key text not null references public.shared_workspaces(workspace_key),
-  thread_id uuid not null references public.assistant_threads(id) on delete cascade,
+  thread_id uuid not null,
   role text not null check (role in ('user', 'assistant', 'tool', 'system')),
   -- safe_content: redacted text only (no phone numbers / PINs / secrets).
   safe_content text not null default '',
   tool_name text,
   tool_result_reference text,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  -- Composite FK: the message's thread must belong to the SAME workspace.
+  foreign key (workspace_key, thread_id)
+    references public.assistant_threads(workspace_key, id) on delete cascade
 );
 create index if not exists assistant_messages_thread_idx on public.assistant_messages (thread_id, created_at);
 
@@ -62,8 +68,12 @@ create table if not exists public.assistant_memory (
   effective_at timestamptz,
   expires_at timestamptz,
   last_verified_at timestamptz,
-  supersedes_id uuid references public.assistant_memory(id),
-  created_at timestamptz not null default now()
+  supersedes_id uuid,
+  created_at timestamptz not null default now(),
+  unique (workspace_key, id),
+  -- A superseded memory must be from the SAME workspace.
+  foreign key (workspace_key, supersedes_id)
+    references public.assistant_memory(workspace_key, id)
 );
 create index if not exists assistant_memory_active_idx
   on public.assistant_memory (workspace_key, status) where status = 'active';
@@ -77,7 +87,10 @@ create index if not exists assistant_memory_active_idx
 create table if not exists public.assistant_actions (
   id uuid primary key default gen_random_uuid(),
   workspace_key text not null references public.shared_workspaces(workspace_key),
-  thread_id uuid references public.assistant_threads(id) on delete set null,
+  -- Nullable (an action may exist without a thread). When set, the composite FK
+  -- forces it to a thread of the SAME workspace. NO ACTION on delete: threads
+  -- are archived (status), not deleted, so the audit trail is preserved.
+  thread_id uuid,
   action_type text not null,
   tool_name text not null,
   normalized_payload_json jsonb not null default '{}'::jsonb,
@@ -95,7 +108,9 @@ create table if not exists public.assistant_actions (
   prompt_tokens integer,
   completion_tokens integer,
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  updated_at timestamptz not null default now(),
+  foreign key (workspace_key, thread_id)
+    references public.assistant_threads(workspace_key, id)
 );
 create index if not exists assistant_actions_ws_idx on public.assistant_actions (workspace_key, created_at desc);
 
@@ -122,17 +137,26 @@ create table if not exists public.automation_rules (
   automatic_send_enabled boolean not null default false,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  unique (workspace_key, chalet_id)
+  unique (workspace_key, chalet_id),
+  -- Target for the composite (workspace_key, id) FK from automation_runs.
+  unique (workspace_key, id)
 );
 
 create table if not exists public.automation_runs (
   id uuid primary key default gen_random_uuid(),
   workspace_key text not null references public.shared_workspaces(workspace_key),
-  rule_id uuid references public.automation_rules(id) on delete set null,
+  -- Nullable, but the composite FK forces any set value to a rule of the SAME
+  -- workspace. NO ACTION on delete: rules are disabled, not deleted, so run
+  -- history (and its rule linkage) is preserved.
+  rule_id uuid,
   vacancy_key text not null,
   idempotency_key text not null,
+  -- 'queued'/'sending' precede a real send; a run is 'sent' ONLY after an
+  -- official Cloud API acknowledgement, 'delivered' only after a webhook.
+  -- 'duplicate_skipped' is the atomic-uniqueness loser (no messages emitted).
   status text not null default 'started'
-    check (status in ('started', 'drafted', 'awaiting_approval', 'sent', 'stopped_booked', 'completed', 'failed')),
+    check (status in ('started', 'drafted', 'awaiting_approval', 'queued', 'sending',
+                      'sent', 'delivered', 'stopped_booked', 'completed', 'failed', 'duplicate_skipped')),
   eligible_contacts integer not null default 0,
   drafted_messages integer not null default 0,
   approved_messages integer not null default 0,
@@ -142,8 +166,14 @@ create table if not exists public.automation_runs (
   safe_summary_json jsonb not null default '{}'::jsonb,
   started_at timestamptz not null default now(),
   completed_at timestamptz,
-  -- A given vacancy is processed at most once per rule per scan window.
-  unique (workspace_key, idempotency_key)
+  -- A given vacancy is processed at most once per rule per scan window. This
+  -- uniqueness is the AUTHORITATIVE duplicate guard (the planner INSERTs first
+  -- and treats a violation as duplicate_skipped BEFORE any outbound message).
+  unique (workspace_key, idempotency_key),
+  -- Target for the composite (workspace_key, id) FK from outbound_messages.
+  unique (workspace_key, id),
+  foreign key (workspace_key, rule_id)
+    references public.automation_rules(workspace_key, id)
 );
 
 -- ============================================================================
@@ -153,7 +183,10 @@ create table if not exists public.automation_runs (
 create table if not exists public.outbound_messages (
   id uuid primary key default gen_random_uuid(),
   workspace_key text not null references public.shared_workspaces(workspace_key),
-  automation_run_id uuid references public.automation_runs(id) on delete set null,
+  -- Nullable in the schema, but the autopilot ALWAYS links a real run before any
+  -- message is emitted (never null in practice). The composite FK forces the
+  -- run to belong to the SAME workspace.
+  automation_run_id uuid,
   booking_id text,
   -- Internal, non-PII reference to the customer (e.g. a per-workspace hash).
   customer_reference text not null default '',
@@ -166,14 +199,20 @@ create table if not exists public.outbound_messages (
   -- opaque reference the delivery layer can resolve; encrypted-at-rest if a
   -- number must be persisted at all.
   destination_ref text not null default '',
+  -- 'sending' = handed to the Cloud API; 'sent' ONLY after its acknowledgement;
+  -- 'delivered' ONLY after a delivery webhook; 'stopped_booked' if the vacancy
+  -- filled before send. A manually opened link is 'opened_manual', never 'sent'.
   status text not null default 'draft'
-    check (status in ('draft', 'awaiting_approval', 'queued', 'opened_manual', 'sent', 'delivered', 'failed', 'skipped_opt_out')),
+    check (status in ('draft', 'awaiting_approval', 'queued', 'sending', 'opened_manual',
+                      'sent', 'delivered', 'failed', 'skipped_opt_out', 'stopped_booked')),
   provider_message_id text,
   opted_out boolean not null default false,
   created_at timestamptz not null default now(),
   sent_at timestamptz,
   delivered_at timestamptz,
-  failed_at timestamptz
+  failed_at timestamptz,
+  foreign key (workspace_key, automation_run_id)
+    references public.automation_runs(workspace_key, id)
 );
 create index if not exists outbound_messages_run_idx on public.outbound_messages (automation_run_id);
 

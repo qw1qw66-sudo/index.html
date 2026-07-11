@@ -21,9 +21,15 @@
 
 import { CHALET_SYSTEM_PROMPT, STRICT_JSON_INSTRUCTION } from "../_shared/assistant/system-prompt.mjs";
 import { evaluatePolicy } from "../_shared/assistant/policy.mjs";
-import { normalizeToolCall, TOOL_REGISTRY } from "../_shared/assistant/tools.mjs";
+import { normalizeToolCall, TOOL_REGISTRY, buildToolCatalogText } from "../_shared/assistant/tools.mjs";
 import { prepareConfirmation, hashToken, hashPayload } from "../_shared/assistant/confirmation.mjs";
-import { redactText } from "../_shared/assistant/redact.mjs";
+import { redactText, redactObject } from "../_shared/assistant/redact.mjs";
+
+// The model gets at most TWO calls per turn (request tools -> ground the reply
+// on the tool results) and may request at most this many tools per turn.
+const MAX_TOOLS_PER_TURN = 5;
+const SECOND_STAGE_INSTRUCTION =
+  "لخّص نتائج الأدوات التالية للمستخدم بالعربية بإيجاز ودقّة. لا تطلب أدوات جديدة، ولا تدّعِ تنفيذ أي إجراء لم تُعِده الأداة فعلياً.";
 
 function json(status, body) {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -54,7 +60,11 @@ export async function handleAssistant(req, deps) {
   const threadId = body.thread_id ? String(body.thread_id) : null;
 
   const activeMemories = (await deps.activeMemories(wsKey)) || [];
-  const secret = deps.env.ASSISTANT_CONFIRM_SECRET || deps.env.PAYMENT_WEBHOOK_SECRET || "";
+  // ASSISTANT_CONFIRM_SECRET is MANDATORY for any acting (prepare/confirm)
+  // path — there is NO fallback to another secret. Without it the confirmation
+  // token would be forgeable, so acting fails CLOSED (reads still work). An
+  // empty string here is treated as "absent" downstream (see executeTool).
+  const secret = deps.env.ASSISTANT_CONFIRM_SECRET || "";
   // The PIN is used ONLY within this HTTPS request to re-authenticate the
   // underlying contract. It is never stored, logged, returned, or sent to the
   // model.
@@ -67,56 +77,152 @@ export async function handleAssistant(req, deps) {
     return await executeTool(deps, { ...ctxBase, norm });
   }
 
-  // ---- Branch B: chat turn (calls the model) ----
+  // ---- Branch A2: thread lifecycle (create / list / archive) — workspace-scoped ----
+  if (body.thread_action) {
+    const action = String(body.thread_action);
+    if (action === "create") {
+      const t = await deps.createThread?.(wsKey, String(body.title ?? ""));
+      if (!t || !t.ok) return json(500, { ok: false, error: t?.error || "THREAD_CREATE_FAILED" });
+      return json(200, { ok: true, thread_id: t.thread_id });
+    }
+    if (action === "list") {
+      return json(200, { ok: true, threads: (await deps.listThreads?.(wsKey)) || [] });
+    }
+    if (action === "archive") {
+      const r = await deps.archiveThread?.(wsKey, String(body.thread_id ?? ""));
+      if (!r || !r.ok) return json(r?.error === "THREAD_NOT_FOUND" ? 404 : 500, { ok: false, error: r?.error || "THREAD_ARCHIVE_FAILED" });
+      return json(200, { ok: true });
+    }
+    return json(422, { ok: false, error: "UNKNOWN_THREAD_ACTION" });
+  }
+
+  // ---- Branch B: chat turn (two-stage model loop) ----
   const message = redactText(String(body.message ?? "")).slice(0, 4000);
   if (!message) return json(400, { ok: false, error: "EMPTY_MESSAGE" });
 
-  const history = (await deps.loadHistory?.(wsKey, threadId)) || [];
+  // Thread must belong to THIS workspace. If none is supplied, open one so the
+  // conversation is persisted against a real, workspace-scoped thread row.
+  let activeThreadId = threadId;
+  if (activeThreadId && deps.threadBelongsToWorkspace) {
+    const belongs = await deps.threadBelongsToWorkspace(wsKey, activeThreadId);
+    if (!belongs) return json(404, { ok: false, error: "THREAD_NOT_FOUND" });
+  } else if (!activeThreadId && deps.createThread) {
+    const t = await deps.createThread(wsKey, message.slice(0, 60));
+    if (t && t.ok) activeThreadId = t.thread_id;
+  }
+
+  const history = (await deps.loadHistory?.(wsKey, activeThreadId)) || [];
   history.push({ role: "user", content: message });
 
-  const model = await deps.callModel({
-    systemPrompt: CHALET_SYSTEM_PROMPT + "\n\n" + STRICT_JSON_INSTRUCTION,
-    history,
-  });
-  if (!model.ok) {
+  // The model sees the REAL tool catalog (read + prepare tools only — never a
+  // confirmation) so it can only ever name a tool that exists.
+  const systemPrompt = CHALET_SYSTEM_PROMPT + "\n\n" + buildToolCatalogText() + "\n\n" + STRICT_JSON_INSTRUCTION;
+
+  // Stage 1: the model may request tools.
+  const first = await deps.callModel({ systemPrompt, history });
+  if (!first.ok) {
     // Fail closed: no action, clear Arabic error.
     return json(200, {
       ok: false,
       assistant_unavailable: true,
-      error: model.error,
+      error: first.error,
       reply_ar: "تعذّر الوصول إلى المساعد الذكي حالياً. لم يتم تنفيذ أي إجراء.",
     });
   }
 
+  // Execute the requested tools (read + prepare only; bounded per turn).
+  const requested = Array.isArray(first.toolCalls) ? first.toolCalls.slice(0, MAX_TOOLS_PER_TURN) : [];
   const results = [];
-  for (const call of model.toolCalls) {
+  for (const call of requested) {
     const norm = normalizeToolCall(call);
     if (!norm.ok) {
       results.push({ requested: call?.name ?? null, ok: false, error: norm.error });
       continue; // unknown/invalid tool from the model is NEVER executed
     }
     if (SENSITIVE_TOOLS.has(norm.name)) {
-      // The model can never run ANY sensitive action (confirm_* or
-      // create_payment_link) — only the owner via a direct invoke_tool.
+      // The model can never run ANY sensitive action (a confirmation) — only
+      // the owner via a direct invoke_tool.
       results.push({ tool: norm.name, ok: false, error: "CONFIRMATION_REQUIRES_OWNER" });
       continue;
     }
-    const r = await executeTool(deps, { ...ctxBase, norm, raw: true });
-    results.push(r);
+    results.push(await executeTool(deps, { ...ctxBase, norm, raw: true }));
   }
 
-  await deps.appendMessages?.(wsKey, threadId, [
+  // Stage 2: if tools ran, ground a final reply on their (token-stripped)
+  // results. Never more than two model calls. If the second call fails, a
+  // deterministic Arabic renderer still gives the owner grounded output.
+  let replyAr = first.reply || "";
+  let usage = first.usage;
+  let modelName = first.model;
+  let modelCalls = 1;
+  if (results.length) {
+    modelCalls = 2;
+    const grounded = history.concat([
+      { role: "assistant", content: first.reply || "" },
+      { role: "tool", content: JSON.stringify(sanitizeResultsForModel(results)).slice(0, 6000) },
+    ]);
+    const second = await deps.callModel({ systemPrompt: systemPrompt + "\n\n" + SECOND_STAGE_INSTRUCTION, history: grounded });
+    if (second && second.ok && second.reply) {
+      replyAr = second.reply;
+      usage = second.usage;
+      modelName = second.model;
+    } else {
+      replyAr = renderFallbackAr(results, first.reply || "");
+    }
+  }
+
+  await deps.appendMessages?.(wsKey, activeThreadId, [
     { role: "user", safe_content: message },
-    { role: "assistant", safe_content: redactText(model.reply || ""), tool_name: null },
+    { role: "assistant", safe_content: redactText(replyAr), tool_name: null },
   ]);
 
   return json(200, {
     ok: true,
-    reply_ar: model.reply || "",
+    reply_ar: replyAr,
     tool_results: results,
-    usage: model.usage,
-    model: model.model,
+    thread_id: activeThreadId,
+    usage,
+    model: modelName,
+    model_calls: modelCalls,
   });
+}
+
+// Strip anything the model must never see (confirmation tokens above all) from
+// the tool results before they are fed back for the grounding call.
+function sanitizeResultsForModel(results) {
+  return results.map((r) => {
+    const { confirmation_token, ...rest } = r || {};
+    void confirmation_token; // never forwarded to the model
+    return redactObject(rest);
+  });
+}
+
+// Deterministic Arabic renderer — the safety net when the grounding model call
+// is unavailable. It NEVER claims an action completed unless the tool said so.
+function renderFallbackAr(results, seed) {
+  const lines = [];
+  for (const r of results) {
+    if (!r) continue;
+    if (r.ok === false) { lines.push(`• تعذّر تنفيذ «${r.tool || r.requested || "أداة"}» (${r.error || "خطأ"}).`); continue; }
+    if (r.kind === "prepared_action") { lines.push(`• ${r.summary_ar || "إجراء مُجهّز — بانتظار تأكيدك."}`); continue; }
+    if (r.kind === "completed_action") { lines.push(`• ${r.done_ar || "تم تنفيذ الإجراء وتأكيده من الخادم."}`); continue; }
+    if (r.kind === "read") { lines.push(`• ${describeReadAr(r.tool, r.result)}`); continue; }
+  }
+  const head = seed && seed.trim() ? seed.trim() : "النتائج:";
+  return (lines.length ? head + "\n" + lines.join("\n") : head).slice(0, 2000);
+}
+
+function describeReadAr(tool, result) {
+  const r = result && typeof result === "object" ? result : {};
+  if (Array.isArray(r.bookings)) return `عدد الحجوزات: ${r.bookings.length}.`;
+  if (Array.isArray(r.available)) return `الفترات المتاحة: ${r.available.length}.`;
+  if (Array.isArray(r.empty)) return `الأيام/الفترات الفاضية: ${r.empty.length}.`;
+  if (Array.isArray(r.transactions)) return `عدد الحركات المالية: ${r.transactions.length}.`;
+  if (Array.isArray(r.payments)) return `عدد المدفوعات: ${r.payments.length}.`;
+  if (Array.isArray(r.rules)) return `عدد قواعد التسويق: ${r.rules.length}.`;
+  if (r.error) return `تعذّر الجلب (${r.error}).`;
+  if (typeof r.draft === "string" && r.draft) return r.draft;
+  return "تم جلب البيانات من الخادم.";
 }
 
 // Execute one normalized tool call. Returns a plain result object (raw=true) or
@@ -131,38 +237,46 @@ async function executeTool(deps, { wsKey, pin, norm, activeMemories, secret, raw
   const policy = evaluatePolicy({ toolName: name, actionType, activeMemories });
   if (!policy.allowed) return wrap(403, { ok: false, error: policy.error, reason_ar: policy.reason_ar });
 
-  // Direct owner-triggered sensitive action (create_payment_link): no token,
-  // but the owner is re-authenticated via the PIN (done in handleAssistant).
-  if (spec.class === "sensitive" && !isConfirmTool(name)) {
-    let exec;
-    try {
-      exec = await deps.executeConfirmed(wsKey, { tool_name: name, action_type: name, payload: { args }, action_id: null, pin });
-    } catch { exec = { ok: false, error: "EXECUTION_ERROR" }; }
-    return wrap(exec.ok ? 200 : 422, {
-      ok: exec.ok,
-      kind: "completed_action",
-      result: exec.ok ? exec.safe_result ?? {} : undefined,
-      error: exec.ok ? undefined : exec.error,
-      done_ar: exec.ok ? "تم تنفيذ الإجراء وتأكيده من الخادم." : "لم يكتمل الإجراء. لم يتغيّر شيء بدون تأكيد الخادم.",
-    });
+  // Any acting path (prepare a confirmation, or confirm one) REQUIRES the
+  // mandatory confirm secret. Without it the token is forgeable, so fail closed
+  // — no confirmation is minted and nothing is executed. Reads are unaffected.
+  const isActing = Boolean(spec.prepares) || spec.class === "sensitive";
+  if (isActing && !secret) {
+    return wrap(503, { ok: false, error: "ASSISTANT_CONFIRM_SECRET_MISSING", reason_ar: "إعداد التأكيد غير مكتمل على الخادم؛ لا يمكن تنفيذ إجراءات حسّاسة. لم يتغيّر شيء." });
   }
 
-  // READ tools (and draft_* / prepare_outbound draft) — no confirmation.
+  // A sensitive tool is ALWAYS a confirmation (prepare/confirm pair). There is
+  // no direct-execute sensitive tool: reject any non-confirm sensitive request.
+  if (spec.class === "sensitive" && !isConfirmTool(name)) {
+    return wrap(422, { ok: false, error: "SENSITIVE_TOOL_REQUIRES_CONFIRMATION" });
+  }
+
+  // READ tools (and draft_* / prepare_outbound draft) — no confirmation. The
+  // PIN is forwarded so ledger-backed reads re-authenticate the RPC contract.
   if (spec.class === "read" && !spec.prepares) {
-    const result = await deps.runReadTool(wsKey, name, args);
+    const result = await deps.runReadTool(wsKey, name, args, pin);
     return wrap(200, { ok: true, kind: "read", result, warnings: policy.warnings });
   }
 
   // PREPARE tools — create an action + confirmation token; NO side effect yet.
   if (spec.prepares) {
-    const normalizedPayload = { tool: spec.prepares, args };
+    // For a NEW booking, generate its id at PREPARE time and bind it into the
+    // confirmed payload. On a crash-retry the executor re-uses this exact id, so
+    // a confirmed create can never produce two bookings.
+    let boundArgs = args;
+    if (spec.prepares === "confirm_booking_create" && !boundArgs.booking_id && typeof deps.newId === "function") {
+      boundArgs = { ...args, booking_id: deps.newId() };
+    }
+    const normalizedPayload = { tool: spec.prepares, args: boundArgs };
     const expectedRevision = spec.usesContract === "save_shared_workspace_v2"
       ? await deps.getWorkspaceRevision(wsKey)
       : null;
     const conf = prepareConfirmation({ normalizedPayload, secret, nowMs: deps.nowMs });
+    // Persist the SAME boundArgs that were hashed, so the confirm-time payload
+    // hash recomputed from storage matches (id binding included).
     const { action_id } = await deps.prepareSensitive(wsKey, {
       name: spec.prepares,
-      args,
+      args: boundArgs,
       actionType: spec.prepares,
       payloadHash: conf.payloadHash,
       tokenHash: conf.tokenHash,
@@ -177,7 +291,7 @@ async function executeTool(deps, { wsKey, pin, norm, activeMemories, secret, raw
       // The owner receives the token to echo back on confirm; the model does not
       // (this response goes to the frontend confirm card, not into model context).
       confirmation_token: conf.token,
-      summary_ar: buildSummaryAr(spec.prepares, args),
+      summary_ar: buildSummaryAr(spec.prepares, boundArgs),
       warnings: policy.warnings,
     });
   }
@@ -206,41 +320,61 @@ async function executeTool(deps, { wsKey, pin, norm, activeMemories, secret, raw
         if (outcome.status === "failed") {
           return wrap(422, { ok: false, kind: "completed_action", error: outcome.error_code || "PREVIOUSLY_FAILED", done_ar: "لم يكتمل الإجراء سابقاً. لم يتغيّر شيء." });
         }
+        // Crash recovery: an action left "running" (a crash between confirm and
+        // finalize) is completed by RE-DISPATCHING the stored payload. Every
+        // underlying contract is idempotent (action-scoped idempotency key,
+        // prepare-bound booking id, revision-atomic save), so a re-run causes at
+        // most one effect and can never double-charge or double-book.
+        if (outcome.status === "running") {
+          const recovered = await runConfirmedExecution(deps, { wsKey, pin, actionId, ctx, raw, recovered: true });
+          if (recovered) return recovered;
+        }
       }
       return wrap(409, { ok: false, error: consumed.error });
     }
 
     await deps.finalizeAction(wsKey, actionId, { status: "running" });
-    let exec;
-    try {
-      exec = await deps.executeConfirmed(wsKey, {
-        tool_name: ctx.tool_name,
-        action_type: ctx.action_type,
-        payload: ctx.normalized_payload,
-        action_id: actionId,
-        pin,
-      });
-    } catch (e) {
-      exec = { ok: false, error: "EXECUTION_ERROR" };
-      void e;
-    }
-    await deps.finalizeAction(wsKey, actionId, {
-      status: exec.ok ? "succeeded" : "failed",
-      result_reference: exec.result_reference ?? null,
-      safe_result_json: exec.safe_result ?? {},
-      error_code: exec.ok ? null : exec.error ?? "UNKNOWN",
-    });
-    // Only report completion when the server contract actually succeeded.
-    return wrap(exec.ok ? 200 : 422, {
-      ok: exec.ok,
-      kind: "completed_action",
-      result: exec.ok ? exec.safe_result ?? {} : undefined,
-      error: exec.ok ? undefined : exec.error,
-      done_ar: exec.ok ? "تم تنفيذ الإجراء وتأكيده من الخادم." : "لم يكتمل الإجراء. لم يتغيّر شيء بدون تأكيد الخادم.",
-    });
+    return await runConfirmedExecution(deps, { wsKey, pin, actionId, ctx, raw });
   }
 
   return wrap(422, { ok: false, error: "UNHANDLED_TOOL" });
+}
+
+// Dispatch a confirmed action through the executor and finalize its outcome.
+// Shared by the normal confirm path and the crash-recovery path.
+async function runConfirmedExecution(deps, { wsKey, pin, actionId, ctx, raw, recovered }) {
+  const name = ctx.tool_name;
+  const wrap = (status, obj) => (raw ? { tool: name, ...obj } : json(status, { ok: obj.ok !== false, tool: name, ...obj }));
+  let exec;
+  try {
+    exec = await deps.executeConfirmed(wsKey, {
+      tool_name: ctx.tool_name,
+      action_type: ctx.action_type,
+      payload: ctx.normalized_payload,
+      action_id: actionId,
+      pin,
+    });
+  } catch (e) {
+    exec = { ok: false, error: "EXECUTION_ERROR" };
+    void e;
+  }
+  await deps.finalizeAction(wsKey, actionId, {
+    status: exec.ok ? "succeeded" : "failed",
+    result_reference: exec.result_reference ?? null,
+    safe_result_json: exec.safe_result ?? {},
+    error_code: exec.ok ? null : exec.error ?? "UNKNOWN",
+  });
+  // Only report completion when the server contract actually succeeded.
+  return wrap(exec.ok ? 200 : 422, {
+    ok: exec.ok,
+    kind: "completed_action",
+    result: exec.ok ? exec.safe_result ?? {} : undefined,
+    error: exec.ok ? undefined : exec.error,
+    ...(recovered ? { recovered: true } : {}),
+    done_ar: exec.ok
+      ? (recovered ? "تم إكمال إجراء كان متوقفاً، وتأكيده من الخادم." : "تم تنفيذ الإجراء وتأكيده من الخادم.")
+      : "لم يكتمل الإجراء. لم يتغيّر شيء بدون تأكيد الخادم.",
+  });
 }
 
 function buildSummaryAr(confirmTool, args) {
@@ -253,6 +387,8 @@ function buildSummaryAr(confirmTool, args) {
       return `تجهيز إلغاء الحجز ${args.booking_id || "—"}. اضغط تأكيد للإلغاء.`;
     case "confirm_manual_payment":
       return `تجهيز دفعة يدوية ${(Number(args.amount_halalas) / 100).toFixed(2)} ر.س للحجز ${args.booking_id || "—"}. اضغط تأكيد للتسجيل.`;
+    case "confirm_payment_link":
+      return `تجهيز رابط دفع للحجز ${args.booking_id || "—"}${args.amount_halalas ? ` بمبلغ ${(Number(args.amount_halalas) / 100).toFixed(2)} ر.س` : ""}. اضغط تأكيد لإنشاء الرابط.`;
     case "confirm_outbound_message":
       return `تجهيز رسالة للعميل. اضغط تأكيد للإرسال/الجدولة.`;
     default:
