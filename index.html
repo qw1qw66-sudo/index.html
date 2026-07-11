@@ -1910,8 +1910,46 @@
           }
         }
         // ========================= JS: dirty/safe upload logic =========================
+        // Small, fast, non-cryptographic content hash (djb2). Only used to
+        // deduplicate identical local backups — not for any security purpose.
+        function docHash(str) {
+          let h = 5381;
+          const s = String(str);
+          for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+          return (h >>> 0).toString(36);
+        }
+        let lastBackupHash = "";
+        // Reverse-audit R-1 fix: a failed upload (e.g. stale-revision) must not
+        // fill the 10-slot backup ring with identical copies of the same
+        // document. We back up the CURRENT document but skip when it is
+        // byte-identical (same workspace + same data) to the newest existing
+        // backup, so ten retries of the same failed push create at most one
+        // backup while genuinely different documents still each get one.
         function backupBeforePush() {
           try {
+            const hash = docHash(workspaceKey + "|" + JSON.stringify(state));
+            if (hash === lastBackupHash) {
+              log("Local backup skipped (identical to last)", { hash });
+              return;
+            }
+            const keys = [];
+            for (let i = 0; i < localStorage.length; i++) {
+              const k = localStorage.key(i);
+              if (k && k.indexOf("backup_before_cloud_push_") === 0) keys.push(k);
+            }
+            keys.sort();
+            // Cross-reload dedupe: if the newest stored backup already has this
+            // exact hash, do not create a duplicate.
+            if (keys.length) {
+              try {
+                const newest = JSON.parse(localStorage.getItem(keys[keys.length - 1]));
+                if (newest && newest.doc_hash === hash) {
+                  lastBackupHash = hash;
+                  log("Local backup skipped (matches newest stored)", { hash });
+                  return;
+                }
+              } catch (_) {}
+            }
             const key = "backup_before_cloud_push_" + now();
             localStorage.setItem(
               key,
@@ -1920,15 +1958,12 @@
                 lastCloudUpdatedAt,
                 lastCloudCounts,
                 data: state,
+                doc_hash: hash,
                 timestamp: now(),
               }),
             );
-            const keys = [];
-            for (let i = 0; i < localStorage.length; i++) {
-              const k = localStorage.key(i);
-              if (k && k.indexOf("backup_before_cloud_push_") === 0)
-                keys.push(k);
-            }
+            lastBackupHash = hash;
+            keys.push(key);
             keys
               .sort()
               .slice(0, -10)
@@ -2978,7 +3013,17 @@
                 "</div></div>"
               : "";
         }
-        async function refreshPaymentPanel(bookingId) {
+        // Arabic notice shown when the payments backend RPCs are absent (404).
+        const PAYMENTS_BACKEND_MISSING_MSG =
+          "سجل المدفوعات غير مفعّل بعد على الخادم — يعرض التطبيق حاليًا حقل (المدفوع) القديم فقط، وتسجيل الدفعات وروابط الدفع معطلة حتى يفعّل مالك النظام قاعدة بيانات المدفوعات.";
+        function showPaymentBackendMissing(notice) {
+          if (notice)
+            notice.innerHTML =
+              esc(PAYMENTS_BACKEND_MISSING_MSG) +
+              ' <button class="secondary tiny" data-action="retry-payments" type="button">إعادة المحاولة</button>';
+          paymentButtonsAvailability(false);
+        }
+        async function refreshPaymentPanel(bookingId, forceRetry) {
           currentPaymentBookingId = String(bookingId || "");
           setPaymentLink("");
           const section = $("paymentSection");
@@ -2993,6 +3038,14 @@
               notice.textContent =
                 "احفظ الحجز أولًا ثم افتح (تعديل) لعرض سجل المدفوعات.";
             paymentButtonsAvailability(false);
+            return;
+          }
+          // Reverse-audit R-3 fix: once a genuine 404 proves the payments
+          // backend is absent, cache that for the session and stop firing a
+          // guaranteed-404 RPC on every booking open. Only an explicit
+          // "retry" clears it; real network errors are NOT cached this way.
+          if (paymentsBackendMissing && !forceRetry) {
+            showPaymentBackendMissing(notice);
             return;
           }
           if (notice) notice.textContent = "جاري تحميل سجل المدفوعات...";
@@ -3014,15 +3067,19 @@
             paymentButtonsAvailability(true);
           } catch (e) {
             if (isMissingRpc(e)) {
+              // Genuine 404: backend absent. Cache for the session.
               paymentsBackendMissing = true;
+              showPaymentBackendMissing(notice);
+            } else {
+              // Real network/server error — do NOT cache as "missing"; the
+              // owner may just be offline. Next open re-probes.
+              paymentsBackendMissing = false;
               if (notice)
-                notice.textContent =
-                  "سجل المدفوعات غير مفعّل بعد على الخادم — يعرض التطبيق حاليًا حقل (المدفوع) القديم فقط، وتسجيل الدفعات وروابط الدفع معطلة حتى يفعّل مالك النظام قاعدة بيانات المدفوعات.";
-            } else if (notice) {
-              notice.textContent =
-                "تعذر تحميل سجل المدفوعات: " + e.message;
+                notice.innerHTML =
+                  esc("تعذر تحميل سجل المدفوعات: " + e.message) +
+                  ' <button class="secondary tiny" data-action="retry-payments" type="button">إعادة المحاولة</button>';
+              paymentButtonsAvailability(false);
             }
-            paymentButtonsAvailability(false);
             log("Payment panel unavailable", {
               message: e.message,
               status: e.status || null,
@@ -3369,6 +3426,10 @@
           if (a === "open-online-excel") return openOnlineExcel();
           if (a === "refresh-payments")
             return refreshPaymentPanel(currentPaymentBookingId);
+          if (a === "retry-payments") {
+            paymentsBackendMissing = false;
+            return refreshPaymentPanel(currentPaymentBookingId, true);
+          }
           if (a === "show-manual-payment") {
             const box = $("manualPaymentBox");
             if (box) box.classList.remove("hidden");
