@@ -100,9 +100,9 @@ async function main() {
       }],
     };
     // PostgREST's schema cache can lag the just-applied migrations; retry the
-    // first RPC until the new function is visible (max ~90s).
+    // first RPC briefly (the workflow already forces a reload).
     let r = null;
-    for (let attempt = 1; attempt <= 18; attempt++) {
+    for (let attempt = 1; attempt <= 4; attempt++) {
       r = await http("POST", "/rest/v1/rpc/create_shared_workspace", {
         body: { p_workspace_key: WS_KEY, p_access_pin: PIN, p_data: doc },
       });
