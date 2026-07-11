@@ -669,6 +669,80 @@
           display: none;
         }
       }
+      /* ===== Mobile setup (إعداد الربط) — button-only, no secret inputs ===== */
+      .setup-rows {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        margin: 12px 0;
+      }
+      .setup-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 10px;
+        padding: 11px 13px;
+        background: var(--soft);
+        border: 1px solid var(--l2);
+        border-radius: 12px;
+      }
+      .setup-row .setup-label {
+        font-size: 14px;
+        color: var(--t);
+      }
+      .setup-status {
+        font-size: 13px;
+        font-weight: 600;
+        padding: 3px 11px;
+        border-radius: 999px;
+        white-space: nowrap;
+      }
+      .setup-ok {
+        color: var(--ok);
+        background: var(--ok-soft);
+      }
+      .setup-bad {
+        color: var(--r);
+        background: var(--r-soft);
+      }
+      .setup-warn {
+        color: var(--g);
+        background: var(--g-soft);
+      }
+      .setup-muted {
+        color: var(--m);
+        background: transparent;
+      }
+      .setup-actions {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        margin: 14px 0;
+      }
+      /* Large, full-width tap targets for iPhone Safari. */
+      .setup-btn {
+        width: 100%;
+        min-height: 54px;
+        font-size: 16px;
+        border-radius: 14px;
+      }
+      .setup-note {
+        font-size: 13px;
+        line-height: 1.75;
+        color: var(--m);
+      }
+      .setup-result {
+        min-height: 20px;
+        font-weight: 600;
+        color: var(--t);
+      }
+      .setup-steps {
+        margin: 8px 0 0;
+        padding-inline-start: 20px;
+        line-height: 1.95;
+        font-size: 14px;
+        color: var(--t);
+      }
     </style>
   </head>
   <body>
@@ -1214,6 +1288,101 @@
               </button>
             </div>
           </div>
+          <!-- ========================= HTML: mobile setup (إعداد الربط) ========================= -->
+          <div id="setupCard" class="card setup-card">
+            <h3>إعداد المساعد الذكي</h3>
+            <p class="setup-note">
+              اربط المساعد الذكي من جوالك خطوة بخطوة. لا تُدخل أي مفتاح داخل هذا
+              البرنامج — المفاتيح تُضاف فقط في صفحة Supabase الرسمية.
+            </p>
+            <div class="setup-rows" id="setupStatusRows">
+              <div class="setup-row">
+                <span class="setup-label">مشروع Supabase</span
+                ><span id="setupStatusSupabase" class="setup-status setup-muted"
+                  >غير مربوط</span
+                >
+              </div>
+              <div class="setup-row">
+                <span class="setup-label">وظائف الخادم</span
+                ><span id="setupStatusFunctions" class="setup-status setup-muted"
+                  >غير مربوط</span
+                >
+              </div>
+              <div class="setup-row">
+                <span class="setup-label">DeepSeek</span
+                ><span id="setupStatusDeepseek" class="setup-status setup-muted"
+                  >غير مربوط</span
+                >
+              </div>
+              <div class="setup-row">
+                <span class="setup-label">مفتاح التأكيد</span
+                ><span id="setupStatusConfirm" class="setup-status setup-muted"
+                  >غير مربوط</span
+                >
+              </div>
+              <div class="setup-row">
+                <span class="setup-label">الأوتوبايلوت</span
+                ><span id="setupStatusAutopilot" class="setup-status setup-muted"
+                  >غير مفعل</span
+                >
+              </div>
+              <div class="setup-row">
+                <span class="setup-label">واتساب الرسمي</span
+                ><span id="setupStatusWhatsapp" class="setup-status setup-muted"
+                  >غير مفعل</span
+                >
+              </div>
+            </div>
+            <p class="setup-result" id="setupCheckResult"></p>
+            <div class="setup-actions">
+              <button
+                class="primary setup-btn"
+                data-action="setup-open-secrets"
+                type="button"
+              >
+                فتح صفحة إضافة المفاتيح
+              </button>
+              <p class="setup-note">
+                تفتح صفحة Supabase الرسمية. اختر مشروع الشاليه، الصق أسماء المفاتيح
+                وقيمها، ثم اضغط Save. لا تُحفظ المفاتيح داخل برنامج الشاليه.
+              </p>
+              <button
+                class="secondary setup-btn"
+                data-action="setup-copy-template"
+                type="button"
+              >
+                نسخ قائمة المفاتيح
+              </button>
+              <button
+                class="primary setup-btn"
+                data-action="setup-check"
+                type="button"
+              >
+                فحص الربط
+              </button>
+              <button
+                class="secondary setup-btn"
+                data-action="setup-open-deploy"
+                type="button"
+              >
+                فتح صفحة النشر
+              </button>
+              <p class="setup-note">
+                بعد إضافة المفاتيح، افتح GitHub Actions وشغّل Deploy Supabase
+                Staging.
+              </p>
+            </div>
+            <hr class="settings-divider" />
+            <h4>خطوات الإعداد من الجوال</h4>
+            <ol class="setup-steps">
+              <li>افتح صفحة إضافة المفاتيح.</li>
+              <li>اختر مشروع Supabase.</li>
+              <li>الصق المفاتيح واضغط Save.</li>
+              <li>ارجع للبرنامج واضغط فحص الربط.</li>
+              <li>افتح صفحة النشر وشغّل Staging.</li>
+              <li>جرّب سؤال: ما هي حجوزات اليوم؟</li>
+            </ol>
+          </div>
         </section>
         <!-- ========================= HTML: bottom navigation ========================= -->
         <nav class="bottom-nav">
@@ -1411,6 +1580,145 @@
           } catch (e) {
             return false;
           }
+        }
+        // ========================= JS: mobile setup (إعداد الربط) =========================
+        // Buttons only. This app NEVER accepts, stores, or transmits a secret
+        // value: secrets are entered exclusively in the official Supabase
+        // Dashboard. The template below carries ONLY key names + non-secret
+        // defaults (model / base URL / app_env) — the secret fields are blank.
+        const SETUP_SECRETS_URL =
+          "https://supabase.com/dashboard/project/_/functions/secrets";
+        const SETUP_DEPLOY_URL =
+          "https://github.com/qw1qw66-sudo/index.html/actions";
+        const SETUP_SECRET_TEMPLATE = [
+          "DEEPSEEK_API_KEY=",
+          "DEEPSEEK_MODEL=deepseek-v4-flash",
+          "DEEPSEEK_BASE_URL=https://api.deepseek.com",
+          "ASSISTANT_CONFIRM_SECRET=",
+          "AUTOPILOT_CRON_SECRET=",
+          "APP_ENV=staging",
+          "",
+          "WHATSAPP_CLOUD_TOKEN=",
+          "WHATSAPP_PHONE_ID=",
+        ].join("\n");
+        function openSetupSecrets() {
+          window.open(SETUP_SECRETS_URL, "_blank", "noopener,noreferrer");
+        }
+        function openSetupDeploy() {
+          window.open(SETUP_DEPLOY_URL, "_blank", "noopener,noreferrer");
+        }
+        async function copySetupTemplate() {
+          const ok = await copyToClipboard(SETUP_SECRET_TEMPLATE);
+          feedback(
+            ok
+              ? "تم نسخ قائمة المفاتيح. الصقها في صفحة Supabase."
+              : "تعذّر النسخ. انسخ الأسماء يدويًا.",
+            ok ? "good" : "bad",
+          );
+        }
+        function setSetupRow(id, state) {
+          const el = $(id);
+          if (!el) return;
+          const map = {
+            linked: ["مربوط", "setup-ok"],
+            unlinked: ["غير مربوط", "setup-bad"],
+            needs_deploy: ["يحتاج نشر", "setup-warn"],
+            disabled: ["غير مفعل", "setup-muted"],
+            checking: ["...جارٍ الفحص", "setup-muted"],
+          };
+          const entry = map[state] || ["—", "setup-muted"];
+          el.textContent = entry[0];
+          el.className = "setup-status " + entry[1];
+        }
+        async function checkSetupConnection() {
+          if (!loadedWorkspace || !workspaceKey || !accessPin)
+            return feedback("سجّل الدخول أولًا", "bad");
+          const rows = [
+            "setupStatusSupabase",
+            "setupStatusFunctions",
+            "setupStatusDeepseek",
+            "setupStatusConfirm",
+            "setupStatusAutopilot",
+            "setupStatusWhatsapp",
+          ];
+          rows.forEach((r) => setSetupRow(r, "checking"));
+          const result = $("setupCheckResult");
+          if (result) result.textContent = "...جارٍ فحص الربط";
+          let body = null,
+            notDeployed = false,
+            authFail = false;
+          try {
+            const res = await fetch(
+              SUPABASE_URL + "/functions/v1/chalet-setup-status",
+              {
+                method: "POST",
+                headers: {
+                  apikey: SUPABASE_ANON_KEY,
+                  Authorization: "Bearer " + SUPABASE_ANON_KEY,
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                  workspace_key: workspaceKey,
+                  access_pin: accessPin,
+                }),
+              },
+            );
+            if (res.status === 404) notDeployed = true;
+            else if (res.status === 401) authFail = true;
+            else {
+              const text = await res.text();
+              body = text ? JSON.parse(text) : null;
+            }
+          } catch (e) {
+            notDeployed = true;
+          }
+          // Reaching a decision means the Supabase project itself is configured.
+          setSetupRow("setupStatusSupabase", "linked");
+          if (notDeployed) {
+            setSetupRow("setupStatusFunctions", "needs_deploy");
+            setSetupRow("setupStatusDeepseek", "unlinked");
+            setSetupRow("setupStatusConfirm", "unlinked");
+            setSetupRow("setupStatusAutopilot", "disabled");
+            setSetupRow("setupStatusWhatsapp", "disabled");
+            if (result)
+              result.textContent =
+                "وظائف الخادم غير منشورة بعد. أضف المفاتيح ثم افتح صفحة النشر.";
+            return;
+          }
+          if (authFail || !body || !body.ok) {
+            if (result)
+              result.textContent = "تعذّر الفحص. تأكد من تسجيل الدخول ثم أعد المحاولة.";
+            return;
+          }
+          setSetupRow("setupStatusFunctions", "linked");
+          setSetupRow(
+            "setupStatusDeepseek",
+            body.deepseek_configured ? "linked" : "unlinked",
+          );
+          setSetupRow(
+            "setupStatusConfirm",
+            body.assistant_confirm_secret_configured ? "linked" : "unlinked",
+          );
+          setSetupRow(
+            "setupStatusAutopilot",
+            body.autopilot_secret_configured ? "linked" : "disabled",
+          );
+          setSetupRow(
+            "setupStatusWhatsapp",
+            body.whatsapp_configured ? "linked" : "disabled",
+          );
+          let msg;
+          if (
+            body.deepseek_configured &&
+            body.assistant_confirm_secret_configured
+          )
+            msg = "المساعد جاهز للتجربة.";
+          else if (body.deepseek_configured)
+            msg = "DeepSeek مربوط، باقي إضافة مفتاح التأكيد.";
+          else if (body.assistant_confirm_secret_configured)
+            msg = "مفتاح التأكيد مضاف، باقي إضافة مفتاح DeepSeek.";
+          else msg = "مفتاح DeepSeek غير مضاف.";
+          if (result) result.textContent = msg;
         }
         function normalizeWorkspaceKey(v) {
           return String(v || "")
@@ -3488,8 +3796,14 @@
           if (a === "upload") return uploadChanges();
           if (a === "set-theme-light") return setTheme("light");
           if (a === "set-theme-dark") return setTheme("dark");
+          // Setup helpers that only open an official page or copy key names
+          // work without a loaded workspace (they never touch workspace data).
+          if (a === "setup-open-secrets") return openSetupSecrets();
+          if (a === "setup-open-deploy") return openSetupDeploy();
+          if (a === "setup-copy-template") return copySetupTemplate();
           if (!loadedWorkspace)
             return feedback("سجّل الدخول أو أنشئ حسابًا أولًا", "bad");
+          if (a === "setup-check") return checkSetupConnection();
           if (a === "new-chalet") return newChalet();
           if (a === "edit-chalet") return editChalet(id);
           if (a === "soft-delete-chalet") return softDeleteChalet(id);

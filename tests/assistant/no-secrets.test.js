@@ -3,8 +3,9 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 // The DeepSeek key, WhatsApp Cloud token, and confirm secret must never appear
-// in committed AI sources or in index.html. Env-var NAMES are fine; assigned
-// literal VALUES are not.
+// in committed AI sources or in index.html. Env-var NAMES are fine (incl. the
+// mobile setup page's copy-paste key template); assigned literal VALUES are not,
+// and the browser must never call the DeepSeek API directly.
 const NAME_ONLY_OK = /(DEEPSEEK_API_KEY|WHATSAPP_CLOUD_TOKEN|ASSISTANT_CONFIRM_SECRET|WHATSAPP_PHONE_ID)/;
 const ASSIGNED_SECRET = /(DEEPSEEK_API_KEY|WHATSAPP_CLOUD_TOKEN|ASSISTANT_CONFIRM_SECRET)\s*[=:]\s*["'][A-Za-z0-9+/_-]{12,}["']/;
 const KEYISH = /\b(sk-[A-Za-z0-9]{20,}|sk_live_[A-Za-z0-9]{12,})\b/;
@@ -35,10 +36,23 @@ describe("AI feature: no secrets committed", () => {
     }
   });
 
-  it("the browser never calls DeepSeek directly (no api.deepseek.com in index.html)", () => {
+  it("the browser never calls DeepSeek directly (no client-side DeepSeek request)", () => {
     const html = readFileSync("index.html", "utf8");
-    expect(html).not.toContain("api.deepseek.com");
-    expect(html).not.toContain("DEEPSEEK_API_KEY");
+    // No client-side fetch/XHR to DeepSeek, and no DeepSeek completions endpoint.
+    expect(html).not.toMatch(/fetch\s*\([^)]*deepseek/i);
+    expect(html).not.toMatch(/https?:\/\/[^"'`) ]*deepseek[^"'`) ]*\/(chat|completions|v\d)/i);
+    // No DeepSeek Authorization header is ever built in the browser.
+    expect(html).not.toMatch(/Bearer[^"'`\n]*DEEPSEEK/i);
+    // The DeepSeek key NAME / base URL may appear ONLY inside the setup copy
+    // template (names to paste into Supabase) — never assigned a value (the
+    // assigned-secret test above enforces that).
+    const occurrences = html.split("api.deepseek.com").length - 1;
+    if (occurrences > 0) {
+      const start = html.indexOf("JS: mobile setup");
+      const end = html.indexOf("function normalizeWorkspaceKey", start);
+      const setupJs = html.slice(start, end);
+      expect(setupJs.split("api.deepseek.com").length - 1, "api.deepseek.com only in the setup template").toBe(occurrences);
+    }
   });
 
   it("env var names are referenced (server-side) but only as names", () => {

@@ -241,6 +241,83 @@ test('assistant tab is present and degrades safely when the backend is absent', 
   await expect(page.locator('#assistantLog')).toContainText('غير مفعّل');
 });
 
+test('mobile setup page: iPhone-sized, button-only, opens official pages, checks connection', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockRpc(page);
+  // Stub the setup-status Edge Function with a booleans-only response.
+  await page.route('**/functions/v1/chalet-setup-status', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: true,
+        assistant_function_deployed: true,
+        deepseek_configured: true,
+        assistant_confirm_secret_configured: true,
+        autopilot_secret_configured: false,
+        whatsapp_configured: false,
+        app_env: 'staging',
+      }),
+    }),
+  );
+  // Capture window.open targets without navigating away.
+  await page.addInitScript(() => {
+    window.__opened = [];
+    window.open = (u) => {
+      window.__opened.push(String(u));
+      return null;
+    };
+  });
+  await page.goto('/');
+  await create(page);
+  await page.locator('[data-tab="settings"]').click();
+  await expect(page.locator('#setupCard')).toBeVisible();
+  await expect(page.locator('#setupCard')).toContainText('إعداد المساعد الذكي');
+
+  // DOM evidence: the setup card is button-only — it collects NO secret input.
+  await expect(page.locator('#setupCard input')).toHaveCount(0);
+  await expect(page.locator('#setupCard textarea')).toHaveCount(0);
+  await expect(page.locator('#setupCard [data-action="setup-check"]')).toBeVisible();
+
+  // The Supabase button opens the OFFICIAL secrets page (new tab).
+  await page.locator('[data-action="setup-open-secrets"]').click();
+  // The GitHub button opens the repo Actions page.
+  await page.locator('[data-action="setup-open-deploy"]').click();
+  const opened = await page.evaluate(() => window.__opened);
+  expect(opened).toContain('https://supabase.com/dashboard/project/_/functions/secrets');
+  expect(opened).toContain('https://github.com/qw1qw66-sudo/index.html/actions');
+
+  // "فحص الربط" authenticates + calls setup-status + updates the status rows.
+  await page.locator('[data-action="setup-check"]').click();
+  await expect(page.locator('#setupStatusDeepseek')).toHaveText('مربوط');
+  await expect(page.locator('#setupStatusConfirm')).toHaveText('مربوط');
+  await expect(page.locator('#setupStatusFunctions')).toHaveText('مربوط');
+  await expect(page.locator('#setupStatusAutopilot')).toHaveText('غير مفعل');
+  await expect(page.locator('#setupStatusWhatsapp')).toHaveText('غير مفعل');
+  await expect(page.locator('#setupCheckResult')).toContainText('المساعد جاهز للتجربة');
+
+  // Large tap targets and no horizontal overflow on a phone screen.
+  const btnBox = await page.locator('[data-action="setup-check"]').boundingBox();
+  expect(btnBox.height).toBeGreaterThanOrEqual(44);
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+  );
+  expect(overflow).toBeLessThanOrEqual(1);
+});
+
+test('setup connection check degrades safely when server functions are not deployed', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockRpc(page);
+  await page.route('**/functions/v1/**', (route) =>
+    route.fulfill({ status: 404, contentType: 'application/json', body: '{"message":"not deployed"}' }),
+  );
+  await page.goto('/');
+  await create(page);
+  await page.locator('[data-tab="settings"]').click();
+  await page.locator('[data-action="setup-check"]').click();
+  await expect(page.locator('#setupStatusFunctions')).toHaveText('يحتاج نشر');
+  await expect(page.locator('#setupCheckResult')).toContainText('غير منشورة');
+});
+
 test('source has no old public auth or redirect patterns', async ({ page }) => {
   await mockRpc(page);
   await page.goto('/');
