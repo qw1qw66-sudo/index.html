@@ -15,7 +15,7 @@ describe("deploy-supabase-staging workflow", () => {
     expect(wf).not.toMatch(/^\s*pull_request:/m);
     expect(wf).not.toMatch(/^\s*schedule:/m);
     expect(wf).toContain("deploy_ref:");
-    expect(wf).toContain('default: "claude/chalet-ai-brain"');
+    expect(wf).toContain('default: "main"');
   });
 
   it("uses the staging GitHub Environment and guards the repository (no forks)", () => {
@@ -59,11 +59,12 @@ describe("deploy-supabase-staging workflow", () => {
     expect(wf).not.toMatch(/echo[^\n]*\$\{\{\s*secrets\./);
   });
 
-  it("deploys the five functions and runs the sanitized smoke tests", () => {
+  it("deploys the five functions with API bundling and runs the sanitized smoke tests", () => {
     for (const f of ["create-payment-session", "payment-webhook", "chalet-assistant", "chalet-setup-status", "chalet-autopilot"]) {
       expect(wf).toContain(f);
     }
     expect(wf).toContain("--no-verify-jwt");
+    expect(wf).toContain("--use-api");
     expect(wf).toContain("node scripts/staging-smoke.mjs");
     expect(wf).toContain("staging-smoke-report.json");
   });
