@@ -18,7 +18,8 @@ export class LedgerStore {
 
   insertOrder(row) {
     for (const o of this.orders.values()) {
-      if (o.idempotency_key === row.idempotency_key) {
+      // Idempotency uniqueness is WORKSPACE-SCOPED (migration 0002 follow-up).
+      if (o.workspace_key === row.workspace_key && o.idempotency_key === row.idempotency_key) {
         const err = new Error("unique_violation:idempotency_key");
         err.code = "23505";
         err.existing = o;
@@ -69,6 +70,33 @@ export class LedgerStore {
     return null;
   }
 
+  // Workspace-scoped idempotency lookup (mirrors the composite unique index).
+  findOrderByIdempotency(workspaceKey, key) {
+    for (const o of this.orders.values()) {
+      if (o.workspace_key === workspaceKey && o.idempotency_key === key) return o;
+    }
+    return null;
+  }
+
+  // Mirrors expire_stale_payment_orders(): transition pending+past-expiry rows
+  // to 'expired' so an expired order cannot block a replacement.
+  expireStale(workspaceKey, bookingId, nowMs = Date.now()) {
+    let n = 0;
+    for (const o of this.orders.values()) {
+      if (
+        o.workspace_key === workspaceKey &&
+        o.booking_id === bookingId &&
+        o.status === "pending" &&
+        o.expires_at &&
+        new Date(o.expires_at).getTime() <= nowMs
+      ) {
+        o.status = "expired";
+        n++;
+      }
+    }
+    return n;
+  }
+
   hasActivePendingOrder(workspaceKey, bookingId) {
     for (const o of this.orders.values()) {
       if (
@@ -85,7 +113,11 @@ export class LedgerStore {
 
   insertTransaction(row) {
     for (const t of this.transactions.values()) {
-      if (row.idempotency_key && t.idempotency_key === row.idempotency_key) {
+      if (
+        row.idempotency_key &&
+        t.workspace_key === row.workspace_key &&
+        t.idempotency_key === row.idempotency_key
+      ) {
         const err = new Error("unique_violation:tx_idempotency_key");
         err.code = "23505";
         err.existing = t;
