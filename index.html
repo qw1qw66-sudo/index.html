@@ -4164,6 +4164,7 @@
         // tool (the `tool` field). Automation is write-disabled by design, so no
         // "run/stop marketing" command is offered — only read-status commands.
         const ASSISTANT_SUGGESTIONS = [
+          { text: "اعرض الشاليهات والفترات", tool: "list_chalets" },
           { text: "شنو حجوزات اليوم؟", tool: "get_today_bookings" },
           { text: "اعرض الحجوزات القادمة", tool: "list_bookings" },
           { text: "اعرض الأيام الفاضية هذا الأسبوع", tool: "find_empty_dates" },

@@ -102,7 +102,9 @@ export async function handleAssistant(req, deps) {
   }
 
   // ---- Branch B: chat turn (two-stage model loop) ----
-  const message = redactText(String(body.message ?? "")).slice(0, 4000);
+  const rawMessage = String(body.message ?? "");
+  const privateFacts = { customer_phone: extractBookingPhone(rawMessage) };
+  const message = redactText(rawMessage).slice(0, 4000);
   if (!message) return json(400, { ok: false, error: "EMPTY_MESSAGE" });
 
   // Thread must belong to THIS workspace. If none is supplied, open one so the
@@ -118,6 +120,23 @@ export async function handleAssistant(req, deps) {
 
   const history = (await deps.loadHistory?.(wsKey, activeThreadId)) || [];
   history.push({ role: "user", content: message });
+
+  // Basic read-only owner questions must keep working even if the model is
+  // temporarily unavailable. These narrow intents execute only registered
+  // read tools against the authenticated workspace; they can never write.
+  const deterministicCall = deterministicReadIntent(message);
+  if (deterministicCall) {
+    const norm = normalizeToolCall(deterministicCall);
+    const result = norm.ok
+      ? await executeTool(deps, { ...ctxBase, norm, raw: true })
+      : { ok: false, error: "READ_FAILED", reason_ar: "تعذّر فهم طلب القراءة. لم يتغيّر شيء." };
+    const replyAr = renderFallbackAr([result]);
+    await deps.appendMessages?.(wsKey, activeThreadId, [
+      { role: "user", safe_content: message },
+      { role: "assistant", safe_content: redactText(replyAr), tool_name: null },
+    ]);
+    return json(200, { ok: true, reply_ar: replyAr, tool_results: [result], thread_id: activeThreadId, model_calls: 0, model: "deterministic-read" });
+  }
 
   // The model sees the REAL tool catalog (read + prepare tools only — never a
   // confirmation) so it can only ever name a tool that exists.
@@ -139,7 +158,7 @@ export async function handleAssistant(req, deps) {
   const requested = Array.isArray(first.toolCalls) ? first.toolCalls.slice(0, MAX_TOOLS_PER_TURN) : [];
   const results = [];
   for (const call of requested) {
-    const norm = normalizeToolCall(call);
+    const norm = normalizeToolCall(withPrivateBookingFacts(call, privateFacts));
     if (!norm.ok) {
       results.push({ requested: call?.name ?? null, ok: false, error: norm.error });
       continue; // unknown/invalid tool from the model is NEVER executed
@@ -213,7 +232,7 @@ function renderFallbackAr(results) {
   let anyFailure = false;
   for (const r of results) {
     if (!r) continue;
-    if (r.ok === false) { anyFailure = true; continue; } // no tool name, no error code
+    if (r.ok === false) { anyFailure = true; if (r.reason_ar) lines.push(String(r.reason_ar)); continue; } // no tool name, no error code
     if (r.kind === "prepared_action") { lines.push(r.summary_ar || "جهّزت الإجراء — بانتظار تأكيدك."); continue; }
     if (r.kind === "completed_action") { lines.push(r.done_ar || "تم تنفيذ الإجراء وتأكيده من الخادم."); continue; }
     if (r.kind === "read") { const d = describeReadAr(r.result); if (d) lines.push(d); continue; }
@@ -229,6 +248,14 @@ function renderFallbackAr(results) {
 // Natural Arabic description of a read result — no tool name, no raw error code.
 function describeReadAr(result) {
   const r = result && typeof result === "object" ? result : {};
+  if (Array.isArray(r.chalets)) {
+    if (!r.chalets.length) return "لا توجد شاليهات مسجلة في هذه المساحة.";
+    const lines = r.chalets.map((c) => {
+      const periods = Array.isArray(c.periods) ? c.periods.map((p) => p.period_label).filter(Boolean).join("، ") : "";
+      return `• ${c.chalet_name || "شاليه بدون اسم"}${periods ? ` — الفترات: ${periods}` : " — لا توجد فترات مفعّلة"}`;
+    });
+    return "الشاليهات المسجلة فعلياً:\n" + lines.join("\n");
+  }
   if (Array.isArray(r.bookings)) {
     const n = r.bookings.length;
     if (n === 0) return "لا توجد حجوزات مطابقة.";
@@ -237,7 +264,11 @@ function describeReadAr(result) {
     return `يوجد ${n} حجوزات.`;
   }
   if (Array.isArray(r.available)) return r.available.length ? `الفترات المتاحة: ${r.available.length}.` : "لا توجد فترات متاحة.";
-  if (Array.isArray(r.empty)) return r.empty.length ? `الأيام/الفترات الفاضية: ${r.empty.length}.` : "لا توجد أيام فاضية.";
+  if (Array.isArray(r.empty)) {
+    if (!r.empty.length) return "لا توجد فترات فاضية مطابقة.";
+    const lines = r.empty.slice(0, 20).map((x) => `• ${x.chalet_name || "الشاليه"} — ${x.period_label || "الفترة"} — ${x.date || ""}`);
+    return "الفترات الفاضية:\n" + lines.join("\n");
+  }
   if (Array.isArray(r.transactions)) return `عدد الحركات المالية: ${r.transactions.length}.`;
   if (Array.isArray(r.payments)) return `عدد المدفوعات: ${r.payments.length}.`;
   if (Array.isArray(r.rules)) return `عدد قواعد التسويق: ${r.rules.length}.`;
@@ -275,8 +306,12 @@ async function executeTool(deps, { wsKey, pin, norm, activeMemories, secret, raw
   // READ tools (and draft_* / prepare_outbound draft) — no confirmation. The
   // PIN is forwarded so ledger-backed reads re-authenticate the RPC contract.
   if (spec.class === "read" && !spec.prepares) {
-    const result = await deps.runReadTool(wsKey, name, args, pin);
-    return wrap(200, { ok: true, kind: "read", result, warnings: policy.warnings });
+    try {
+      const result = await deps.runReadTool(wsKey, name, args, pin);
+      return wrap(200, { ok: true, kind: "read", result, warnings: policy.warnings });
+    } catch {
+      return wrap(503, { ok: false, error: "READ_FAILED", reason_ar: "تعذّر قراءة البيانات حالياً. لم يتغيّر شيء." });
+    }
   }
 
   // PREPARE tools — create an action + confirmation token; NO side effect yet.
@@ -285,8 +320,22 @@ async function executeTool(deps, { wsKey, pin, norm, activeMemories, secret, raw
     // confirmed payload. On a crash-retry the executor re-uses this exact id, so
     // a confirmed create can never produce two bookings.
     let boundArgs = args;
+    if (spec.prepares === "confirm_booking_create") {
+      const resolved = typeof deps.resolveBookingCreateArgs === "function"
+        ? await deps.resolveBookingCreateArgs(wsKey, boundArgs, pin)
+        : (boundArgs.chalet_id && boundArgs.period_id ? { ok: true, args: boundArgs } : null);
+      if (!resolved || resolved.ok !== true) {
+        return wrap(422, {
+          ok: false,
+          error: resolved?.error || "BOOKING_REFERENCE_FAILED",
+          reason_ar: resolved?.reason_ar || "تعذّر مطابقة الشاليه أو الفترة مع بياناتك. لم يتم تجهيز أي حجز.",
+          options: resolved?.options || [],
+        });
+      }
+      boundArgs = resolved.args;
+    }
     if (spec.prepares === "confirm_booking_create" && !boundArgs.booking_id && typeof deps.newId === "function") {
-      boundArgs = { ...args, booking_id: deps.newId() };
+      boundArgs = { ...boundArgs, booking_id: deps.newId() };
     }
     const normalizedPayload = { tool: spec.prepares, args: boundArgs };
     const expectedRevision = spec.usesContract === "save_shared_workspace_v2"
@@ -401,7 +450,7 @@ async function runConfirmedExecution(deps, { wsKey, pin, actionId, ctx, raw, rec
 function buildSummaryAr(confirmTool, args) {
   switch (confirmTool) {
     case "confirm_booking_create":
-      return `تجهيز حجز جديد للعميل «${args.customer_name || "—"}» بتاريخ ${args.booking_date || "—"}. اضغط تأكيد للحفظ.`;
+      return `تجهيز حجز جديد: العميل «${args.customer_name || "—"}»، الشاليه «${args.chalet_name || args.chalet_id || "—"}»، الفترة «${args.period_label || args.period_id || "—"}»، التاريخ ${args.booking_date || "—"}، الضيوف ${args.guests || 1}${args.total !== undefined ? `، الإجمالي ${Number(args.total).toFixed(2)} ر.س` : ""}. اضغط تأكيد للحفظ.`;
     case "confirm_booking_update":
       return `تجهيز تعديل الحجز ${args.booking_id || "—"}. اضغط تأكيد للحفظ.`;
     case "confirm_booking_cancel":
@@ -415,4 +464,38 @@ function buildSummaryAr(confirmTool, args) {
     default:
       return "إجراء مُجهّز — اضغط تأكيد للمتابعة.";
   }
+}
+
+function deterministicReadIntent(message) {
+  const text = String(message || "");
+  const asksAvailability = /(فتر|موعد)/.test(text) && /(فاضي|فاضية|متاح|متاحة)/.test(text) && /(اليوم|لليوم|هذا اليوم)/.test(text);
+  if (asksAvailability) return { name: "find_empty_dates", arguments: { days_ahead: 1 } };
+  const asksCatalog = /(شاليه|شاليهات)/.test(text) && /(ما\s*هي|وش|ايش|اعرض|اظهر|قائمة|المسجل|عندي|لديك)/.test(text) && !/(احجز|حجز|جهز|سج[ّل]+\s+حجز)/.test(text);
+  if (asksCatalog) return { name: "list_chalets", arguments: {} };
+  return null;
+}
+
+function extractBookingPhone(raw) {
+  const compact = String(raw || "").replace(/[\s()-]/g, "");
+  const match = compact.match(/(?:\+?966|00966)?0?5\d{8}/);
+  if (!match) return "";
+  let digits = match[0].replace(/\D/g, "");
+  if (digits.startsWith("00966")) digits = digits.slice(5);
+  else if (digits.startsWith("966")) digits = digits.slice(3);
+  if (digits.startsWith("5") && digits.length === 9) digits = "0" + digits;
+  return /^05\d{8}$/.test(digits) ? digits : "";
+}
+
+function withPrivateBookingFacts(call, facts) {
+  if (!call || call.name !== "prepare_booking_create") return call;
+  const inputArgs = call.arguments ?? call.args ?? {};
+  // A phone is private and was redacted before the model call. Never trust a
+  // model-supplied replacement; bind only the value extracted server-side from
+  // the owner's original HTTPS request.
+  const { customer_phone: _modelPhone, ...safeArgs } = inputArgs;
+  void _modelPhone;
+  return {
+    ...call,
+    arguments: facts?.customer_phone ? { ...safeArgs, customer_phone: facts.customer_phone } : safeArgs,
+  };
 }

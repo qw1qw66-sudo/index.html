@@ -92,10 +92,23 @@ async function main() {
     const doc = {
       schema_version: 3,
       settings: { facility_name: "منشأة تجريبية", tag: "staging-smoke", holidays: [] },
-      chalets: [{
-        id: "c1", name: "شاليه تجريبي", capacity: 6, deleted_at: null,
-        periods: [{ id: "p1", label: "صباحي", start: "07:00", end: "17:00", active: true, sort: 1, weekday_price: 400, weekend_price: 600 }],
-      }],
+      chalets: [
+        {
+          id: "c1", name: "شاليه تولوم", capacity: 15, deleted_at: null,
+          periods: [
+            { id: "p1", label: "صباحي", start: "07:00", end: "10:00", active: true, sort: 1, weekday_price: 400, weekend_price: 600 },
+            { id: "p2", label: "ضحى", start: "10:00", end: "12:00", active: true, sort: 2, weekday_price: 400, weekend_price: 600 },
+            { id: "p3", label: "ظهيرة", start: "12:00", end: "15:00", active: true, sort: 3, weekday_price: 400, weekend_price: 600 },
+            { id: "p4", label: "عصري", start: "15:00", end: "17:00", active: true, sort: 4, weekday_price: 400, weekend_price: 600 },
+            { id: "p5", label: "مسائي", start: "17:00", end: "22:00", active: true, sort: 5, weekday_price: 400, weekend_price: 600 },
+            { id: "p6", label: "ليلي", start: "22:00", end: "02:00", active: true, sort: 6, weekday_price: 400, weekend_price: 600 },
+          ],
+        },
+        {
+          id: "c2", name: "شاليه سكاي", capacity: 6, deleted_at: null,
+          periods: [{ id: "s1", label: "صباحي", start: "07:00", end: "12:00", active: true, sort: 1, weekday_price: 300, weekend_price: 500 }],
+        },
+      ],
       bookings: [{
         id: "b1", customer_name: "عميل تجريبي", customer_phone: FAKE_PHONE,
         chalet_id: "c1", booking_date: RIYADH_TODAY, period_id: "p1",
@@ -117,6 +130,16 @@ async function main() {
     const detail = r.status + (r.json && (r.json.error || r.json.code) ? ":" + (r.json.error || r.json.code) : "") +
       (r.status !== 200 && r.json && r.json.message ? ":" + String(r.json.message).slice(0, 60) : "");
     record("synthetic_workspace_created", r.status === 200 && r.json && r.json.ok === true, detail);
+  }
+
+  // 6b. A safe catalog read is deterministic and returns the real names/ids
+  // from this authenticated workspace even if the model provider is down.
+  {
+    const r = await assistant({ message: "ما هي الشاليهات المسجلة لديك؟" });
+    const b = r.json || {};
+    const tool = (b.tool_results || []).find((x) => x.tool === "list_chalets" && x.ok);
+    const names = tool && tool.result && Array.isArray(tool.result.chalets) ? tool.result.chalets.map((x) => x.chalet_name) : [];
+    record("real_chalet_catalog_read", r.status === 200 && b.ok === true && b.model_calls === 0 && names.includes("شاليه تولوم") && names.includes("شاليه سكاي"), r.status);
   }
 
   // 6. setup-status with valid auth: booleans only, staging env, DeepSeek ready.
@@ -168,9 +191,9 @@ async function main() {
   // 9. Confirmed booking create through the real contracts (staging only).
   let newBookingId = null;
   {
-    const prep = await assistant({ invoke_tool: { name: "prepare_booking_create", arguments: { customer_name: "حجز تجريبي", chalet_id: "c1", booking_date: RIYADH_TOMORROW, period_id: "p1", total: 400, guests: 2 } } });
+    const prep = await assistant({ invoke_tool: { name: "prepare_booking_create", arguments: { customer_name: "حجز تجريبي", chalet_name: "تولوم", booking_date: RIYADH_TOMORROW, period_label: "المسائية", total: 400, guests: 2 } } });
     const p = prep.json || {};
-    const prepared = prep.status === 200 && p.kind === "prepared_action" && p.action_id && p.confirmation_token;
+    const prepared = prep.status === 200 && p.kind === "prepared_action" && p.action_id && p.confirmation_token && String(p.summary_ar || "").includes("شاليه تولوم") && String(p.summary_ar || "").includes("مسائي");
     record("booking_prepared", Boolean(prepared), prep.status + (p.error ? ":" + p.error : ""));
     if (prepared) {
       const conf = await assistant({ invoke_tool: { name: "confirm_booking_create", arguments: { action_id: p.action_id, confirmation_token: p.confirmation_token } } });

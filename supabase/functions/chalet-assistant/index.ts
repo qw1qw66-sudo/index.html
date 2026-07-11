@@ -20,6 +20,7 @@ import { redactObject } from "../_shared/assistant/redact.mjs";
 import { executeConfirmedAction } from "../_shared/assistant/executors.mjs";
 import { corsWrap } from "../_shared/cors.mjs";
 import { riyadhToday, addDays, availablePeriodsOn, isSlotAvailable } from "../_shared/assistant/availability.mjs";
+import { chaletCatalog, resolveBookingCreateArgs as resolveBookingCreateSelection, resolveChaletReference } from "../_shared/assistant/booking-resolution.mjs";
 
 // deno-lint-ignore no-explicit-any
 declare const Deno: any;
@@ -176,6 +177,12 @@ function makeDeps() {
     async getWorkspaceRevision(wsKey: string) {
       const d = await workspaceDoc(wsKey);
       return d?.updated_at ?? null;
+    },
+
+    async resolveBookingCreateArgs(wsKey: string, args: Record<string, unknown>) {
+      const d = await workspaceDoc(wsKey);
+      if (!d?.data) return { ok: false, error: "WORKSPACE_NOT_FOUND", reason_ar: "تعذّر قراءة بيانات المساحة. لم يتم تجهيز أي حجز." };
+      return resolveBookingCreateSelection(d.data, args);
     },
 
     // ---- read tools: real data only; unimplemented tools cannot exist (every
@@ -367,6 +374,8 @@ function readFromDoc(name: string, args: Record<string, unknown>, doc: { chalets
   switch (name) {
     case "get_today_bookings":
       return { date: today, bookings: activeB.filter((b) => b.booking_date === today) };
+    case "list_chalets":
+      return chaletCatalog(doc);
     case "list_bookings": {
       const from = String(args.from || "");
       const to = String(args.to || "");
@@ -384,19 +393,26 @@ function readFromDoc(name: string, args: Record<string, unknown>, doc: { chalets
       return activeC.find((c) => c.id === args.chalet_id) ?? { error: "NOT_FOUND" };
     case "find_available_periods": {
       const date = String(args.date || today);
-      return availablePeriodsOn(doc as never, String(args.chalet_id || ""), date);
+      const resolved = resolveChaletReference(doc, args);
+      if (!resolved.ok) return resolved;
+      const result = availablePeriodsOn(doc as never, String(resolved.chalet.id || ""), date);
+      return { ...result, chalet_name: resolved.chalet.name };
     }
     case "find_empty_dates": {
       const daysAhead = Math.max(1, Math.min(120, Number(args.days_ahead) || 14));
-      const chaletIds = args.chalet_id ? [String(args.chalet_id)] : activeC.map((c) => String(c.id));
+      let selected = activeC;
+      if (args.chalet_id || args.chalet_name) {
+        const resolved = resolveChaletReference(doc, args);
+        if (!resolved.ok) return resolved;
+        selected = [resolved.chalet];
+      }
       const out: Array<Record<string, unknown>> = [];
       for (let i = 0; i < daysAhead && out.length < 100; i++) {
         const dt = addDays(today, i);
-        for (const cid of chaletIds) {
-          const chalet = activeC.find((c) => String(c.id) === cid);
-          if (!chalet) continue;
-          for (const p of ((chalet.periods ?? []) as Array<Record<string, unknown>>).filter((x) => x.active)) {
-            if (isSlotAvailable(doc as never, cid, dt, p)) out.push({ chalet_id: cid, date: dt, period_id: p.id, period_label: p.label });
+        for (const chalet of selected) {
+          const cid = String(chalet.id || "");
+          for (const p of ((chalet.periods ?? []) as Array<Record<string, unknown>>).filter((x) => x.active !== false)) {
+            if (isSlotAvailable(doc as never, cid, dt, p)) out.push({ chalet_id: cid, chalet_name: chalet.name, date: dt, period_id: p.id, period_label: p.label });
           }
         }
       }

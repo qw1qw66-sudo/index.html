@@ -8,7 +8,7 @@ import { hashPayload, stableStringify } from "../../supabase/functions/_shared/a
 const ENV = { ASSISTANT_CONFIRM_SECRET: "sec", DEEPSEEK_API_KEY: "k" };
 const WS = "WSA";
 
-function makeDeps({ model, workspaces = { [WS]: { pin: "123456", revision: "2026-01-01T00:00:00Z" } }, memories = [], executor } = {}) {
+function makeDeps({ model, workspaces = { [WS]: { pin: "123456", revision: "2026-01-01T00:00:00Z" } }, memories = [], executor, resolver } = {}) {
   const actions = new Map();
   const executed = [];
   return {
@@ -25,6 +25,7 @@ function makeDeps({ model, workspaces = { [WS]: { pin: "123456", revision: "2026
     async appendMessages() {},
     async getWorkspaceRevision(k) { return workspaces[k]?.revision ?? null; },
     async runReadTool(_k, name, args) { return { name, args, sample: true }; },
+    async resolveBookingCreateArgs(_k, args) { return resolver ? resolver(args) : { ok: true, args }; },
     async prepareSensitive(_k, spec) {
       const id = "act-" + (actions.size + 1);
       actions.set(id, { id, ...spec, workspace_key: _k, status: "prepared", confirmation_used_at: null });
@@ -100,6 +101,30 @@ describe("assistant handler: safety rules", () => {
     const prep = b.tool_results[0];
     expect(prep).toMatchObject({ ok: true, kind: "prepared_action", confirm_tool: "confirm_booking_create" });
     expect(prep.confirmation_token).toBeTruthy();
+    expect(deps.executed).toHaveLength(0);
+  });
+
+  it("a booking named «تولوم» is bound to authoritative ids before confirmation", async () => {
+    const deps = makeDeps({
+      model: { ok: true, reply: "أجهّز الحجز", toolCalls: [{ name: "prepare_booking_create", arguments: { customer_name: "علي", chalet_name: "تولوم", period_label: "المسائية", booking_date: "2099-06-01" } }] },
+      resolver: (args) => ({ ok: true, args: { ...args, chalet_id: "real-tulum", chalet_name: "شاليه تولوم", period_id: "real-evening", period_label: "مسائي" } }),
+    });
+    const b = await (await handleAssistant(chat({ workspace_key: WS, access_pin: "123456", message: "جهز حجز في تولوم" }), deps)).json();
+    const prep = b.tool_results[0];
+    expect(prep).toMatchObject({ ok: true, kind: "prepared_action" });
+    expect(deps.actions.get(prep.action_id).args).toMatchObject({ chalet_id: "real-tulum", period_id: "real-evening" });
+    expect(prep.summary_ar).toContain("شاليه تولوم");
+    expect(deps.executed).toHaveLength(0);
+  });
+
+  it("an unknown chalet fails closed and creates no pending action", async () => {
+    const deps = makeDeps({
+      model: { ok: true, reply: "", toolCalls: [{ name: "prepare_booking_create", arguments: { customer_name: "علي", chalet_name: "غير موجود", period_label: "مسائي", booking_date: "2099-06-01" } }] },
+      resolver: () => ({ ok: false, error: "CHALET_NOT_FOUND", reason_ar: "الشاليهات المسجلة: شاليه سكاي، شاليه تولوم." }),
+    });
+    const b = await (await handleAssistant(chat({ workspace_key: WS, access_pin: "123456", message: "جهز حجز" }), deps)).json();
+    expect(b.tool_results[0]).toMatchObject({ ok: false, error: "CHALET_NOT_FOUND" });
+    expect(deps.actions.size).toBe(0);
     expect(deps.executed).toHaveLength(0);
   });
 
