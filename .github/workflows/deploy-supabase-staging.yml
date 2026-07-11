@@ -99,6 +99,24 @@ jobs:
       - name: Apply pending migrations to staging
         run: supabase db push --linked
 
+      # The migrations NOTIFY pgrst themselves, but delivery through the pooled
+      # migration connection has proven unreliable — force a deterministic
+      # PostgREST schema-cache reload via the Management API so the new RPCs
+      # are immediately reachable. No output is printed.
+      - name: Reload PostgREST schema cache
+        run: |
+          set -euo pipefail
+          for i in 1 2 3; do
+            if curl -sf -X POST "https://api.supabase.com/v1/projects/$PROJECT_REF/database/query" \
+              -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d '{"query":"notify pgrst, '\''reload schema'\'';"}' -o /dev/null; then
+              echo "schema reload notified"; exit 0
+            fi
+            sleep 3
+          done
+          echo "schema reload request failed (smoke will still retry)"
+
       # Generate internal secrets on the runner if (and only if) they are not
       # already configured. Values are masked immediately and never echoed;
       # `awk '{print $1}'` extracts secret NAMES only (never value digests).
