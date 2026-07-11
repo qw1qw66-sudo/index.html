@@ -223,6 +223,24 @@ test('mobile viewport: booking editor and payment panel stay usable (iPhone size
   await expect(page.locator('#paymentPanelNotice')).toBeVisible();
 });
 
+test('assistant tab is present and degrades safely when the backend is absent', async ({ page }) => {
+  // The mock only handles /rest/v1/rpc/**; /functions/v1/chalet-assistant is
+  // unhandled -> the browser fetch fails, so the tab must show a safe message
+  // and never claim any action happened.
+  await mockRpc(page);
+  await page.route('**/functions/v1/**', (route) => route.fulfill({ status: 404, contentType: 'application/json', body: '{"message":"not deployed"}' }));
+  await page.goto('/');
+  await create(page);
+  await page.locator('[data-tab="assistant"]').click();
+  await expect(page.locator('#tab-assistant')).toBeVisible();
+  await expect(page.locator('#assistantSuggestions')).toContainText('حجوزات اليوم');
+  await page.locator('#assistantInput').fill('شنو حجوزات اليوم؟');
+  await page.locator('[data-action="assistant-send"]').click();
+  // The user message is echoed and a safe "not enabled" reply appears; no crash.
+  await expect(page.locator('#assistantLog')).toContainText('شنو حجوزات اليوم؟');
+  await expect(page.locator('#assistantLog')).toContainText('غير مفعّل');
+});
+
 test('source has no old public auth or redirect patterns', async ({ page }) => {
   await mockRpc(page);
   await page.goto('/');
