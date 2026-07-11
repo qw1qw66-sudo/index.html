@@ -123,17 +123,28 @@ layer resolves the real number server-side only when actually sending.
 3. `supabase secrets set DEEPSEEK_API_KEY=... ASSISTANT_CONFIRM_SECRET=... ...`.
 4. Wire the autopilot to a schedule (pg_cron → edge). Keep automation disabled
    until you have tested drafts and, for auto-send, configured official WhatsApp.
-5. `executeConfirmed` in `chalet-assistant/index.ts` is intentionally a
-   documented scaffold stub (`EXECUTOR_NOT_WIRED_IN_SCAFFOLD`): wire it to the
-   existing RPCs with the workspace PIN carried in a short-lived server context
-   before enabling AI writes. The handler + confirmation flow are fully tested.
+5. `executeConfirmed` is **fully wired** (`_shared/assistant/executors.mjs`):
+   confirmed booking create/update/cancel go through `save_shared_workspace_v2`,
+   manual payments through `record_manual_payment`, payment links through the
+   `create-payment-session` Edge Function, and messages through the WhatsApp
+   adapter. The PIN is carried through the single HTTPS request only. Proven
+   end-to-end against real PostgreSQL 16 (real `payment_transactions` rows,
+   real bookings via v2, idempotent replay). Official WhatsApp *sending* is the
+   only executor path still requiring owner credentials.
 
 ## What is test-only vs deployment work
 
-- Fully implemented + tested: registry, policy/memory, confirmation protocol,
-  vacancy/eligibility/attribution, WhatsApp adapter modes, DeepSeek client
-  (fail-closed/redaction/limits), both handlers, the migration (verified on
-  PostgreSQL 16), the Arabic chat UI.
-- Requires the owner: DeepSeek key + a real run against the DeepSeek API; wiring
-  `executeConfirmed`; deploying functions; enabling official WhatsApp; enabling
-  any automation rule.
+- **Fully operational locally (proven against real PostgreSQL 16):** registry,
+  policy/memory, confirmation protocol, the wired executors (booking
+  create/update/cancel, manual payment, payment-link disabled-safe), vacancy/
+  eligibility/attribution, WhatsApp disconnected+manual, DeepSeek client
+  (fail-closed/redaction/limits), both handlers, the migration chain, the
+  Arabic chat UI with the full confirm flow.
+- **Requires Supabase deployment:** applying `0003` and deploying the two Edge
+  Functions to a project (the logic is tested; the deploy is mechanical).
+- **Requires a DeepSeek key:** a real model call (the client is done and
+  fail-closed; an opt-in smoke test runs when `DEEPSEEK_API_KEY` is present).
+- **Requires official WhatsApp credentials:** automatic sending (manual open
+  works today).
+- **Disabled by default:** all automation rules (`enabled=false`,
+  `automatic_send_enabled=false`).
