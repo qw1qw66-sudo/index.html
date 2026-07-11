@@ -58,10 +58,16 @@ jobs:
           test ! -e dist/exports
           test ! -e dist/tests
           test ! -e dist/scripts
-          # The placeholders must be fully replaced; the real version must appear.
-          if grep -qF "__APP_BUILD" dist/index.html; then echo "build placeholder not replaced"; exit 1; fi
-          grep -qF "main-${short}" dist/index.html
-          grep -qF "${GITHUB_SHA}" dist/index.html
+
+          # Check only the two exact build placeholders. The runtime helper
+          # intentionally contains the prefix "__APP_BUILD" to recognize local
+          # development, so a broad prefix grep would be a false positive.
+          if grep -qF "__APP_BUILD__" dist/index.html || grep -qF "__APP_BUILD_SHA__" dist/index.html; then
+            echo "build placeholder not replaced"
+            exit 1
+          fi
+          grep -qF "const APP_BUILD = \"main-${short}\";" dist/index.html
+          grep -qF "const APP_BUILD_SHA = \"${GITHUB_SHA}\";" dist/index.html
           find dist -maxdepth 2 -type f | sort
 
       - name: Leak scan (precise — real secrets only, not safe explanatory text)
