@@ -1,0 +1,214 @@
+# Deploy Supabase Staging — manual-only (workflow_dispatch), never on push/PR.
+#
+# Deploys the migration chain + Edge Functions to the SEPARATE staging Supabase
+# project selected by repository secrets, then smoke-tests the real deployed
+# Deno functions over HTTP. It never touches the production project: the target
+# is entirely determined by SUPABASE_PROJECT_ID (the staging Project Ref).
+#
+# Repository secrets (https://github.com/qw1qw66-sudo/index.html/settings/secrets/actions):
+#   REUSED (already exist for the export workflow):
+#     SUPABASE_URL        — https://<project-ref>.supabase.co (ref derived from it)
+#     SUPABASE_ANON_KEY   — the public (publishable) API key
+#   NEW (owner adds these two):
+#     SUPABASE_ACCESS_TOKEN — Supabase account access token (account → tokens)
+#     SUPABASE_DB_PASSWORD  — the database password
+#   OPTIONAL override: SUPABASE_PROJECT_ID (explicit ref; else derived from URL).
+# The service-role key is NEVER a GitHub secret: Supabase injects it into Edge
+# Functions at runtime.
+#
+# Internal application secrets (ASSISTANT_CONFIRM_SECRET, AUTOPILOT_CRON_SECRET)
+# are generated ON THE RUNNER (32 random bytes each), masked, pushed straight to
+# Supabase Function Secrets, and never echoed, stored, hashed, or uploaded.
+
+name: Deploy Supabase Staging
+
+on:
+  workflow_dispatch:
+    inputs:
+      deploy_ref:
+        description: "Git ref to deploy (branch, tag, or SHA)"
+        required: true
+        default: "claude/chalet-ai-brain"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-supabase-staging
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    # Never run for forks — deploys only this repository's own refs.
+    if: github.repository == 'qw1qw66-sudo/index.html'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: staging
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+    steps:
+      # Reuse the existing SUPABASE_URL secret: the project ref is its
+      # subdomain (non-secret — it is public in the app source). An explicit
+      # SUPABASE_PROJECT_ID secret overrides the derivation when present.
+      - name: Resolve project ref and check required secrets
+        env:
+          SUPABASE_URL_SECRET: ${{ secrets.SUPABASE_URL }}
+          EXPLICIT_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+          missing=""
+          [ -n "$SUPABASE_ACCESS_TOKEN" ] || missing="$missing SUPABASE_ACCESS_TOKEN"
+          [ -n "$SUPABASE_DB_PASSWORD" ] || missing="$missing SUPABASE_DB_PASSWORD"
+          [ -n "${{ secrets.SUPABASE_ANON_KEY }}" ] || missing="$missing SUPABASE_ANON_KEY"
+          ref="$EXPLICIT_PROJECT_ID"
+          if [ -z "$ref" ] && [ -n "$SUPABASE_URL_SECRET" ]; then
+            ref="${SUPABASE_URL_SECRET#https://}"; ref="${ref%%.*}"
+          fi
+          [ -n "$ref" ] || missing="$missing SUPABASE_URL(or SUPABASE_PROJECT_ID)"
+          if [ -n "$missing" ]; then
+            echo "Missing repository secrets:$missing"
+            echo "Add them at Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+          echo "PROJECT_REF=$ref" >> "$GITHUB_ENV"
+          echo "EDGE_BASE_URL=https://${ref}.supabase.co" >> "$GITHUB_ENV"
+
+      - name: Checkout deploy ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.deploy_ref }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # Pinned CLI; the major-pinned fallback only runs if the exact pin is
+      # ever yanked, so installs stay deterministic in practice.
+      - name: Install Supabase CLI (pinned)
+        run: npm install -g supabase@2.45.5 || npm install -g supabase@2
+
+      - name: Link staging project
+        run: supabase link --project-ref "$PROJECT_REF"
+
+      # Version list only — never prints credentials or secret values.
+      - name: Show migration status
+        run: supabase migration list --linked
+
+      - name: Apply pending migrations to staging
+        run: supabase db push --linked
+
+      # The migrations NOTIFY pgrst themselves, but the Data API cache has
+      # proven stale afterwards. Force a reload two ways (status codes only,
+      # never bodies): a NOTIFY via the Management API SQL endpoint, and a
+      # no-op PATCH of the PostgREST config (same values back) which restarts
+      # the Data API and rebuilds its schema cache deterministically.
+      - name: Reload PostgREST schema cache
+        run: |
+          set -euo pipefail
+          api="https://api.supabase.com/v1/projects/$PROJECT_REF"
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$api/database/query" \
+            -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"query":"notify pgrst, '\''reload schema'\'';"}')
+          echo "notify-via-api HTTP $code"
+          cfg=$(curl -s -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" "$api/postgrest")
+          maxrows=$(printf '%s' "$cfg" | jq -r '.max_rows // empty')
+          if [ -n "$maxrows" ]; then
+            pcode=$(curl -s -o /dev/null -w '%{http_code}' -X PATCH "$api/postgrest" \
+              -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d "{\"max_rows\": $maxrows}")
+            echo "postgrest config no-op PATCH HTTP $pcode (forces cache rebuild)"
+          else
+            echo "postgrest config read failed (continuing)"
+          fi
+          sleep 10
+
+      # Decisive diagnostics — statuses, PGRST error codes, config metadata and
+      # function NAMES only (all public-repo knowledge); never data, never keys.
+      - name: Verify Data API exposure (metadata only)
+        env:
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          set -euo pipefail
+          api="https://api.supabase.com/v1/projects/$PROJECT_REF"
+          q() { curl -s -X POST "$api/database/query" -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" -H "Content-Type: application/json" -d "$1"; }
+          echo "shared_workspace functions in DB:"
+          q '{"query":"select p.proname from pg_proc p join pg_namespace ns on ns.oid = p.pronamespace where ns.nspname = '\''public'\'' and p.proname like '\''%shared_workspace%'\'' order by 1;"}' | tr ',' '\n' | grep -o '"proname"[^}]*' || echo "  (query unreadable)"
+          echo "postgrest config (schema fields only):"
+          curl -s -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" "$api/postgrest" | grep -oE '"(db_schema|db_extra_search_path|max_rows)"[^,}]*' || true
+          probe() { # $1 name, $2 json body -> status + PGRST code/message metadata
+            out=$(curl -s -L -w '\n%{http_code}' -X POST "$EDGE_BASE_URL/rest/v1/rpc/$1" \
+              -H "apikey: $SUPABASE_ANON_KEY" -H "Authorization: Bearer $SUPABASE_ANON_KEY" \
+              -H "Content-Type: application/json" -d "$2")
+            code=$(printf '%s' "$out" | tail -1)
+            meta=$(printf '%s' "$out" | head -1 | grep -oE '"(code|message|hint)"[^,}]{0,120}' | head -3 || true)
+            echo "rpc/$1 -> HTTP $code ${meta:+| $meta}"
+          }
+          probe get_shared_workspace '{"p_workspace_key":"__PROBE__","p_access_pin":"x"}'
+          probe create_shared_workspace '{"p_workspace_key":"","p_access_pin":"","p_data":{}}'
+          spec_head=$(curl -s -L -w '\n%{http_code}' "$EDGE_BASE_URL/rest/v1/" -H "apikey: $SUPABASE_ANON_KEY" -H "Authorization: Bearer $SUPABASE_ANON_KEY")
+          echo "OpenAPI root HTTP $(printf '%s' "$spec_head" | tail -1), bytes $(printf '%s' "$spec_head" | head -n -1 | wc -c)"
+          echo "OpenAPI mentions get/create_shared_workspace: $(printf '%s' "$spec_head" | grep -c get_shared_workspace || true)/$(printf '%s' "$spec_head" | grep -c create_shared_workspace || true)"
+
+      # Safe, idempotent repair: re-assert the DEFAULT privilege posture the
+      # migrations rely on (schema usage + the exact function grants 0001
+      # already made). Pure no-ops when privileges are intact. Then reload.
+      - name: Re-assert default grants (idempotent)
+        run: |
+          set -euo pipefail
+          api="https://api.supabase.com/v1/projects/$PROJECT_REF"
+          curl -s -o /dev/null -w 'grants HTTP %{http_code}\n' -X POST "$api/database/query" \
+            -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" -H "Content-Type: application/json" \
+            -d '{"query":"grant usage on schema public to anon, authenticated, service_role; grant execute on function public.get_shared_workspace(text, text) to anon; grant execute on function public.save_shared_workspace(text, text, jsonb) to anon; grant execute on function public.create_shared_workspace(text, text, jsonb) to anon; grant execute on function public.save_shared_workspace_v2(text, text, jsonb, timestamptz) to anon; notify pgrst, '\''reload schema'\'';"}'
+          sleep 5
+
+      # Generate internal secrets on the runner if (and only if) they are not
+      # already configured. Values are masked immediately and never echoed;
+      # `awk '{print $1}'` extracts secret NAMES only (never value digests).
+      - name: Ensure internal function secrets
+        run: |
+          set -euo pipefail
+          names="$(supabase secrets list 2>/dev/null | awk '{print $1}')"
+          ensure() {
+            if ! printf '%s\n' "$names" | grep -qx "$1"; then
+              v="$(openssl rand -hex 32)"
+              echo "::add-mask::$v"
+              supabase secrets set "$1=$v"
+              echo "$1: generated and set"
+            else
+              echo "$1: already configured (unchanged)"
+            fi
+          }
+          ensure ASSISTANT_CONFIRM_SECRET
+          ensure AUTOPILOT_CRON_SECRET
+          supabase secrets set APP_ENV=staging
+          echo "APP_ENV=staging set"
+
+      - name: Deploy Edge Functions
+        run: |
+          set -euo pipefail
+          for f in create-payment-session payment-webhook chalet-assistant chalet-setup-status chalet-autopilot; do
+            echo "--- deploying $f"
+            supabase functions deploy "$f" --no-verify-jwt
+          done
+
+      # Real HTTP smoke against the deployed Deno functions: CORS preflights,
+      # auth gates, setup-status booleans, a synthetic workspace, a real
+      # DeepSeek-grounded read, and a confirmed booking create + cancel.
+      # Output is sanitized (safe codes/booleans only).
+      - name: Staging smoke tests (real Deno + DeepSeek)
+        env:
+          SUPABASE_URL: ${{ env.EDGE_BASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: node scripts/staging-smoke.mjs
+
+      - name: Upload sanitized smoke report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-smoke-report
+          path: staging-smoke-report.json
+          if-no-files-found: ignore
