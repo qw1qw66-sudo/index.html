@@ -29,28 +29,42 @@ function json(status, body) {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 }
 
-const CONFIRM_TOOLS = new Set(
+// Every sensitive tool (confirm_* and the owner-triggered create_payment_link)
+// is blocked from model execution — only the owner, via a direct invoke_tool
+// request, can run them.
+const SENSITIVE_TOOLS = new Set(
   Object.keys(TOOL_REGISTRY).filter((n) => TOOL_REGISTRY[n].class === "sensitive"),
 );
+// A "confirm tool" is one whose schema carries a confirmation_token (the
+// prepare/confirm pair). Other sensitive tools (create_payment_link) are
+// direct owner-triggered actions that still re-authenticate via the PIN.
+function isConfirmTool(name) {
+  return Boolean(TOOL_REGISTRY[name]?.schema?.confirmation_token);
+}
 
 export async function handleAssistant(req, deps) {
   if (req.method !== "POST") return json(405, { ok: false, error: "METHOD_NOT_ALLOWED" });
   let body;
   try { body = await req.json(); } catch { return json(400, { ok: false, error: "INVALID_JSON" }); }
 
-  const auth = await deps.auth(String(body.workspace_key ?? ""), String(body.access_pin ?? ""));
+  const accessPin = String(body.access_pin ?? "");
+  const auth = await deps.auth(String(body.workspace_key ?? ""), accessPin);
   if (!auth || !auth.ok) return json(401, { ok: false, error: auth?.error_code ?? "AUTH_FAILED" });
   const wsKey = String(auth.workspace_key);
   const threadId = body.thread_id ? String(body.thread_id) : null;
 
   const activeMemories = (await deps.activeMemories(wsKey)) || [];
   const secret = deps.env.ASSISTANT_CONFIRM_SECRET || deps.env.PAYMENT_WEBHOOK_SECRET || "";
+  // The PIN is used ONLY within this HTTPS request to re-authenticate the
+  // underlying contract. It is never stored, logged, returned, or sent to the
+  // model.
+  const ctxBase = { wsKey, pin: accessPin, activeMemories, secret };
 
   // ---- Branch A: direct tool invocation (frontend confirm buttons / suggested commands) ----
   if (body.invoke_tool) {
     const norm = normalizeToolCall(body.invoke_tool);
     if (!norm.ok) return json(422, { ok: false, error: norm.error, detail: norm.detail });
-    return await executeTool(deps, { wsKey, norm, activeMemories, secret });
+    return await executeTool(deps, { ...ctxBase, norm });
   }
 
   // ---- Branch B: chat turn (calls the model) ----
@@ -81,12 +95,13 @@ export async function handleAssistant(req, deps) {
       results.push({ requested: call?.name ?? null, ok: false, error: norm.error });
       continue; // unknown/invalid tool from the model is NEVER executed
     }
-    if (CONFIRM_TOOLS.has(norm.name)) {
-      // The model can never self-confirm a sensitive action.
+    if (SENSITIVE_TOOLS.has(norm.name)) {
+      // The model can never run ANY sensitive action (confirm_* or
+      // create_payment_link) — only the owner via a direct invoke_tool.
       results.push({ tool: norm.name, ok: false, error: "CONFIRMATION_REQUIRES_OWNER" });
       continue;
     }
-    const r = await executeTool(deps, { wsKey, norm, activeMemories, secret, raw: true });
+    const r = await executeTool(deps, { ...ctxBase, norm, raw: true });
     results.push(r);
   }
 
@@ -107,7 +122,7 @@ export async function handleAssistant(req, deps) {
 // Execute one normalized tool call. Returns a plain result object (raw=true) or
 // a Response (raw=false). Read tools run immediately; prepare tools create a
 // confirmation; confirm tools consume + execute the underlying contract.
-async function executeTool(deps, { wsKey, norm, activeMemories, secret, raw }) {
+async function executeTool(deps, { wsKey, pin, norm, activeMemories, secret, raw }) {
   const { name, args, spec } = norm;
   const wrap = (status, obj) => (raw ? { tool: name, ...obj } : json(status, { ok: obj.ok !== false, tool: name, ...obj }));
 
@@ -115,6 +130,22 @@ async function executeTool(deps, { wsKey, norm, activeMemories, secret, raw }) {
   const actionType = spec.prepares || name;
   const policy = evaluatePolicy({ toolName: name, actionType, activeMemories });
   if (!policy.allowed) return wrap(403, { ok: false, error: policy.error, reason_ar: policy.reason_ar });
+
+  // Direct owner-triggered sensitive action (create_payment_link): no token,
+  // but the owner is re-authenticated via the PIN (done in handleAssistant).
+  if (spec.class === "sensitive" && !isConfirmTool(name)) {
+    let exec;
+    try {
+      exec = await deps.executeConfirmed(wsKey, { tool_name: name, action_type: name, payload: { args }, action_id: null, pin });
+    } catch { exec = { ok: false, error: "EXECUTION_ERROR" }; }
+    return wrap(exec.ok ? 200 : 422, {
+      ok: exec.ok,
+      kind: "completed_action",
+      result: exec.ok ? exec.safe_result ?? {} : undefined,
+      error: exec.ok ? undefined : exec.error,
+      done_ar: exec.ok ? "تم تنفيذ الإجراء وتأكيده من الخادم." : "لم يكتمل الإجراء. لم يتغيّر شيء بدون تأكيد الخادم.",
+    });
+  }
 
   // READ tools (and draft_* / prepare_outbound draft) — no confirmation.
   if (spec.class === "read" && !spec.prepares) {
@@ -163,7 +194,21 @@ async function executeTool(deps, { wsKey, norm, activeMemories, secret, raw }) {
       : null;
     const payloadHash = hashPayload(ctx.normalized_payload);
     const consumed = await deps.consumeConfirmation(wsKey, actionId, hashToken(token, secret), payloadHash, currentRevision);
-    if (!consumed.ok) return wrap(409, { ok: false, error: consumed.error });
+    if (!consumed.ok) {
+      // Idempotent confirm: a second confirm of an action that already ran
+      // returns its STORED result and never re-executes. A prepared->? race
+      // and every other failure returns the safe error code.
+      if (consumed.error === "ACTION_NOT_PENDING" || consumed.error === "CONFIRMATION_ALREADY_USED") {
+        const outcome = (await deps.getActionOutcome?.(wsKey, actionId)) || {};
+        if (outcome.status === "succeeded") {
+          return wrap(200, { ok: true, kind: "completed_action", result: outcome.safe_result ?? {}, done_ar: "تم تنفيذ الإجراء مسبقاً.", replayed: true });
+        }
+        if (outcome.status === "failed") {
+          return wrap(422, { ok: false, kind: "completed_action", error: outcome.error_code || "PREVIOUSLY_FAILED", done_ar: "لم يكتمل الإجراء سابقاً. لم يتغيّر شيء." });
+        }
+      }
+      return wrap(409, { ok: false, error: consumed.error });
+    }
 
     await deps.finalizeAction(wsKey, actionId, { status: "running" });
     let exec;
@@ -172,6 +217,8 @@ async function executeTool(deps, { wsKey, norm, activeMemories, secret, raw }) {
         tool_name: ctx.tool_name,
         action_type: ctx.action_type,
         payload: ctx.normalized_payload,
+        action_id: actionId,
+        pin,
       });
     } catch (e) {
       exec = { ok: false, error: "EXECUTION_ERROR" };
