@@ -197,6 +197,32 @@ test('payment panel is safely disabled while the payments backend is missing', a
   await expect(page.locator('#bookingPaid')).toBeEnabled();
 });
 
+test('mobile viewport: booking editor and payment panel stay usable (iPhone size)', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockRpc(page);
+  await page.goto('/');
+  await create(page);
+  await createChaletWithSixPeriods(page);
+  await page.locator('[data-tab="bookings"]').click();
+  await page.locator('[data-action="new-booking"]').click();
+  await expect(page.locator('#bookingEditor')).toBeVisible();
+  await page.locator('#bookingCustomerName').fill('Ali');
+  await page.locator('#bookingDate').fill(FUTURE_DATE);
+  await page.locator('#bookingTotal').fill('900');
+  await page.locator('#bookingPaid').fill('300');
+  await expect(page.locator('#bookingRemaining')).toHaveValue('600');
+  await page.locator('[data-action="save-booking"]').click();
+  await expect(page.locator('#feedback')).toContainText('تم حفظ الحجز محليًا');
+  // RTL layout intact and no horizontal overflow on a phone-sized screen.
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+  );
+  expect(overflow).toBeLessThanOrEqual(1);
+  await page.locator('#bookingList [data-action="edit-booking"]').first().click();
+  await page.locator('#paymentSection summary').click();
+  await expect(page.locator('#paymentPanelNotice')).toBeVisible();
+});
+
 test('source has no old public auth or redirect patterns', async ({ page }) => {
   await mockRpc(page);
   await page.goto('/');

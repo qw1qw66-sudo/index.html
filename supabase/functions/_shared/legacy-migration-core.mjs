@@ -75,8 +75,13 @@ export function planLegacyMigration({
     seenIds.add(id);
 
     const rawPaid = b.paid;
+    // The app's normalizeData treats a missing paid field as 0 — mirror that.
+    if (rawPaid === undefined || rawPaid === null || rawPaid === "") {
+      report.skipped_zero_paid += 1;
+      continue;
+    }
     const paidNumber = typeof rawPaid === "number" ? rawPaid : Number(rawPaid);
-    if (rawPaid === undefined || rawPaid === null || Number.isNaN(paidNumber)) {
+    if (Number.isNaN(paidNumber)) {
       report.invalid.push({ id, reason: "PAID_NOT_A_NUMBER" });
       continue;
     }
