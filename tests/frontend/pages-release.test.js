@@ -1,0 +1,141 @@
+import { readFileSync, existsSync } from "node:fs";
+import { describe, expect, it } from "vitest";
+import { toolCatalogForModel } from "../../supabase/functions/_shared/assistant/tools.mjs";
+
+// GitHub Pages release + assistant-UX guarantees, checked against the real
+// index.html source and a simulated Pages artifact build.
+
+const html = readFileSync("index.html", "utf8");
+
+// Region between the JS marker and the next helper, holding the chat helpers.
+function jsRegion(from, to) {
+  const a = html.indexOf(from);
+  const b = html.indexOf(to, a);
+  return html.slice(a, b === -1 ? a + 4000 : b);
+}
+
+describe("build version", () => {
+  it("uses the __APP_BUILD__ placeholder and drops the old static version", () => {
+    expect(html).toContain("__APP_BUILD__");
+    expect(html).not.toContain("final-808d67d");
+    // The copy/open-current-version button exists.
+    expect(html).toContain('data-action="open-current-version"');
+    expect(html).toContain("__APP_BUILD_SHA__");
+  });
+});
+
+describe("robots + no accidental indexing", () => {
+  it("declares noindex,nofollow", () => {
+    expect(html).toMatch(/<meta\s+name="robots"\s+content="noindex,nofollow"\s*\/?>/);
+  });
+});
+
+describe("chat renders one clean answer", () => {
+  const region = jsRegion("function renderToolResults", "async function assistantCall");
+  it("read tools produce no chat bubble and never show a tool name or «تم جلب البيانات»", () => {
+    expect(region).not.toContain("تم جلب البيانات");
+    // No bubble is appended for read results (only prepared/completed actions).
+    expect(region).not.toMatch(/assistantAppend\([^)]*r\.tool/);
+    // Failures are logged to the hidden debug section, not shown as a bubble.
+    expect(region).toContain("log(");
+    expect(region).toContain('r.kind === "prepared_action"');
+    expect(region).toContain('r.kind === "completed_action"');
+  });
+});
+
+describe("assistant connection states", () => {
+  it("uses the five distinct states and never labels an unavailable model as connected", () => {
+    for (const s of ["متصل", "جارٍ التفكير", "غير متاح مؤقتاً", "وظائف الخادم غير منشورة", "فشل التحقق من الدخول"]) {
+      expect(html).toContain(s);
+    }
+    // The assistant_unavailable branch must NOT set "متصل".
+    const region = jsRegion("if (body.assistant_unavailable)", "} else if (body.ok)");
+    expect(region).toContain("غير متاح مؤقتاً");
+    expect(region).not.toContain('setAssistantConn("متصل"');
+  });
+});
+
+describe("suggested commands", () => {
+  const catalog = new Set(toolCatalogForModel().map((t) => t.name));
+  // Parse the tool bindings from ASSISTANT_SUGGESTIONS.
+  const block = jsRegion("const ASSISTANT_SUGGESTIONS", "function renderAssistantSuggestions");
+  const tools = [...block.matchAll(/tool:\s*"([a-z_]+)"/g)].map((m) => m[1]);
+
+  it("every visible suggestion maps to a genuinely registered read/prepare tool", () => {
+    expect(tools.length).toBeGreaterThanOrEqual(8);
+    for (const t of tools) {
+      expect(catalog.has(t), `suggestion tool ${t} must be in the model catalog`).toBe(true);
+    }
+  });
+
+  it("removes the automation-write suggestions (marketing stays disabled)", () => {
+    expect(html).not.toContain("شغل التسويق التلقائي");
+    expect(html).not.toContain("وقف التسويق التلقائي");
+  });
+});
+
+describe("environment badge", () => {
+  it("reads app_env and shows the staging test badge (never calls staging production)", () => {
+    expect(html).toContain("بيئة التجربة — Staging");
+    expect(html).toContain("applyEnvBadge");
+    // Driven by the setup-status app_env value.
+    expect(html).toMatch(/applyEnvBadge\(\s*body\.app_env\s*\)/);
+  });
+});
+
+// ---- Pages artifact: simulate the workflow build (copy + sed) ----
+describe("Pages artifact", () => {
+  const FAKE_SHA = "abcdef0123456789abcdef0123456789abcdef01";
+  const short = FAKE_SHA.slice(0, 7);
+  const dist = html
+    .replace(/__APP_BUILD__/g, "main-" + short)
+    .replace(/__APP_BUILD_SHA__/g, FAKE_SHA);
+
+  it("index.html and 404.html exist as the only app files", () => {
+    expect(existsSync("index.html")).toBe(true);
+    expect(existsSync("404.html")).toBe(true);
+  });
+
+  it("contains the assistant tab, setup card and six-tab navigation", () => {
+    expect(dist).toContain('id="tab-assistant"');
+    expect(dist).toContain('id="setupCard"');
+    const tabs = [...dist.matchAll(/<button class="tab-button[^"]*" data-tab="([a-z]+)"/g)].map((m) => m[1]);
+    expect(tabs).toEqual(["home", "bookings", "chalets", "reports", "assistant", "settings"]);
+  });
+
+  it("carries the injected main-<sha> version and no leftover placeholder", () => {
+    expect(dist).toContain("main-" + short);
+    expect(dist).not.toContain("__APP_BUILD__");
+    expect(dist).not.toContain("__APP_BUILD_SHA__");
+  });
+
+  it("contains no secret-shaped value (publishable anon key is allowed)", () => {
+    expect(dist).not.toMatch(/sk-[A-Za-z0-9]{20,}/);
+    expect(dist).not.toMatch(/sb_secret_[A-Za-z0-9]{10,}/);
+    expect(dist).not.toMatch(/-----BEGIN [A-Z ]*PRIVATE KEY-----/);
+    // A real leak is an assigned value on ONE line (`KEY="sk-..."`). The empty
+    // `"DEEPSEEK_API_KEY="` setup template is safe, so bound the value to a
+    // single line (mirrors the workflow's line-based grep).
+    expect(dist).not.toMatch(/DEEPSEEK_API_KEY\s*[:=]\s*["'][^"'\n]{8,}/);
+    // No service-role JWT assignment.
+    expect(dist).not.toMatch(/service_role[^\n]{0,40}ey[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}/);
+    expect(dist).toContain("sb_publishable_"); // expected public key
+  });
+
+  it("the workflow uploads only index.html + 404.html (no exports/supabase/tests/database)", () => {
+    const wf = readFileSync(".github/workflows/pages.yml", "utf8");
+    expect(wf).toContain("cp index.html dist/index.html");
+    expect(wf).toContain("cp 404.html dist/404.html");
+    expect(wf).toMatch(/find dist -type f \| wc -l.*-eq 2/s);
+    // Nothing but the two app files is copied into the artifact: no `cp` of a
+    // sensitive tree, and the guard that asserts those trees are absent stays.
+    expect(wf).not.toMatch(/cp\s+[^\n]*\b(database|supabase|exports|tests|scripts|node_modules)\b[^\n]*dist/);
+    expect(wf).toContain("test ! -e dist/database");
+    expect(wf).toContain("test ! -e dist/supabase");
+    // github-pages environment fix (the concrete cause of the failed run).
+    expect(wf).toContain("environment:");
+    expect(wf).toContain("name: github-pages");
+    expect(wf).toContain("url: ${{ steps.deployment.outputs.page_url }}");
+    expect(wf).not.toMatch(/^\s*pull_request:/m);
+  });
+});

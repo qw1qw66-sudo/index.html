@@ -6,6 +6,9 @@
       name="viewport"
       content="width=device-width,initial-scale=1,viewport-fit=cover"
     />
+    <!-- Reduce accidental indexing of a private single-owner app. This is NOT
+         a substitute for authentication (all data access is PIN-gated). -->
+    <meta name="robots" content="noindex,nofollow" />
     <title>نظام حجوزات الشاليهات</title>
     <style>
       /* ========================= CSS: variables (Apple-inspired light) ========================= */
@@ -1248,12 +1251,17 @@
             </p>
             <p class="muted settings-line">
               إصدار التطبيق:
-              <span id="appVersion" class="ltr">final-808d67d</span>
+              <span id="appVersion" class="ltr">__APP_BUILD__</span>
             </p>
-            <p class="muted settings-line">
-              إذا لم يظهر هذا الإصدار، افتح الرابط مع
-              <span class="ltr">?v=final-808d67d-v3</span> أو حدّث الصفحة.
-            </p>
+            <div class="actions">
+              <button
+                class="secondary"
+                data-action="open-current-version"
+                type="button"
+              >
+                فتح أحدث إصدار
+              </button>
+            </div>
             <div class="actions">
               <button
                 id="uploadButton"
@@ -1511,6 +1519,14 @@
     <script>
       (function () {
         "use strict";
+        // Build version. These placeholders are replaced at GitHub Pages
+        // artifact time with main-<short sha> and the full commit sha. In local
+        // dev they stay as placeholders (handled gracefully below).
+        const APP_BUILD = "__APP_BUILD__";
+        const APP_BUILD_SHA = "__APP_BUILD_SHA__";
+        function buildInjected(v) {
+          return typeof v === "string" && v.indexOf("__APP_BUILD") !== 0;
+        }
         // Production Supabase (the default, unchanged). A SEPARATE staging
         // project can be opened explicitly via ?env=staging using ONLY
         // non-secret values (Project Ref + publishable key) saved from the
@@ -1801,6 +1817,58 @@
           } catch (e) {}
           scrollIntoViewIfNeeded(box);
         }
+        // Non-blocking environment badge, driven by app_env from
+        // chalet-setup-status (or explicit ?env=staging). The approved project
+        // currently reports staging, so the badge reads "بيئة التجربة — Staging".
+        // We never call the environment "production" while APP_ENV=staging.
+        function applyEnvBadge(appEnv) {
+          const staging = appEnv === "staging" || IS_STAGING_MODE;
+          let b = $("stagingBadge");
+          if (!staging) {
+            if (b) b.remove();
+            return;
+          }
+          if (!b) {
+            b = document.createElement("div");
+            b.id = "stagingBadge";
+            b.style.cssText =
+              "position:sticky;top:0;z-index:999;text-align:center;padding:6px 10px;background:var(--g-soft);color:var(--g);font-weight:700;font-size:13px;border-bottom:1px solid var(--l2)";
+            document.body.prepend(b);
+          }
+          b.textContent = "بيئة التجربة — Staging";
+        }
+        // Learn app_env quietly after login (setup-status is PIN-gated). Never
+        // blocks and fails silently.
+        async function refreshEnvBadge() {
+          if (!loadedWorkspace || !workspaceKey || !accessPin) return;
+          try {
+            const res = await fetch(
+              SUPABASE_URL + "/functions/v1/chalet-setup-status",
+              {
+                method: "POST",
+                headers: {
+                  apikey: SUPABASE_ANON_KEY,
+                  Authorization: "Bearer " + SUPABASE_ANON_KEY,
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                  workspace_key: workspaceKey,
+                  access_pin: accessPin,
+                }),
+              },
+            );
+            if (!res.ok) return;
+            const b = await res.json().catch(() => null);
+            if (b && b.ok) applyEnvBadge(b.app_env);
+          } catch (e) {}
+        }
+        function openCurrentVersion() {
+          const base = location.origin + location.pathname;
+          const url = buildInjected(APP_BUILD_SHA)
+            ? base + "?v=" + encodeURIComponent(APP_BUILD_SHA)
+            : base;
+          window.open(url, "_blank", "noopener,noreferrer");
+        }
         function tryAssistantSample() {
           showTab("assistant");
           const input = $("assistantInput");
@@ -1893,6 +1961,7 @@
             return;
           }
           setSetupRow("setupStatusFunctions", "linked");
+          applyEnvBadge(body.app_env);
           setSetupRow(
             "setupStatusDeepseek",
             body.deepseek_configured ? "linked" : "unlinked",
@@ -2363,6 +2432,9 @@
             lastCloudUpdatedAt,
           });
           persistSessionSnapshot();
+          // Quietly learn the environment (staging vs production) to show the
+          // non-blocking badge. Never blocks login; fails silently.
+          refreshEnvBadge();
         }
         async function pullWorkspace() {
           log("Login clicked");
@@ -3999,6 +4071,7 @@
           if (a === "upload") return uploadChanges();
           if (a === "set-theme-light") return setTheme("light");
           if (a === "set-theme-dark") return setTheme("dark");
+          if (a === "open-current-version") return openCurrentVersion();
           // Setup helpers that only open an official page, copy key names, or
           // store the NON-SECRET staging ref work without a loaded workspace
           // (they never touch workspace data or any secret).
@@ -4087,18 +4160,20 @@
           assistantBackendMissing = false,
           assistantBusy = false;
         const assistantTokens = {}; // action_id -> confirmation_token (kept out of model context)
+        // Every visible suggestion maps to a genuinely registered read/prepare
+        // tool (the `tool` field). Automation is write-disabled by design, so no
+        // "run/stop marketing" command is offered — only read-status commands.
         const ASSISTANT_SUGGESTIONS = [
-          "شنو حجوزات اليوم؟",
-          "اعرض الأيام الفاضية هذا الأسبوع",
-          "من عليه مبالغ متبقية؟",
-          "جهز حجز جديد",
-          "جهز رسالة تأكيد للعميل",
-          "جهز عرض للأيام الفاضية",
-          "شغل التسويق التلقائي",
-          "وقف التسويق التلقائي",
-          "اعرض نتيجة آخر حملة",
-          "كم حجز جابه المساعد؟",
-          "كم دخل جابه التسويق؟",
+          { text: "شنو حجوزات اليوم؟", tool: "get_today_bookings" },
+          { text: "اعرض الحجوزات القادمة", tool: "list_bookings" },
+          { text: "اعرض الأيام الفاضية هذا الأسبوع", tool: "find_empty_dates" },
+          { text: "من عليه مبالغ متبقية؟", tool: "list_outstanding_balances" },
+          { text: "جهز حجز جديد", tool: "prepare_booking_create" },
+          { text: "جهز رسالة تأكيد للعميل", tool: "draft_booking_confirmation" },
+          { text: "جهز تذكير دفع", tool: "draft_payment_reminder" },
+          { text: "اعرض حالة التسويق", tool: "get_automation_status" },
+          { text: "اعرض نتيجة آخر حملة", tool: "get_campaign_results" },
+          { text: "كم دخل جابه التسويق؟", tool: "get_attributed_revenue" },
         ];
         function renderAssistantSuggestions() {
           const el = $("assistantSuggestions");
@@ -4106,9 +4181,9 @@
           el.innerHTML = ASSISTANT_SUGGESTIONS.map(
             (s) =>
               '<button class="tiny" type="button" data-action="assistant-suggest" data-suggest="' +
-              esc(s) +
+              esc(s.text) +
               '">' +
-              esc(s) +
+              esc(s.text) +
               "</button>",
           ).join("");
         }
@@ -4150,15 +4225,26 @@
         }
         function renderToolResults(results) {
           (results || []).forEach((r) => {
-            if (r.kind === "prepared_action" && r.ok) renderPreparedAction(r);
-            else if (r.kind === "read" && r.ok) {
-              // Read results are informational; show a compact note.
-              assistantAppend("bot", "📋 " + (r.tool || "") + ": تم جلب البيانات.");
-            } else if (r.ok === false) {
-              assistantAppend(
-                "bot",
-                "تعذّر تنفيذ (" + (r.tool || r.requested || "أداة") + "): " + (r.error || ""),
-              );
+            // Prepared actions still render their confirmation card.
+            if (r.kind === "prepared_action" && r.ok) {
+              renderPreparedAction(r);
+              return;
+            }
+            // A completed confirmed action still shows a concise Arabic result.
+            if (r.kind === "completed_action" && r.ok) {
+              assistantAppend("bot", "✅ " + assistantResultMessage(r.result));
+              return;
+            }
+            // Successful READ tools produce NO chat bubble: the server's
+            // reply_ar is the single, natural final answer. Failures never
+            // surface a raw tool name or internal error code in the chat — the
+            // grounded reply_ar explains it; redacted diagnostics go only to the
+            // hidden debug log.
+            if (r.ok === false) {
+              log("[assistant] tool result failed", {
+                tool: r.tool || r.requested || null,
+                error: r.error || null,
+              });
             }
           });
         }
@@ -4179,7 +4265,7 @@
           });
           if (res.status === 404) {
             assistantBackendMissing = true;
-            setAssistantConn("غير مفعّل بعد على الخادم", "bad");
+            setAssistantConn("وظائف الخادم غير منشورة", "bad");
             const e = new Error("ASSISTANT_NOT_DEPLOYED");
             e.notDeployed = true;
             throw e;
@@ -4204,12 +4290,16 @@
           assistantAppend("user", message);
           assistantBusy = true;
           $("assistantSendButton").disabled = true;
-          setAssistantConn("...جارٍ التفكير", "");
+          setAssistantConn("جارٍ التفكير", "");
           try {
             const body = await assistantCall({ message });
             if (body.assistant_unavailable) {
-              setAssistantConn("متصل", "ok");
-              assistantAppend("bot", body.reply_ar || "تعذّر تنفيذ الطلب. لم يتغيّر شيء.");
+              // The model/assistant service is down — NOT connected.
+              setAssistantConn("غير متاح مؤقتاً", "bad");
+              assistantAppend(
+                "bot",
+                "تعذّر الوصول إلى المساعد حالياً، ولم يتم تنفيذ أي إجراء.",
+              );
             } else if (body.ok) {
               setAssistantConn("متصل", "ok");
               // The server owns thread creation; reuse the id it returns so the
@@ -4226,9 +4316,13 @@
                 "bot",
                 "المساعد الذكي غير مفعّل بعد على الخادم. يعمل باقي التطبيق بشكل طبيعي.",
               );
-            else if (e.message === "AUTH")
+            else if (e.message === "AUTH") {
+              setAssistantConn("فشل التحقق من الدخول", "bad");
               assistantAppend("bot", "بيانات الدخول غير صحيحة للمساعد.");
-            else assistantAppend("bot", "تعذّر الاتصال بالمساعد. لم يتغيّر شيء.");
+            } else {
+              setAssistantConn("غير متاح مؤقتاً", "bad");
+              assistantAppend("bot", "تعذّر الاتصال بالمساعد. لم يتغيّر شيء.");
+            }
           } finally {
             assistantBusy = false;
             $("assistantSendButton").disabled = false;
@@ -4330,15 +4424,14 @@
         document.addEventListener("DOMContentLoaded", () => {
           log("DOMContentLoaded: attaching event listeners");
           applyTheme(readStoredTheme());
-          // Visible, unmissable marker when running against the staging project.
+          // Build version (main-<sha> injected at Pages build; a dev label
+          // otherwise). Never blocks anything.
+          const verEl = $("appVersion");
+          if (verEl) verEl.textContent = buildInjected(APP_BUILD) ? APP_BUILD : "dev";
+          // Explicit staging mode (?env=staging) shows the badge immediately.
           if (IS_STAGING_MODE) {
             document.title = "Staging — " + document.title;
-            const b = document.createElement("div");
-            b.id = "stagingBadge";
-            b.textContent = "بيئة Staging — بيانات تجريبية";
-            b.style.cssText =
-              "position:sticky;top:0;z-index:999;text-align:center;padding:6px 10px;background:var(--g-soft);color:var(--g);font-weight:700;font-size:13px;border-bottom:1px solid var(--l2)";
-            document.body.prepend(b);
+            applyEnvBadge("staging");
             const openBtn = document.querySelector('[data-action="setup-open-staging"]');
             if (openBtn) openBtn.textContent = "أنت داخل نسخة Staging";
           }

@@ -28,8 +28,13 @@ import { redactText, redactObject } from "../_shared/assistant/redact.mjs";
 // The model gets at most TWO calls per turn (request tools -> ground the reply
 // on the tool results) and may request at most this many tools per turn.
 const MAX_TOOLS_PER_TURN = 5;
+// The grounding (second) call returns the FINAL answer only — never planning
+// text, never internal tool names, never error codes.
 const SECOND_STAGE_INSTRUCTION =
-  "لخّص نتائج الأدوات التالية للمستخدم بالعربية بإيجاز ودقّة. لا تطلب أدوات جديدة، ولا تدّعِ تنفيذ أي إجراء لم تُعِده الأداة فعلياً.";
+  "هذه نتائج الأدوات. أعطِ الآن الإجابة النهائية فقط بالعربية الطبيعية المختصرة. " +
+  "لا تذكر أسماء الأدوات الداخلية، ولا أكواد الأخطاء، ولا JSON. " +
+  "لا تكرّر عبارات مثل «جاري» أو «سأجلب» بعد توفّر النتائج. " +
+  "لا تدّعِ إتمام أي حفظ أو إجراء ما لم تُعِده الأداة كإجراء مكتمل.";
 
 function json(status, body) {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -167,7 +172,9 @@ export async function handleAssistant(req, deps) {
       usage = second.usage;
       modelName = second.model;
     } else {
-      replyAr = renderFallbackAr(results, first.reply || "");
+      // Deterministic safety net — describes the ACTUAL returned data. It does
+      // NOT reuse the stage-1 planning reply (first.reply).
+      replyAr = renderFallbackAr(results);
     }
   }
 
@@ -198,31 +205,45 @@ function sanitizeResultsForModel(results) {
 }
 
 // Deterministic Arabic renderer — the safety net when the grounding model call
-// is unavailable. It NEVER claims an action completed unless the tool said so.
-function renderFallbackAr(results, seed) {
+// is unavailable. It describes the ACTUAL returned data in natural Arabic and
+// NEVER exposes an internal tool name, a raw error code, or the stage-1 seed,
+// and NEVER claims an action completed unless the tool said so.
+function renderFallbackAr(results) {
   const lines = [];
+  let anyFailure = false;
   for (const r of results) {
     if (!r) continue;
-    if (r.ok === false) { lines.push(`• تعذّر تنفيذ «${r.tool || r.requested || "أداة"}» (${r.error || "خطأ"}).`); continue; }
-    if (r.kind === "prepared_action") { lines.push(`• ${r.summary_ar || "إجراء مُجهّز — بانتظار تأكيدك."}`); continue; }
-    if (r.kind === "completed_action") { lines.push(`• ${r.done_ar || "تم تنفيذ الإجراء وتأكيده من الخادم."}`); continue; }
-    if (r.kind === "read") { lines.push(`• ${describeReadAr(r.tool, r.result)}`); continue; }
+    if (r.ok === false) { anyFailure = true; continue; } // no tool name, no error code
+    if (r.kind === "prepared_action") { lines.push(r.summary_ar || "جهّزت الإجراء — بانتظار تأكيدك."); continue; }
+    if (r.kind === "completed_action") { lines.push(r.done_ar || "تم تنفيذ الإجراء وتأكيده من الخادم."); continue; }
+    if (r.kind === "read") { const d = describeReadAr(r.result); if (d) lines.push(d); continue; }
   }
-  const head = seed && seed.trim() ? seed.trim() : "النتائج:";
-  return (lines.length ? head + "\n" + lines.join("\n") : head).slice(0, 2000);
+  if (!lines.length) {
+    return anyFailure
+      ? "تعذّر إكمال الطلب حالياً، ولم يتغيّر شيء. حاول مرة أخرى."
+      : "تمام.";
+  }
+  return lines.join("\n").slice(0, 2000);
 }
 
-function describeReadAr(tool, result) {
+// Natural Arabic description of a read result — no tool name, no raw error code.
+function describeReadAr(result) {
   const r = result && typeof result === "object" ? result : {};
-  if (Array.isArray(r.bookings)) return `عدد الحجوزات: ${r.bookings.length}.`;
-  if (Array.isArray(r.available)) return `الفترات المتاحة: ${r.available.length}.`;
-  if (Array.isArray(r.empty)) return `الأيام/الفترات الفاضية: ${r.empty.length}.`;
+  if (Array.isArray(r.bookings)) {
+    const n = r.bookings.length;
+    if (n === 0) return "لا توجد حجوزات مطابقة.";
+    if (n === 1) return "يوجد حجز واحد.";
+    if (n === 2) return "يوجد حجزان.";
+    return `يوجد ${n} حجوزات.`;
+  }
+  if (Array.isArray(r.available)) return r.available.length ? `الفترات المتاحة: ${r.available.length}.` : "لا توجد فترات متاحة.";
+  if (Array.isArray(r.empty)) return r.empty.length ? `الأيام/الفترات الفاضية: ${r.empty.length}.` : "لا توجد أيام فاضية.";
   if (Array.isArray(r.transactions)) return `عدد الحركات المالية: ${r.transactions.length}.`;
   if (Array.isArray(r.payments)) return `عدد المدفوعات: ${r.payments.length}.`;
   if (Array.isArray(r.rules)) return `عدد قواعد التسويق: ${r.rules.length}.`;
-  if (r.error) return `تعذّر الجلب (${r.error}).`;
   if (typeof r.draft === "string" && r.draft) return r.draft;
-  return "تم جلب البيانات من الخادم.";
+  if (r.error) return "تعذّر جلب هذه المعلومة حالياً.";
+  return "";
 }
 
 // Execute one normalized tool call. Returns a plain result object (raw=true) or
