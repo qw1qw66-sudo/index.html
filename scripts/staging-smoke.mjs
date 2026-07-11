@@ -142,6 +142,17 @@ async function main() {
     record("real_chalet_catalog_read", r.status === 200 && b.ok === true && b.model_calls === 0 && names.includes("شاليه تولوم") && names.includes("شاليه سكاي"), r.status);
   }
 
+  // 6c. «شنو حجوزات اليوم؟» answers DETERMINISTICALLY (zero model calls): one
+  // natural Arabic reply, no internal tool name, no filler bubble text — this
+  // basic owner question must survive any model-provider outage.
+  {
+    const r = await assistant({ message: "شنو حجوزات اليوم؟" });
+    const b = r.json || {};
+    const clean = typeof b.reply_ar === "string" && b.reply_ar.length > 0 &&
+      !b.reply_ar.includes("get_today_bookings") && !b.reply_ar.includes("تم جلب البيانات") && !b.reply_ar.includes("جاري");
+    record("deterministic_today_read", r.status === 200 && b.ok === true && b.model_calls === 0 && clean, r.status + ":model_calls=" + b.model_calls);
+  }
+
   // 6. setup-status with valid auth: booleans only, staging env, DeepSeek ready.
   {
     const r = await http("POST", "/functions/v1/chalet-setup-status", { body: { workspace_key: WS_KEY, access_pin: PIN } });
@@ -203,6 +214,15 @@ async function main() {
       const listB = await assistant({ invoke_tool: { name: "list_bookings", arguments: { from: RIYADH_TOMORROW, to: RIYADH_TOMORROW } } });
       const n = listB.json && listB.json.result && Array.isArray(listB.json.result.bookings) ? listB.json.result.bookings.length : -1;
       record("booking_exactly_one", n === 1, "count=" + n);
+
+      // 9b. REPLAY the exact same confirmation (double-tap / retry): the server
+      // must return the stored outcome (replayed) and NEVER create a second
+      // booking — the single-use token is the last line of defence.
+      const replay = await assistant({ invoke_tool: { name: "confirm_booking_create", arguments: { action_id: p.action_id, confirmation_token: p.confirmation_token } } });
+      const rp = replay.json || {};
+      const again = await assistant({ invoke_tool: { name: "list_bookings", arguments: { from: RIYADH_TOMORROW, to: RIYADH_TOMORROW } } });
+      const n2 = again.json && again.json.result && Array.isArray(again.json.result.bookings) ? again.json.result.bookings.length : -1;
+      record("booking_replay_blocked", replay.status === 200 && rp.replayed === true && n2 === 1, replay.status + ":replayed=" + rp.replayed + ",count=" + n2);
     }
   }
 

@@ -29,6 +29,20 @@ on:
         description: "Git ref to deploy (branch, tag, or SHA)"
         required: true
         default: "main"
+  # Backend continuous deploy: a push to main that touches server code (or
+  # this workflow / the smoke) deploys automatically. The owner operates from
+  # an iPhone and API workflow-dispatch is not available to every session, so
+  # merged backend fixes must reach staging without a manual click. Frontend
+  # (index.html) pushes do NOT trigger this — GitHub Pages handles those.
+  # On push, inputs.deploy_ref is empty and the checkout step falls back to
+  # the pushed main SHA, which is exactly the ref being deployed.
+  push:
+    branches:
+      - main
+    paths:
+      - "supabase/**"
+      - "scripts/staging-smoke.mjs"
+      - ".github/workflows/deploy-supabase-staging.yml"
 
 permissions:
   contents: read
