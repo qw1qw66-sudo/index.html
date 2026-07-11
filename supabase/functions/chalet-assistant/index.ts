@@ -295,8 +295,9 @@ function makeDeps() {
           return b && b.ok ? { ok: true, order: b.order } : { ok: false, error: (b && b.error) || "PAYMENT_LINK_FAILED" };
         },
         async getBookingPayments(k: string, pin: string, bookingId: string) {
-          const { data } = await supabase.rpc("get_booking_payments", { p_workspace_key: k, p_access_pin: pin, p_booking_id: bookingId });
-          if (!data) return { ok: false, error: "PAYMENT_READ_FAILED" };
+          const { data, error } = await supabase.rpc("get_booking_payments", { p_workspace_key: k, p_access_pin: pin, p_booking_id: bookingId });
+          if (error) return { ok: false, error: "PAYMENT_READ_" + ((error as { code?: string }).code ?? "FAILED") };
+          if (!data) return { ok: false, error: "PAYMENT_READ_EMPTY" };
           return data;
         },
         async resolveCustomerPhone(k: string, _pin: string, bookingId: string) {

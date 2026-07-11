@@ -79,6 +79,7 @@ describe("supabase/migrations — single, ordered source of truth", () => {
       "20260701000002_payment_ledger.sql",
       "20260711000003_chalet_assistant.sql",
       "20260711000004_pgcrypto_search_path.sql",
+      "20260711000005_payment_reads_volatile.sql",
     ]);
   });
 

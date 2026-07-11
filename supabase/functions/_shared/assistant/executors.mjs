@@ -208,7 +208,11 @@ async function bookingCancel(wsKey, pin, args, deps) {
   let paidHalalas;
   try {
     const pay = await deps.getBookingPayments(wsKey, pin, bookingId);
-    if (!pay || pay.ok === false) return { ok: false, error: "PAYMENT_CHECK_FAILED" };
+    if (!pay || pay.ok === false) {
+      // Fail closed, but carry the inner code so the real cause is visible.
+      const inner = pay && pay.error ? ":" + String(pay.error).slice(0, 40) : "";
+      return { ok: false, error: "PAYMENT_CHECK_FAILED" + inner };
+    }
     paidHalalas = Number(pay.net_paid_halalas || pay.summary?.net_paid_halalas || 0) || 0;
   } catch {
     return { ok: false, error: "PAYMENT_CHECK_FAILED" };
