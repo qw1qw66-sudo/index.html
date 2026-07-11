@@ -45,8 +45,8 @@ describe("19. no secrets in the frontend or committed payment sources", () => {
     const files = [
       ...walk("supabase/functions"),
       "scripts/migrate-legacy-paid.mjs",
-      "database/migrations/0001_atomic_workspace_save.sql",
-      "database/migrations/0002_payment_ledger.sql",
+      "supabase/migrations/20260701000001_atomic_workspace_save.sql",
+      "supabase/migrations/20260701000002_payment_ledger.sql",
     ];
     for (const f of files) {
       const text = readFileSync(f, "utf8");

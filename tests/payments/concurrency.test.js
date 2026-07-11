@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 // Compare-and-save semantics of save_shared_workspace_v2
-// (database/migrations/0001). The SQL itself was verified against a real
+// (supabase/migrations/20260701000001). The SQL itself was verified against a real
 // PostgreSQL 16 instance (32-scenario smoke suite — see the PR notes); this
 // model mirrors those verified semantics so the multi-device protocol
 // outcomes stay pinned in fast unit tests.

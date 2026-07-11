@@ -361,8 +361,53 @@
         max-width: 1080px;
         margin: auto;
         display: grid;
-        grid-template-columns: repeat(5, 1fr);
+        grid-template-columns: repeat(6, 1fr);
         gap: 4px;
+      }
+      /* Chat bubbles for the assistant tab */
+      .chat-log {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        max-height: 52vh;
+        overflow-y: auto;
+        padding: 4px;
+      }
+      .chat-msg {
+        max-width: 85%;
+        padding: 10px 14px;
+        border-radius: 16px;
+        font-size: 14px;
+        line-height: 1.5;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      .chat-user {
+        align-self: flex-start;
+        background: var(--g-soft);
+        color: var(--t);
+      }
+      .chat-bot {
+        align-self: flex-end;
+        background: var(--soft);
+        border: 1px solid var(--l2);
+      }
+      .chat-suggest {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin: 8px 0;
+      }
+      .chat-suggest .tiny {
+        background: var(--g-soft);
+        color: var(--g);
+      }
+      .action-card {
+        border: 1px solid var(--g2);
+        border-radius: 14px;
+        padding: 12px;
+        margin: 8px 0;
+        background: var(--card);
       }
       .tab-button {
         background: transparent;
@@ -623,6 +668,80 @@
         .header-actions .badge {
           display: none;
         }
+      }
+      /* ===== Mobile setup (إعداد الربط) — button-only, no secret inputs ===== */
+      .setup-rows {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        margin: 12px 0;
+      }
+      .setup-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 10px;
+        padding: 11px 13px;
+        background: var(--soft);
+        border: 1px solid var(--l2);
+        border-radius: 12px;
+      }
+      .setup-row .setup-label {
+        font-size: 14px;
+        color: var(--t);
+      }
+      .setup-status {
+        font-size: 13px;
+        font-weight: 600;
+        padding: 3px 11px;
+        border-radius: 999px;
+        white-space: nowrap;
+      }
+      .setup-ok {
+        color: var(--ok);
+        background: var(--ok-soft);
+      }
+      .setup-bad {
+        color: var(--r);
+        background: var(--r-soft);
+      }
+      .setup-warn {
+        color: var(--g);
+        background: var(--g-soft);
+      }
+      .setup-muted {
+        color: var(--m);
+        background: transparent;
+      }
+      .setup-actions {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        margin: 14px 0;
+      }
+      /* Large, full-width tap targets for iPhone Safari. */
+      .setup-btn {
+        width: 100%;
+        min-height: 54px;
+        font-size: 16px;
+        border-radius: 14px;
+      }
+      .setup-note {
+        font-size: 13px;
+        line-height: 1.75;
+        color: var(--m);
+      }
+      .setup-result {
+        min-height: 20px;
+        font-weight: 600;
+        color: var(--t);
+      }
+      .setup-steps {
+        margin: 8px 0 0;
+        padding-inline-start: 20px;
+        line-height: 1.95;
+        font-size: 14px;
+        color: var(--t);
       }
     </style>
   </head>
@@ -1055,6 +1174,46 @@
             </ul>
           </details>
         </section>
+        <!-- ========================= HTML: assistant tab ========================= -->
+        <section id="tab-assistant" class="view">
+          <div class="card">
+            <div class="actions between">
+              <h3>المساعد الذكي</h3>
+              <button class="secondary tiny" data-action="assistant-new" type="button">
+                محادثة جديدة
+              </button>
+            </div>
+            <p id="assistantStatus" class="muted settings-line">
+              حالة الاتصال بالمساعد: <span id="assistantConn">—</span>
+            </p>
+            <div class="chat-suggest" id="assistantSuggestions"></div>
+            <div id="assistantLog" class="chat-log"></div>
+            <div id="assistantActions"></div>
+            <div class="actions">
+              <input
+                id="assistantInput"
+                placeholder="اكتب سؤالك أو طلبك بالعربية…"
+                autocomplete="off"
+              />
+            </div>
+            <div class="actions">
+              <button
+                id="assistantSendButton"
+                class="primary"
+                data-action="assistant-send"
+                type="button"
+              >
+                إرسال</button
+              ><button class="secondary" data-action="assistant-retry" type="button">
+                إعادة المحاولة
+              </button>
+            </div>
+            <p class="muted settings-line" id="assistantHint">
+              المساعد يقرأ ويقترح تلقائياً، لكن أي تعديل أو دفعة أو رسالة تتطلب
+              تأكيدك. لا يُعتبر أي إجراء منفَّذاً إلا بعد تأكيد الخادم.
+            </p>
+          </div>
+        </section>
         <!-- ========================= HTML: settings tab ========================= -->
         <section id="tab-settings" class="view">
           <div id="settingsIdentityCard" class="card">
@@ -1129,6 +1288,200 @@
               </button>
             </div>
           </div>
+          <!-- ========================= HTML: mobile setup (إعداد الربط) ========================= -->
+          <div id="setupCard" class="card setup-card">
+            <h3>إعداد المساعد الذكي</h3>
+            <p class="setup-note">
+              اربط المساعد الذكي من جوالك خطوة بخطوة. لا تُدخل أي مفتاح داخل هذا
+              البرنامج — المفاتيح تُضاف فقط في صفحة Supabase الرسمية.
+            </p>
+            <div class="setup-rows" id="setupStatusRows">
+              <div class="setup-row">
+                <span class="setup-label">مشروع Supabase</span
+                ><span id="setupStatusSupabase" class="setup-status setup-muted"
+                  >غير مربوط</span
+                >
+              </div>
+              <div class="setup-row">
+                <span class="setup-label">وظائف الخادم</span
+                ><span id="setupStatusFunctions" class="setup-status setup-muted"
+                  >غير مربوط</span
+                >
+              </div>
+              <div class="setup-row">
+                <span class="setup-label">DeepSeek</span
+                ><span id="setupStatusDeepseek" class="setup-status setup-muted"
+                  >غير مربوط</span
+                >
+              </div>
+              <div class="setup-row">
+                <span class="setup-label">مفتاح التأكيد</span
+                ><span id="setupStatusConfirm" class="setup-status setup-muted"
+                  >غير مربوط</span
+                >
+              </div>
+              <div class="setup-row">
+                <span class="setup-label">الأوتوبايلوت</span
+                ><span id="setupStatusAutopilot" class="setup-status setup-muted"
+                  >غير مفعل</span
+                >
+              </div>
+              <div class="setup-row">
+                <span class="setup-label">واتساب الرسمي</span
+                ><span id="setupStatusWhatsapp" class="setup-status setup-muted"
+                  >غير مفعل</span
+                >
+              </div>
+            </div>
+            <p class="setup-result" id="setupCheckResult"></p>
+            <div class="setup-actions">
+              <button
+                class="primary setup-btn"
+                data-action="setup-open-secrets"
+                type="button"
+              >
+                فتح صفحة إضافة المفاتيح
+              </button>
+              <p class="setup-note">
+                تفتح صفحة Supabase الرسمية. اختر مشروع الشاليه، الصق أسماء المفاتيح
+                وقيمها، ثم اضغط Save. لا تُحفظ المفاتيح داخل برنامج الشاليه.
+              </p>
+              <button
+                class="secondary setup-btn"
+                data-action="setup-copy-template"
+                type="button"
+              >
+                نسخ قائمة المفاتيح
+              </button>
+              <button
+                class="primary setup-btn"
+                data-action="setup-check"
+                type="button"
+              >
+                فحص الربط
+              </button>
+              <button
+                class="secondary setup-btn"
+                data-action="setup-open-deploy"
+                type="button"
+              >
+                فتح صفحة النشر
+              </button>
+              <p class="setup-note">
+                بعد إضافة المفاتيح، افتح GitHub Actions وشغّل Deploy Supabase
+                Staging.
+              </p>
+            </div>
+            <hr class="settings-divider" />
+            <h4>١) مشروع Staging (بيئة تجريبية منفصلة)</h4>
+            <div class="setup-actions">
+              <button
+                class="primary setup-btn"
+                data-action="setup-open-staging-project"
+                type="button"
+              >
+                إنشاء أو فتح مشروع Staging
+              </button>
+              <ol class="setup-steps">
+                <li>سجّل الدخول إلى Supabase.</li>
+                <li>
+                  أنشئ مشروعاً جديداً باسم قريب من:
+                  <span class="ltr">chalet-booking-staging</span>
+                </li>
+                <li>اختر منطقة قريبة من السعودية.</li>
+                <li>احفظ كلمة مرور قاعدة البيانات في مدير كلمات المرور.</li>
+                <li>بعد إنشاء المشروع ارجع هنا واضغط: تم إنشاء Staging</li>
+              </ol>
+              <button
+                class="secondary setup-btn"
+                data-action="setup-staging-created"
+                type="button"
+              >
+                تم إنشاء Staging
+              </button>
+              <div id="stagingConnectBox" class="hidden">
+                <p class="setup-note">
+                  انسخ من صفحة إعدادات المشروع القيمتين غير السرّيتين فقط:
+                  معرّف المشروع (Project Ref) والمفتاح العام (publishable).
+                  لا تنسخ كلمة مرور قاعدة البيانات ولا أي مفتاح سرّي إلى هنا.
+                </p>
+                <div class="grid">
+                  <div>
+                    <label>معرّف مشروع Staging (Project Ref)</label
+                    ><input id="stagingRefInput" class="ltr" autocomplete="off" />
+                  </div>
+                  <div>
+                    <label>المفتاح العام (publishable)</label
+                    ><input id="stagingAnonInput" class="ltr" autocomplete="off" />
+                  </div>
+                </div>
+                <div class="setup-actions">
+                  <button
+                    class="primary setup-btn"
+                    data-action="setup-save-staging-config"
+                    type="button"
+                  >
+                    حفظ إعدادات Staging
+                  </button>
+                  <button
+                    class="secondary setup-btn"
+                    data-action="setup-open-staging"
+                    type="button"
+                  >
+                    فتح نسخة Staging
+                  </button>
+                </div>
+              </div>
+              <button
+                class="primary setup-btn hidden"
+                data-action="setup-try-assistant"
+                type="button"
+              >
+                تجربة المساعد
+              </button>
+            </div>
+            <hr class="settings-divider" />
+            <h4>٢) أسرار النشر في GitHub</h4>
+            <div class="setup-actions">
+              <button
+                class="secondary setup-btn"
+                data-action="setup-open-github-secrets"
+                type="button"
+              >
+                فتح أسرار GitHub للنشر
+              </button>
+              <p class="setup-note">
+                السرّان الموجودان مسبقاً يُعاد استخدامهما كما هما:
+                <span class="ltr">SUPABASE_URL</span> و
+                <span class="ltr">SUPABASE_ANON_KEY</span>. أضف فقط
+                السرّين الناقصين:<br />
+                <span class="ltr">SUPABASE_ACCESS_TOKEN</span> — أنشئه من صفحة
+                <a
+                  href="https://supabase.com/dashboard/account/tokens"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  >Access Tokens</a
+                >
+                في حساب Supabase.<br />
+                <span class="ltr">SUPABASE_DB_PASSWORD</span> — كلمة مرور قاعدة
+                البيانات للمشروع.<br />
+                لا تضف أبداً مفتاح
+                <span class="ltr">SERVICE ROLE</span> — الخادم يستلمه من
+                Supabase تلقائياً ولا يدخل GitHub أو المتصفح.
+              </p>
+            </div>
+            <hr class="settings-divider" />
+            <h4>خطوات الإعداد من الجوال</h4>
+            <ol class="setup-steps">
+              <li>أنشئ مشروع Staging ثم اضغط «تم إنشاء Staging».</li>
+              <li>الصق معرّف المشروع والمفتاح العام واحفظ.</li>
+              <li>افتح صفحة إضافة المفاتيح، اختر مشروع Staging، الصق القائمة مع مفتاح DeepSeek واضغط Save.</li>
+              <li>افتح أسرار GitHub للنشر وأضف الأسرار الأربعة.</li>
+              <li>افتح صفحة النشر وشغّل Deploy Supabase Staging.</li>
+              <li>افتح نسخة Staging، سجّل حساباً تجريبياً، واضغط فحص الربط.</li>
+              <li>جرّب سؤال: ما هي حجوزات اليوم؟</li>
+            </ol>
+          </div>
         </section>
         <!-- ========================= HTML: bottom navigation ========================= -->
         <nav class="bottom-nav">
@@ -1141,6 +1494,8 @@
               <span class="icon">⌘</span><span>الشاليهات</span></button
             ><button class="tab-button" data-tab="reports">
               <span class="icon">▦</span><span>التقارير</span></button
+            ><button class="tab-button" data-tab="assistant">
+              <span class="icon">✦</span><span>المساعد</span></button
             ><button class="tab-button" data-tab="settings">
               <span class="icon">⚙️</span><span>الإعدادات</span>
             </button>
@@ -1156,8 +1511,50 @@
     <script>
       (function () {
         "use strict";
-        const SUPABASE_URL = "https://fkqidesfrtpwzjcimjoe.supabase.co",
-          SUPABASE_ANON_KEY = "sb_publishable_Uks_PYr6aqY5wnNBjDjTgg_z2Ic6_al";
+        // Production Supabase (the default, unchanged). A SEPARATE staging
+        // project can be opened explicitly via ?env=staging using ONLY
+        // non-secret values (Project Ref + publishable key) saved from the
+        // setup page. The live production default is never redirected.
+        const PROD_SUPABASE_URL = "https://fkqidesfrtpwzjcimjoe.supabase.co",
+          PROD_SUPABASE_ANON_KEY = "sb_publishable_Uks_PYr6aqY5wnNBjDjTgg_z2Ic6_al";
+        const STAGING_REF_STORAGE_KEY = "staging_project_ref",
+          STAGING_PUBLISHABLE_STORAGE_KEY = "staging_publishable_key";
+        function readStagingConfig() {
+          try {
+            const ref = String(
+              localStorage.getItem(STAGING_REF_STORAGE_KEY) || "",
+            ).trim();
+            const anon = String(
+              localStorage.getItem(STAGING_PUBLISHABLE_STORAGE_KEY) || "",
+            ).trim();
+            // Strict shapes: the ref only ever builds "<ref>.supabase.co" and
+            // the key must be a public (publishable/legacy anon) key. Secret
+            // keys are never accepted or stored here.
+            if (!/^[a-z0-9]{15,30}$/.test(ref)) return null;
+            if (!/^(sb_publishable_[A-Za-z0-9_-]{10,}|eyJ[A-Za-z0-9_.-]{40,})$/.test(anon))
+              return null;
+            return { ref, anon };
+          } catch (e) {
+            return null;
+          }
+        }
+        const STAGING_CONFIG = readStagingConfig();
+        const IS_STAGING_MODE = (() => {
+          try {
+            return (
+              new URLSearchParams(location.search).get("env") === "staging" &&
+              Boolean(STAGING_CONFIG)
+            );
+          } catch (e) {
+            return false;
+          }
+        })();
+        const SUPABASE_URL = IS_STAGING_MODE
+            ? "https://" + STAGING_CONFIG.ref + ".supabase.co"
+            : PROD_SUPABASE_URL,
+          SUPABASE_ANON_KEY = IS_STAGING_MODE
+            ? STAGING_CONFIG.anon
+            : PROD_SUPABASE_ANON_KEY;
         // ========================= JS: theme preference (light/dark) =========================
         const THEME_STORAGE_KEY = "ui_theme_preference";
         function readStoredTheme() {
@@ -1324,6 +1721,207 @@
           } catch (e) {
             return false;
           }
+        }
+        // ========================= JS: mobile setup (إعداد الربط) =========================
+        // Buttons only. This app NEVER accepts, stores, or transmits a secret
+        // value: secrets are entered exclusively in the official Supabase
+        // Dashboard. The template below carries ONLY key names + non-secret
+        // defaults (model / base URL / app_env) — the secret fields are blank.
+        const SETUP_SECRETS_URL =
+          "https://supabase.com/dashboard/project/_/functions/secrets";
+        const SETUP_DEPLOY_URL =
+          "https://github.com/qw1qw66-sudo/index.html/actions";
+        const SETUP_NEW_PROJECT_URL = "https://supabase.com/dashboard/new";
+        const SETUP_GITHUB_SECRETS_URL =
+          "https://github.com/qw1qw66-sudo/index.html/settings/secrets/actions";
+        // Only the DeepSeek key is entered by the owner (in Supabase, never
+        // here). ASSISTANT_CONFIRM_SECRET / AUTOPILOT_CRON_SECRET are generated
+        // automatically by the GitHub deployment workflow on its runner.
+        const SETUP_SECRET_TEMPLATE = [
+          "DEEPSEEK_API_KEY=",
+          "DEEPSEEK_MODEL=deepseek-v4-flash",
+          "DEEPSEEK_BASE_URL=https://api.deepseek.com",
+          "APP_ENV=staging",
+        ].join("\n");
+        function openSetupSecrets() {
+          window.open(SETUP_SECRETS_URL, "_blank", "noopener,noreferrer");
+        }
+        function openSetupDeploy() {
+          window.open(SETUP_DEPLOY_URL, "_blank", "noopener,noreferrer");
+        }
+        function openSetupNewProject() {
+          window.open(SETUP_NEW_PROJECT_URL, "_blank", "noopener,noreferrer");
+        }
+        function openSetupGithubSecrets() {
+          window.open(SETUP_GITHUB_SECRETS_URL, "_blank", "noopener,noreferrer");
+        }
+        // Save ONLY the two non-secret staging values (Project Ref +
+        // publishable key). Anything secret-shaped is rejected outright.
+        function saveStagingConfig() {
+          const ref = String($("stagingRefInput").value || "").trim().toLowerCase();
+          const anon = String($("stagingAnonInput").value || "").trim();
+          if (!/^[a-z0-9]{15,30}$/.test(ref))
+            return feedback("معرّف المشروع غير صحيح. انسخه من صفحة إعدادات المشروع في Supabase.", "bad");
+          // Reject secret-shaped keys outright. The pattern is built from
+          // fragments so the app source itself never contains a secret-shaped
+          // literal (same trick as the server-side redactor).
+          const secretKeyShape = new RegExp("^sb_" + "secret_");
+          if (secretKeyShape.test(anon) || /role"\s*:\s*"service.role/.test(anon))
+            return feedback("هذا مفتاح سرّي! لا تضعه هنا أبداً. المطلوب المفتاح العام (publishable) فقط.", "bad");
+          if (!/^(sb_publishable_[A-Za-z0-9_-]{10,}|eyJ[A-Za-z0-9_.-]{40,})$/.test(anon))
+            return feedback("المفتاح العام غير صحيح. انسخ publishable key من صفحة API Keys.", "bad");
+          try {
+            localStorage.setItem(STAGING_REF_STORAGE_KEY, ref);
+            localStorage.setItem(STAGING_PUBLISHABLE_STORAGE_KEY, anon);
+          } catch (e) {
+            return feedback("تعذّر الحفظ على هذا المتصفح.", "bad");
+          }
+          const openBtn = document.querySelector('[data-action="setup-open-staging"]');
+          if (openBtn) openBtn.disabled = false;
+          feedback("تم حفظ إعدادات Staging (قيم غير سرّية فقط).", "good");
+        }
+        function openStagingCopy() {
+          if (!readStagingConfig())
+            return feedback("احفظ معرّف مشروع Staging والمفتاح العام أولاً.", "bad");
+          const url = location.origin + location.pathname + "?env=staging";
+          if (IS_STAGING_MODE) return feedback("أنت الآن داخل نسخة Staging بالفعل.", "good");
+          window.open(url, "_blank", "noopener,noreferrer");
+        }
+        // "تم إنشاء Staging": reveal the non-secret connect fields (Project
+        // Ref + publishable key) and prefill any previously saved values.
+        function revealStagingConnect() {
+          const box = $("stagingConnectBox");
+          if (!box) return;
+          box.classList.remove("hidden");
+          try {
+            $("stagingRefInput").value =
+              localStorage.getItem(STAGING_REF_STORAGE_KEY) || "";
+            $("stagingAnonInput").value =
+              localStorage.getItem(STAGING_PUBLISHABLE_STORAGE_KEY) || "";
+          } catch (e) {}
+          scrollIntoViewIfNeeded(box);
+        }
+        function tryAssistantSample() {
+          showTab("assistant");
+          const input = $("assistantInput");
+          if (input) {
+            input.value = "ما هي حجوزات اليوم؟";
+            input.focus();
+          }
+        }
+        async function copySetupTemplate() {
+          const ok = await copyToClipboard(SETUP_SECRET_TEMPLATE);
+          feedback(
+            ok
+              ? "تم نسخ قائمة المفاتيح. الصقها في صفحة Supabase."
+              : "تعذّر النسخ. انسخ الأسماء يدويًا.",
+            ok ? "good" : "bad",
+          );
+        }
+        function setSetupRow(id, state) {
+          const el = $(id);
+          if (!el) return;
+          const map = {
+            linked: ["مربوط", "setup-ok"],
+            unlinked: ["غير مربوط", "setup-bad"],
+            needs_deploy: ["يحتاج نشر", "setup-warn"],
+            disabled: ["غير مفعل", "setup-muted"],
+            checking: ["...جارٍ الفحص", "setup-muted"],
+          };
+          const entry = map[state] || ["—", "setup-muted"];
+          el.textContent = entry[0];
+          el.className = "setup-status " + entry[1];
+        }
+        async function checkSetupConnection() {
+          if (!loadedWorkspace || !workspaceKey || !accessPin)
+            return feedback("سجّل الدخول أولًا", "bad");
+          const rows = [
+            "setupStatusSupabase",
+            "setupStatusFunctions",
+            "setupStatusDeepseek",
+            "setupStatusConfirm",
+            "setupStatusAutopilot",
+            "setupStatusWhatsapp",
+          ];
+          rows.forEach((r) => setSetupRow(r, "checking"));
+          const result = $("setupCheckResult");
+          if (result) result.textContent = "...جارٍ فحص الربط";
+          let body = null,
+            notDeployed = false,
+            authFail = false;
+          try {
+            const res = await fetch(
+              SUPABASE_URL + "/functions/v1/chalet-setup-status",
+              {
+                method: "POST",
+                headers: {
+                  apikey: SUPABASE_ANON_KEY,
+                  Authorization: "Bearer " + SUPABASE_ANON_KEY,
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                  workspace_key: workspaceKey,
+                  access_pin: accessPin,
+                }),
+              },
+            );
+            if (res.status === 404) notDeployed = true;
+            else if (res.status === 401) authFail = true;
+            else {
+              const text = await res.text();
+              body = text ? JSON.parse(text) : null;
+            }
+          } catch (e) {
+            notDeployed = true;
+          }
+          // Reaching a decision means the Supabase project itself is configured.
+          setSetupRow("setupStatusSupabase", "linked");
+          if (notDeployed) {
+            setSetupRow("setupStatusFunctions", "needs_deploy");
+            setSetupRow("setupStatusDeepseek", "unlinked");
+            setSetupRow("setupStatusConfirm", "unlinked");
+            setSetupRow("setupStatusAutopilot", "disabled");
+            setSetupRow("setupStatusWhatsapp", "disabled");
+            if (result)
+              result.textContent =
+                "وظائف الخادم غير منشورة بعد. أضف المفاتيح ثم افتح صفحة النشر.";
+            return;
+          }
+          if (authFail || !body || !body.ok) {
+            if (result)
+              result.textContent = "تعذّر الفحص. تأكد من تسجيل الدخول ثم أعد المحاولة.";
+            return;
+          }
+          setSetupRow("setupStatusFunctions", "linked");
+          setSetupRow(
+            "setupStatusDeepseek",
+            body.deepseek_configured ? "linked" : "unlinked",
+          );
+          setSetupRow(
+            "setupStatusConfirm",
+            body.assistant_confirm_secret_configured ? "linked" : "unlinked",
+          );
+          // Automatic campaigns and official WhatsApp stay OFF in this rollout:
+          // these rows report the feature state, not mere infrastructure.
+          setSetupRow("setupStatusAutopilot", "disabled");
+          setSetupRow(
+            "setupStatusWhatsapp",
+            body.whatsapp_configured ? "linked" : "disabled",
+          );
+          const ready =
+            body.deepseek_configured && body.assistant_confirm_secret_configured;
+          let msg;
+          if (ready && body.app_env === "staging")
+            msg = "المساعد جاهز للتجربة على بيئة Staging.";
+          else if (ready) msg = "المساعد جاهز للتجربة.";
+          else if (body.deepseek_configured)
+            msg = "DeepSeek مربوط، باقي إضافة مفتاح التأكيد.";
+          else if (body.assistant_confirm_secret_configured)
+            msg = "مفتاح التأكيد مضاف، باقي إضافة مفتاح DeepSeek.";
+          else msg = "مفتاح DeepSeek غير مضاف.";
+          if (result) result.textContent = msg;
+          const tryBtn = document.querySelector('[data-action="setup-try-assistant"]');
+          if (tryBtn) tryBtn.classList.toggle("hidden", !ready);
         }
         function normalizeWorkspaceKey(v) {
           return String(v || "")
@@ -2083,6 +2681,11 @@
           qsa(".view").forEach((v) =>
             v.classList.toggle("active", v.id === "tab-" + tab),
           );
+          if (tab === "assistant") {
+            renderAssistantSuggestions();
+            const logEl = $("assistantLog");
+            if (logEl && !logEl.children.length) assistantNew();
+          }
           feedback("فتح تبويب: " + tab);
           log("Tab changed; no upload", { tab });
         }
@@ -3396,8 +3999,21 @@
           if (a === "upload") return uploadChanges();
           if (a === "set-theme-light") return setTheme("light");
           if (a === "set-theme-dark") return setTheme("dark");
+          // Setup helpers that only open an official page, copy key names, or
+          // store the NON-SECRET staging ref work without a loaded workspace
+          // (they never touch workspace data or any secret).
+          if (a === "setup-open-secrets") return openSetupSecrets();
+          if (a === "setup-open-deploy") return openSetupDeploy();
+          if (a === "setup-copy-template") return copySetupTemplate();
+          if (a === "setup-open-staging-project") return openSetupNewProject();
+          if (a === "setup-staging-created") return revealStagingConnect();
+          if (a === "setup-open-github-secrets") return openSetupGithubSecrets();
+          if (a === "setup-save-staging-config") return saveStagingConfig();
+          if (a === "setup-open-staging") return openStagingCopy();
           if (!loadedWorkspace)
             return feedback("سجّل الدخول أو أنشئ حسابًا أولًا", "bad");
+          if (a === "setup-check") return checkSetupConnection();
+          if (a === "setup-try-assistant") return tryAssistantSample();
           if (a === "new-chalet") return newChalet();
           if (a === "edit-chalet") return editChalet(id);
           if (a === "soft-delete-chalet") return softDeleteChalet(id);
@@ -3445,11 +4061,287 @@
           if (a === "copy-payment-link") return copyPaymentLink();
           if (a === "send-payment-link-whatsapp")
             return sendPaymentLinkWhatsApp();
+          if (a === "assistant-send") return assistantSend();
+          if (a === "assistant-retry") return assistantSend();
+          if (a === "assistant-new") return assistantNew();
+          if (a === "assistant-suggest" && sourceEl)
+            return assistantSend(sourceEl.dataset.suggest || "");
+          if (a === "assistant-confirm" && sourceEl)
+            return assistantConfirm(
+              sourceEl.dataset.actionId,
+              sourceEl.dataset.confirmTool,
+              sourceEl,
+            );
+          if (a === "assistant-dismiss" && sourceEl) {
+            const card = sourceEl.closest(".action-card");
+            if (card) card.remove();
+            return;
+          }
+        }
+        // ========================= JS: assistant (Chalet Brain) =========================
+        // Talks ONLY to the server-side chalet-assistant Edge Function. The
+        // browser never calls DeepSeek and never holds the DeepSeek key. Feature
+        // -detects the function: if it is not deployed (404) the tab shows a
+        // clear Arabic disabled state and no action is possible.
+        let assistantThreadId = null,
+          assistantBackendMissing = false,
+          assistantBusy = false;
+        const assistantTokens = {}; // action_id -> confirmation_token (kept out of model context)
+        const ASSISTANT_SUGGESTIONS = [
+          "شنو حجوزات اليوم؟",
+          "اعرض الأيام الفاضية هذا الأسبوع",
+          "من عليه مبالغ متبقية؟",
+          "جهز حجز جديد",
+          "جهز رسالة تأكيد للعميل",
+          "جهز عرض للأيام الفاضية",
+          "شغل التسويق التلقائي",
+          "وقف التسويق التلقائي",
+          "اعرض نتيجة آخر حملة",
+          "كم حجز جابه المساعد؟",
+          "كم دخل جابه التسويق؟",
+        ];
+        function renderAssistantSuggestions() {
+          const el = $("assistantSuggestions");
+          if (!el) return;
+          el.innerHTML = ASSISTANT_SUGGESTIONS.map(
+            (s) =>
+              '<button class="tiny" type="button" data-action="assistant-suggest" data-suggest="' +
+              esc(s) +
+              '">' +
+              esc(s) +
+              "</button>",
+          ).join("");
+        }
+        function assistantAppend(role, text) {
+          const log = $("assistantLog");
+          if (!log) return;
+          const div = document.createElement("div");
+          div.className = "chat-msg " + (role === "user" ? "chat-user" : "chat-bot");
+          div.textContent = String(text || "");
+          log.appendChild(div);
+          log.scrollTop = log.scrollHeight;
+        }
+        function setAssistantConn(text, cls) {
+          const el = $("assistantConn");
+          if (el) {
+            el.textContent = text;
+            el.className = cls || "";
+          }
+        }
+        function renderPreparedAction(r) {
+          const box = $("assistantActions");
+          if (!box) return;
+          if (r.confirmation_token) assistantTokens[r.action_id] = r.confirmation_token;
+          const card = document.createElement("div");
+          card.className = "action-card";
+          card.innerHTML =
+            '<div><b>إجراء مُجهّز</b></div><div class="muted">' +
+            esc(r.summary_ar || "راجع التفاصيل ثم أكّد.") +
+            "</div>" +
+            (Array.isArray(r.warnings) && r.warnings.length
+              ? '<div class="feedback bad">' + r.warnings.map(esc).join("<br>") + "</div>"
+              : "") +
+            '<div class="actions"><button class="primary tiny" type="button" data-action="assistant-confirm" data-action-id="' +
+            esc(r.action_id) +
+            '" data-confirm-tool="' +
+            esc(r.confirm_tool) +
+            '">تأكيد الإجراء</button><button class="secondary tiny" type="button" data-action="assistant-dismiss">تجاهل</button></div>';
+          box.appendChild(card);
+        }
+        function renderToolResults(results) {
+          (results || []).forEach((r) => {
+            if (r.kind === "prepared_action" && r.ok) renderPreparedAction(r);
+            else if (r.kind === "read" && r.ok) {
+              // Read results are informational; show a compact note.
+              assistantAppend("bot", "📋 " + (r.tool || "") + ": تم جلب البيانات.");
+            } else if (r.ok === false) {
+              assistantAppend(
+                "bot",
+                "تعذّر تنفيذ (" + (r.tool || r.requested || "أداة") + "): " + (r.error || ""),
+              );
+            }
+          });
+        }
+        async function assistantCall(payload) {
+          const res = await fetch(SUPABASE_URL + "/functions/v1/chalet-assistant", {
+            method: "POST",
+            headers: {
+              apikey: SUPABASE_ANON_KEY,
+              Authorization: "Bearer " + SUPABASE_ANON_KEY,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(
+              Object.assign(
+                { workspace_key: workspaceKey, access_pin: accessPin, thread_id: assistantThreadId },
+                payload,
+              ),
+            ),
+          });
+          if (res.status === 404) {
+            assistantBackendMissing = true;
+            setAssistantConn("غير مفعّل بعد على الخادم", "bad");
+            const e = new Error("ASSISTANT_NOT_DEPLOYED");
+            e.notDeployed = true;
+            throw e;
+          }
+          const text = await res.text();
+          let body = null;
+          try {
+            body = text ? JSON.parse(text) : null;
+          } catch (_) {
+            body = null;
+          }
+          if (!res.ok && res.status === 401) throw new Error("AUTH");
+          return body || {};
+        }
+        async function assistantSend(forceText) {
+          if (assistantBusy) return;
+          if (!loadedWorkspace) return feedback("سجّل الدخول أولاً", "bad");
+          const input = $("assistantInput");
+          const message = String(forceText != null ? forceText : input.value || "").trim();
+          if (!message) return;
+          if (forceText == null) input.value = "";
+          assistantAppend("user", message);
+          assistantBusy = true;
+          $("assistantSendButton").disabled = true;
+          setAssistantConn("...جارٍ التفكير", "");
+          try {
+            const body = await assistantCall({ message });
+            if (body.assistant_unavailable) {
+              setAssistantConn("متصل", "ok");
+              assistantAppend("bot", body.reply_ar || "تعذّر تنفيذ الطلب. لم يتغيّر شيء.");
+            } else if (body.ok) {
+              setAssistantConn("متصل", "ok");
+              // The server owns thread creation; reuse the id it returns so the
+              // whole conversation stays on ONE real, workspace-scoped thread.
+              if (body.thread_id) assistantThreadId = body.thread_id;
+              if (body.reply_ar) assistantAppend("bot", body.reply_ar);
+              renderToolResults(body.tool_results);
+            } else {
+              assistantAppend("bot", "تعذّر تنفيذ الطلب: " + (body.error || ""));
+            }
+          } catch (e) {
+            if (e.notDeployed)
+              assistantAppend(
+                "bot",
+                "المساعد الذكي غير مفعّل بعد على الخادم. يعمل باقي التطبيق بشكل طبيعي.",
+              );
+            else if (e.message === "AUTH")
+              assistantAppend("bot", "بيانات الدخول غير صحيحة للمساعد.");
+            else assistantAppend("bot", "تعذّر الاتصال بالمساعد. لم يتغيّر شيء.");
+          } finally {
+            assistantBusy = false;
+            $("assistantSendButton").disabled = false;
+          }
+        }
+        // Map a server-confirmed action to its specific Arabic success line.
+        // Only shown AFTER the server returns a real completed_action result —
+        // never merely because the confirmation was accepted.
+        function assistantResultMessage(result) {
+          const a = String((result && result.action) || "");
+          return (
+            {
+              booking_created: "تم إنشاء الحجز بنجاح",
+              booking_updated: "تم تعديل الحجز بنجاح",
+              booking_cancelled: "تم إلغاء الحجز",
+              manual_payment_recorded: "تم تسجيل الدفعة في السجل",
+              payment_link_created: "تم إنشاء رابط الدفع",
+              whatsapp_opened_manual: "تم فتح رسالة واتساب يدويًا",
+              whatsapp_sent: "تم إرسال الرسالة عبر واتساب",
+            }[a] || "تم تنفيذ الإجراء وتأكيده من الخادم."
+          );
+        }
+        const assistantConfirmInFlight = new Set();
+        async function assistantConfirm(actionId, confirmTool, btn) {
+          const token = assistantTokens[actionId];
+          if (!token) return feedback("انتهت صلاحية التأكيد. جهّز الإجراء من جديد.", "bad");
+          // Prevent double-taps: one execution per action.
+          if (assistantConfirmInFlight.has(actionId)) return;
+          assistantConfirmInFlight.add(actionId);
+          const card = btn && btn.closest ? btn.closest(".action-card") : null;
+          if (btn) {
+            btn.disabled = true;
+            btn.textContent = "جاري التنفيذ...";
+          }
+          try {
+            const body = await assistantCall({
+              invoke_tool: {
+                name: confirmTool,
+                arguments: { action_id: actionId, confirmation_token: token },
+              },
+            });
+            if (body.ok && body.kind === "completed_action") {
+              const msg = assistantResultMessage(body.result);
+              assistantAppend("bot", "✅ " + msg);
+              delete assistantTokens[actionId];
+              if (card) card.remove();
+              // Open the manual WhatsApp link if the server produced one.
+              if (body.result && body.result.manual_url) {
+                const w = window.open(body.result.manual_url, "_blank", "noopener,noreferrer");
+                if (!w) location.href = body.result.manual_url;
+              }
+              // Refresh affected views with real data.
+              renderAll();
+              if (
+                currentPaymentBookingId &&
+                body.result &&
+                (body.result.action === "manual_payment_recorded" ||
+                  body.result.action === "payment_link_created")
+              )
+                refreshPaymentPanel(currentPaymentBookingId, true);
+            } else {
+              // Never show "تم" — the underlying contract did not succeed.
+              if (btn) {
+                btn.disabled = false;
+                btn.textContent = "تأكيد الإجراء";
+              }
+              assistantAppend(
+                "bot",
+                "لم يكتمل الإجراء (" +
+                  (body.error || "") +
+                  "). لم يتغيّر شيء بدون تأكيد الخادم.",
+              );
+            }
+          } catch (e) {
+            if (btn) {
+              btn.disabled = false;
+              btn.textContent = "تأكيد الإجراء";
+            }
+            assistantAppend(
+              "bot",
+              e.notDeployed ? "المساعد غير مفعّل." : "تعذّر تأكيد الإجراء.",
+            );
+          } finally {
+            assistantConfirmInFlight.delete(actionId);
+          }
+        }
+        function assistantNew() {
+          // null => the server opens a fresh workspace-scoped thread on the next
+          // message and returns its id (we never mint thread ids on the client).
+          assistantThreadId = null;
+          $("assistantLog").innerHTML = "";
+          $("assistantActions").innerHTML = "";
+          assistantAppend(
+            "bot",
+            "أهلاً! أنا مساعد الشاليهات. أقدر أجاوبك عن الحجوزات والأيام الفاضية والمبالغ المتبقية، وأجهّز لك الحجوزات والرسائل. أي إجراء حسّاس يحتاج تأكيدك.",
+          );
         }
         // ========================= JS: event binding =========================
         document.addEventListener("DOMContentLoaded", () => {
           log("DOMContentLoaded: attaching event listeners");
           applyTheme(readStoredTheme());
+          // Visible, unmissable marker when running against the staging project.
+          if (IS_STAGING_MODE) {
+            document.title = "Staging — " + document.title;
+            const b = document.createElement("div");
+            b.id = "stagingBadge";
+            b.textContent = "بيئة Staging — بيانات تجريبية";
+            b.style.cssText =
+              "position:sticky;top:0;z-index:999;text-align:center;padding:6px 10px;background:var(--g-soft);color:var(--g);font-weight:700;font-size:13px;border-bottom:1px solid var(--l2)";
+            document.body.prepend(b);
+            const openBtn = document.querySelector('[data-action="setup-open-staging"]');
+            if (openBtn) openBtn.textContent = "أنت داخل نسخة Staging";
+          }
           $("pullButton").addEventListener("click", pullWorkspace);
           $("createButton").addEventListener("click", createWorkspace);
           document.addEventListener(
@@ -3481,6 +4373,14 @@
           });
           $("reportMonth").addEventListener("change", () => runReport(false));
           $("reportChalet").addEventListener("change", () => runReport(false));
+          const assistantInputEl = $("assistantInput");
+          if (assistantInputEl)
+            assistantInputEl.addEventListener("keydown", (e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                assistantSend();
+              }
+            });
           // P1 guard (audit AUD-009): warn before closing the tab while local
           // changes have not been uploaded. Never blocks; browser-standard prompt.
           window.addEventListener("beforeunload", (e) => {

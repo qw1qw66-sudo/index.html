@@ -1,0 +1,22 @@
+# Supabase CLI configuration — used by the Deploy Supabase Staging workflow.
+# project_id here is only the LOCAL project name; the remote project is chosen
+# at deploy time via `supabase link --project-ref` (repository secret).
+project_id = "chalet-booking"
+
+# Every function authenticates in-function (workspace PIN, webhook signature,
+# or cron secret) and the app uses new-style publishable API keys, which are
+# not JWTs — so platform JWT verification must be off for these endpoints.
+[functions.create-payment-session]
+verify_jwt = false
+
+[functions.payment-webhook]
+verify_jwt = false
+
+[functions.chalet-assistant]
+verify_jwt = false
+
+[functions.chalet-setup-status]
+verify_jwt = false
+
+[functions.chalet-autopilot]
+verify_jwt = false

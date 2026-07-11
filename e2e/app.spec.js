@@ -223,6 +223,159 @@ test('mobile viewport: booking editor and payment panel stay usable (iPhone size
   await expect(page.locator('#paymentPanelNotice')).toBeVisible();
 });
 
+test('assistant tab is present and degrades safely when the backend is absent', async ({ page }) => {
+  // The mock only handles /rest/v1/rpc/**; /functions/v1/chalet-assistant is
+  // unhandled -> the browser fetch fails, so the tab must show a safe message
+  // and never claim any action happened.
+  await mockRpc(page);
+  await page.route('**/functions/v1/**', (route) => route.fulfill({ status: 404, contentType: 'application/json', body: '{"message":"not deployed"}' }));
+  await page.goto('/');
+  await create(page);
+  await page.locator('[data-tab="assistant"]').click();
+  await expect(page.locator('#tab-assistant')).toBeVisible();
+  await expect(page.locator('#assistantSuggestions')).toContainText('حجوزات اليوم');
+  await page.locator('#assistantInput').fill('شنو حجوزات اليوم؟');
+  await page.locator('[data-action="assistant-send"]').click();
+  // The user message is echoed and a safe "not enabled" reply appears; no crash.
+  await expect(page.locator('#assistantLog')).toContainText('شنو حجوزات اليوم؟');
+  await expect(page.locator('#assistantLog')).toContainText('غير مفعّل');
+});
+
+test('mobile setup page: iPhone-sized, button-only, opens official pages, checks connection', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockRpc(page);
+  // Stub the setup-status Edge Function with a booleans-only response.
+  await page.route('**/functions/v1/chalet-setup-status', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: true,
+        assistant_function_deployed: true,
+        deepseek_configured: true,
+        assistant_confirm_secret_configured: true,
+        autopilot_secret_configured: false,
+        whatsapp_configured: false,
+        app_env: 'staging',
+      }),
+    }),
+  );
+  // Capture window.open targets without navigating away.
+  await page.addInitScript(() => {
+    window.__opened = [];
+    window.open = (u) => {
+      window.__opened.push(String(u));
+      return null;
+    };
+  });
+  await page.goto('/');
+  await create(page);
+  await page.locator('[data-tab="settings"]').click();
+  await expect(page.locator('#setupCard')).toBeVisible();
+  await expect(page.locator('#setupCard')).toContainText('إعداد المساعد الذكي');
+
+  // DOM evidence: the only inputs are the two NON-secret staging fields
+  // (Project Ref + publishable key) — no API-key/secret entry exists.
+  await expect(page.locator('#setupCard input')).toHaveCount(2);
+  await expect(page.locator('#setupCard #stagingRefInput')).toHaveCount(1);
+  await expect(page.locator('#setupCard #stagingAnonInput')).toHaveCount(1);
+  await expect(page.locator('#setupCard textarea')).toHaveCount(0);
+  await expect(page.locator('#setupCard [data-action="setup-check"]')).toBeVisible();
+
+  // Official pages open in a new tab: Supabase secrets, GitHub Actions,
+  // new-project, and the repository Actions-secrets page.
+  await page.locator('[data-action="setup-open-secrets"]').click();
+  await page.locator('[data-action="setup-open-deploy"]').click();
+  await page.locator('[data-action="setup-open-staging-project"]').click();
+  await page.locator('[data-action="setup-open-github-secrets"]').click();
+  const opened = await page.evaluate(() => window.__opened);
+  expect(opened).toContain('https://supabase.com/dashboard/project/_/functions/secrets');
+  expect(opened).toContain('https://github.com/qw1qw66-sudo/index.html/actions');
+  expect(opened).toContain('https://supabase.com/dashboard/new');
+  expect(opened).toContain('https://github.com/qw1qw66-sudo/index.html/settings/secrets/actions');
+
+  // "تم إنشاء Staging" reveals the non-secret connect fields; a secret-shaped
+  // key is rejected outright; valid non-secret values save.
+  await page.locator('[data-action="setup-staging-created"]').click();
+  await expect(page.locator('#stagingConnectBox')).toBeVisible();
+  await page.locator('#stagingRefInput').fill('abcdefghijklmnopqrst');
+  await page.locator('#stagingAnonInput').fill('sb_secret_this_must_be_rejected_123');
+  await page.locator('[data-action="setup-save-staging-config"]').click();
+  await expect(page.locator('#feedback')).toContainText('مفتاح سرّي');
+  await page.locator('#stagingAnonInput').fill('sb_publishable_test_key_0123456789');
+  await page.locator('[data-action="setup-save-staging-config"]').click();
+  await expect(page.locator('#feedback')).toContainText('تم حفظ إعدادات Staging');
+
+  // "فحص الربط" authenticates + calls setup-status + updates the status rows.
+  await page.locator('[data-action="setup-check"]').click();
+  await expect(page.locator('#setupStatusDeepseek')).toHaveText('مربوط');
+  await expect(page.locator('#setupStatusConfirm')).toHaveText('مربوط');
+  await expect(page.locator('#setupStatusFunctions')).toHaveText('مربوط');
+  await expect(page.locator('#setupStatusAutopilot')).toHaveText('غير مفعل');
+  await expect(page.locator('#setupStatusWhatsapp')).toHaveText('غير مفعل');
+  await expect(page.locator('#setupCheckResult')).toContainText('المساعد جاهز للتجربة');
+
+  // Large tap targets and no horizontal overflow on a phone screen.
+  const btnBox = await page.locator('[data-action="setup-check"]').boundingBox();
+  expect(btnBox.height).toBeGreaterThanOrEqual(44);
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+  );
+  expect(overflow).toBeLessThanOrEqual(1);
+});
+
+test('setup connection check degrades safely when server functions are not deployed', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockRpc(page);
+  await page.route('**/functions/v1/**', (route) =>
+    route.fulfill({ status: 404, contentType: 'application/json', body: '{"message":"not deployed"}' }),
+  );
+  await page.goto('/');
+  await create(page);
+  await page.locator('[data-tab="settings"]').click();
+  await page.locator('[data-action="setup-check"]').click();
+  await expect(page.locator('#setupStatusFunctions')).toHaveText('يحتاج نشر');
+  await expect(page.locator('#setupCheckResult')).toContainText('غير منشورة');
+});
+
+test('staging mode (?env=staging): badge, staging-ready completion, and assistant test button', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockRpc(page); // host-agnostic: also intercepts the staging host RPCs
+  await page.route('**/functions/v1/chalet-setup-status', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: true,
+        assistant_function_deployed: true,
+        deepseek_configured: true,
+        assistant_confirm_secret_configured: true,
+        autopilot_secret_configured: true,
+        whatsapp_configured: false,
+        app_env: 'staging',
+      }),
+    }),
+  );
+  // Non-secret staging config saved beforehand (as the setup page does).
+  await page.addInitScript(() => {
+    localStorage.setItem('staging_project_ref', 'abcdefghijklmnopqrst');
+    localStorage.setItem('staging_publishable_key', 'sb_publishable_test_key_0123456789');
+  });
+  await page.goto('/?env=staging');
+  // The staging banner is unmissable and the app talks to the staging host.
+  await expect(page.locator('#stagingBadge')).toBeVisible();
+  await expect(page.locator('#stagingBadge')).toContainText('بيئة Staging');
+  await create(page);
+  await page.locator('[data-tab="settings"]').click();
+  await page.locator('[data-action="setup-check"]').click();
+  await expect(page.locator('#setupCheckResult')).toContainText('المساعد جاهز للتجربة على بيئة Staging');
+  await expect(page.locator('#setupStatusAutopilot')).toHaveText('غير مفعل');
+  // The test button appears and pre-fills the assistant input with the question.
+  const tryBtn = page.locator('[data-action="setup-try-assistant"]');
+  await expect(tryBtn).toBeVisible();
+  await tryBtn.click();
+  await expect(page.locator('#tab-assistant')).toBeVisible();
+  await expect(page.locator('#assistantInput')).toHaveValue('ما هي حجوزات اليوم؟');
+});
+
 test('source has no old public auth or redirect patterns', async ({ page }) => {
   await mockRpc(page);
   await page.goto('/');
