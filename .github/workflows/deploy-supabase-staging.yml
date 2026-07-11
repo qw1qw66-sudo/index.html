@@ -1,0 +1,148 @@
+# Deploy Supabase Staging — manual-only (workflow_dispatch), never on push/PR.
+#
+# Deploys the migration chain + Edge Functions to the SEPARATE staging Supabase
+# project selected by repository secrets, then smoke-tests the real deployed
+# Deno functions over HTTP. It never touches the production project: the target
+# is entirely determined by SUPABASE_PROJECT_ID (the staging Project Ref).
+#
+# Repository secrets (https://github.com/qw1qw66-sudo/index.html/settings/secrets/actions):
+#   REUSED (already exist for the export workflow):
+#     SUPABASE_URL        — https://<project-ref>.supabase.co (ref derived from it)
+#     SUPABASE_ANON_KEY   — the public (publishable) API key
+#   NEW (owner adds these two):
+#     SUPABASE_ACCESS_TOKEN — Supabase account access token (account → tokens)
+#     SUPABASE_DB_PASSWORD  — the database password
+#   OPTIONAL override: SUPABASE_PROJECT_ID (explicit ref; else derived from URL).
+# The service-role key is NEVER a GitHub secret: Supabase injects it into Edge
+# Functions at runtime.
+#
+# Internal application secrets (ASSISTANT_CONFIRM_SECRET, AUTOPILOT_CRON_SECRET)
+# are generated ON THE RUNNER (32 random bytes each), masked, pushed straight to
+# Supabase Function Secrets, and never echoed, stored, hashed, or uploaded.
+
+name: Deploy Supabase Staging
+
+on:
+  workflow_dispatch:
+    inputs:
+      deploy_ref:
+        description: "Git ref to deploy (branch, tag, or SHA)"
+        required: true
+        default: "claude/chalet-ai-brain"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-supabase-staging
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    # Never run for forks — deploys only this repository's own refs.
+    if: github.repository == 'qw1qw66-sudo/index.html'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: staging
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+    steps:
+      # Reuse the existing SUPABASE_URL secret: the project ref is its
+      # subdomain (non-secret — it is public in the app source). An explicit
+      # SUPABASE_PROJECT_ID secret overrides the derivation when present.
+      - name: Resolve project ref and check required secrets
+        env:
+          SUPABASE_URL_SECRET: ${{ secrets.SUPABASE_URL }}
+          EXPLICIT_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+          missing=""
+          [ -n "$SUPABASE_ACCESS_TOKEN" ] || missing="$missing SUPABASE_ACCESS_TOKEN"
+          [ -n "$SUPABASE_DB_PASSWORD" ] || missing="$missing SUPABASE_DB_PASSWORD"
+          [ -n "${{ secrets.SUPABASE_ANON_KEY }}" ] || missing="$missing SUPABASE_ANON_KEY"
+          ref="$EXPLICIT_PROJECT_ID"
+          if [ -z "$ref" ] && [ -n "$SUPABASE_URL_SECRET" ]; then
+            ref="${SUPABASE_URL_SECRET#https://}"; ref="${ref%%.*}"
+          fi
+          [ -n "$ref" ] || missing="$missing SUPABASE_URL(or SUPABASE_PROJECT_ID)"
+          if [ -n "$missing" ]; then
+            echo "Missing repository secrets:$missing"
+            echo "Add them at Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+          echo "PROJECT_REF=$ref" >> "$GITHUB_ENV"
+          echo "EDGE_BASE_URL=https://${ref}.supabase.co" >> "$GITHUB_ENV"
+
+      - name: Checkout deploy ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.deploy_ref }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # Pinned CLI; the major-pinned fallback only runs if the exact pin is
+      # ever yanked, so installs stay deterministic in practice.
+      - name: Install Supabase CLI (pinned)
+        run: npm install -g supabase@2.45.5 || npm install -g supabase@2
+
+      - name: Link staging project
+        run: supabase link --project-ref "$PROJECT_REF"
+
+      # Version list only — never prints credentials or secret values.
+      - name: Show migration status
+        run: supabase migration list --linked
+
+      - name: Apply pending migrations to staging
+        run: supabase db push --linked
+
+      # Generate internal secrets on the runner if (and only if) they are not
+      # already configured. Values are masked immediately and never echoed;
+      # `awk '{print $1}'` extracts secret NAMES only (never value digests).
+      - name: Ensure internal function secrets
+        run: |
+          set -euo pipefail
+          names="$(supabase secrets list 2>/dev/null | awk '{print $1}')"
+          ensure() {
+            if ! printf '%s\n' "$names" | grep -qx "$1"; then
+              v="$(openssl rand -hex 32)"
+              echo "::add-mask::$v"
+              supabase secrets set "$1=$v"
+              echo "$1: generated and set"
+            else
+              echo "$1: already configured (unchanged)"
+            fi
+          }
+          ensure ASSISTANT_CONFIRM_SECRET
+          ensure AUTOPILOT_CRON_SECRET
+          supabase secrets set APP_ENV=staging
+          echo "APP_ENV=staging set"
+
+      - name: Deploy Edge Functions
+        run: |
+          set -euo pipefail
+          for f in create-payment-session payment-webhook chalet-assistant chalet-setup-status chalet-autopilot; do
+            echo "--- deploying $f"
+            supabase functions deploy "$f" --no-verify-jwt
+          done
+
+      # Real HTTP smoke against the deployed Deno functions: CORS preflights,
+      # auth gates, setup-status booleans, a synthetic workspace, a real
+      # DeepSeek-grounded read, and a confirmed booking create + cancel.
+      # Output is sanitized (safe codes/booleans only).
+      - name: Staging smoke tests (real Deno + DeepSeek)
+        env:
+          SUPABASE_URL: ${{ env.EDGE_BASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: node scripts/staging-smoke.mjs
+
+      - name: Upload sanitized smoke report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-smoke-report
+          path: staging-smoke-report.json
+          if-no-files-found: ignore
