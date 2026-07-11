@@ -47,11 +47,12 @@ export function validateArgs(schema, args) {
 export const TOOL_REGISTRY = {
   // ---------------- READ ----------------
   get_today_bookings: { class: "read", schema: {}, desc: "حجوزات اليوم" },
+  list_chalets: { class: "read", schema: {}, desc: "الشاليهات المسجلة وفتراتها الحقيقية" },
   list_bookings: { class: "read", schema: { from: { type: "date" }, to: { type: "date" }, status: { type: "string", maxLen: 20 } }, desc: "قائمة الحجوزات" },
   get_booking_details: { class: "read", schema: { booking_id: { type: "string", required: true, maxLen: 64 } }, desc: "تفاصيل حجز" },
   get_chalet_details: { class: "read", schema: { chalet_id: { type: "string", required: true, maxLen: 64 } }, desc: "تفاصيل شاليه" },
-  find_available_periods: { class: "read", schema: { chalet_id: { type: "string", maxLen: 64 }, date: { type: "date" } }, desc: "الفترات المتاحة" },
-  find_empty_dates: { class: "read", schema: { chalet_id: { type: "string", maxLen: 64 }, days_ahead: { type: "integer", min: 1, max: 120, default: 14 } }, desc: "الأيام الفاضية" },
+  find_available_periods: { class: "read", schema: { chalet_id: { type: "string", maxLen: 64 }, chalet_name: { type: "string", maxLen: 120 }, date: { type: "date" } }, desc: "الفترات المتاحة" },
+  find_empty_dates: { class: "read", schema: { chalet_id: { type: "string", maxLen: 64 }, chalet_name: { type: "string", maxLen: 120 }, days_ahead: { type: "integer", min: 1, max: 120, default: 14 } }, desc: "الأيام الفاضية" },
   list_outstanding_balances: { class: "read", schema: {}, desc: "المبالغ المتبقية" },
   get_booking_payment_history: { class: "read", schema: { booking_id: { type: "string", required: true, maxLen: 64 } }, desc: "سجل مدفوعات الحجز", usesContract: "get_booking_payments" },
   list_recent_payments: { class: "read", schema: { limit: { type: "integer", min: 1, max: 50, default: 10 } }, desc: "أحدث المدفوعات" },
@@ -104,13 +105,20 @@ function confSchema() {
 function bookingSchema(create, update) {
   const s = {
     customer_name: { type: "string", required: !!create, maxLen: 120 },
-    chalet_id: { type: "string", required: !!create, maxLen: 64 },
+    customer_phone: { type: "string", maxLen: 30 },
+    chalet_id: { type: "string", maxLen: 64 },
     booking_date: { type: "date", required: !!create },
-    period_id: { type: "string", required: !!create, maxLen: 64 },
+    period_id: { type: "string", maxLen: 64 },
     guests: { type: "integer", min: 1, default: 1 },
     total: { type: "number", min: 0 },
     notes: { type: "string", maxLen: 1000 },
   };
+  // New bookings may use human names. The server resolves them against the
+  // authenticated workspace and binds the real ids before confirmation.
+  if (create) {
+    s.chalet_name = { type: "string", maxLen: 120 };
+    s.period_label = { type: "string", maxLen: 120 };
+  }
   if (update) s.booking_id = reqStr();
   return s;
 }

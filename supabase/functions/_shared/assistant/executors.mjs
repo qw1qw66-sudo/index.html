@@ -38,7 +38,7 @@ function findChalet(doc, id) {
   return (doc.chalets || []).find((c) => c.id === id && !c.deleted_at);
 }
 function findPeriod(chalet, id) {
-  return ((chalet && chalet.periods) || []).find((p) => p.id === id);
+  return ((chalet && chalet.periods) || []).find((p) => p.id === id && p.active !== false);
 }
 function findBooking(doc, id) {
   return (doc.bookings || []).find((b) => b.id === id && !b.deleted_at);
@@ -167,6 +167,7 @@ async function bookingUpdate(wsKey, pin, args, deps) {
   // Apply ONLY the normalized patch fields. Never change id or paid.
   const patch = {};
   if (args.customer_name !== undefined) patch.customer_name = String(args.customer_name).trim();
+  if (args.customer_phone !== undefined) patch.customer_phone = String(args.customer_phone).trim();
   if (args.chalet_id !== undefined) patch.chalet_id = String(args.chalet_id);
   if (args.period_id !== undefined) patch.period_id = String(args.period_id);
   if (args.booking_date !== undefined) patch.booking_date = String(args.booking_date);

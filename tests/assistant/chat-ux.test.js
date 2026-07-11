@@ -17,6 +17,7 @@ function makeDeps({ modelSeq, readResult } = {}) {
     env: ENV,
     _modelCalls: modelCalls,
     _appended: appended,
+    _actions: actions,
     async auth(k, pin) {
       return k === WS && pin === "123456" ? { ok: true, workspace_key: WS } : { ok: false, error_code: "WORKSPACE_NOT_FOUND_OR_PIN_INVALID" };
     },
@@ -31,6 +32,7 @@ function makeDeps({ modelSeq, readResult } = {}) {
     async appendMessages(_k, _t, rows) { appended.push(...rows); },
     async getWorkspaceRevision() { return "r1"; },
     async runReadTool(_k, name) { return readResult ? readResult(name) : { bookings: [] }; },
+    async resolveBookingCreateArgs(_k, args) { return { ok: true, args: { ...args, chalet_id: args.chalet_id || "c1", period_id: args.period_id || "p1" } }; },
     async createThread() { return { ok: true, thread_id: "th-1" }; },
     async threadBelongsToWorkspace() { return true; },
     async prepareSensitive(_k, spec) { const id = "act-" + (actions.size + 1); actions.set(id, spec); return { action_id: id }; },
@@ -47,6 +49,38 @@ const chat = (deps, message) => handleAssistant(
 ).then((r) => r.json());
 
 describe("two-stage chat reply", () => {
+  it("lists real chalets without calling the model, so a provider outage cannot block this safe read", async () => {
+    const deps = makeDeps({
+      modelSeq: [{ ok: false, error: "DEEPSEEK_UNREACHABLE" }],
+      readResult: (name) => name === "list_chalets" ? { chalets: [
+        { chalet_id: "sky-real", chalet_name: "شاليه سكاي", periods: [{ period_id: "s1", period_label: "صباحي" }] },
+        { chalet_id: "tulum-real", chalet_name: "شاليه تولوم", periods: [{ period_id: "t1", period_label: "مسائي" }] },
+      ] } : {},
+    });
+    const b = await chat(deps, "ما هي الشاليهات المسجلة لديك؟");
+    expect(b.ok).toBe(true);
+    expect(b.model_calls).toBe(0);
+    expect(deps._modelCalls).toHaveLength(0);
+    expect(b.reply_ar).toContain("شاليه سكاي");
+    expect(b.reply_ar).toContain("شاليه تولوم");
+    expect(b.reply_ar).not.toContain("list_chalets");
+  });
+
+  it("lists today's real free periods without asking the owner for ids", async () => {
+    const deps = makeDeps({
+      modelSeq: [{ ok: false, error: "DEEPSEEK_UNREACHABLE" }],
+      readResult: (name) => name === "find_empty_dates" ? { empty: [
+        { chalet_id: "tulum-real", chalet_name: "شاليه تولوم", period_id: "t1", period_label: "مسائي", date: "2026-07-11" },
+      ] } : {},
+    });
+    const b = await chat(deps, "اعرض جميع الفترات الفاضية لليوم في كل الشاليهات");
+    expect(b.model_calls).toBe(0);
+    expect(b.reply_ar).toContain("شاليه تولوم");
+    expect(b.reply_ar).toContain("مسائي");
+    expect(b.reply_ar).not.toContain("chalet_id");
+    expect(b.reply_ar).not.toContain("period_id");
+  });
+
   it("returns ONLY the second-stage grounded answer (not the stage-1 planning text)", async () => {
     const deps = makeDeps({
       modelSeq: [
@@ -114,5 +148,20 @@ describe("two-stage chat reply", () => {
     expect(JSON.stringify(secondCall.history)).not.toContain(token);
     // ...and it is never written to the stored transcript.
     expect(JSON.stringify(deps._appended)).not.toContain(token);
+  });
+
+  it("keeps a supplied customer phone out of model context but binds it server-side", async () => {
+    const deps = makeDeps({
+      modelSeq: [
+        { ok: true, reply: "أجهّز الحجز...", toolCalls: [{ name: "prepare_booking_create", arguments: { customer_name: "علي", chalet_name: "تولوم", period_label: "مسائي", booking_date: "2099-06-01" } }] },
+        { ok: true, reply: "جهّزت الحجز، بانتظار تأكيدك.", toolCalls: [] },
+      ],
+    });
+    const b = await chat(deps, "جهز حجز لعلي في تولوم مساء ورقمه 0501234567");
+    const prep = b.tool_results.find((x) => x.kind === "prepared_action");
+    expect(prep).toBeTruthy();
+    expect(JSON.stringify(deps._modelCalls)).not.toContain("0501234567");
+    expect(JSON.stringify(deps._appended)).not.toContain("0501234567");
+    expect(deps._actions.get(prep.action_id).args.customer_phone).toBe("0501234567");
   });
 });
