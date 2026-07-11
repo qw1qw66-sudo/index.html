@@ -187,13 +187,25 @@ export async function handleAssistant(req, deps) {
   for (const call of requested) {
     const norm = normalizeToolCall(withPrivateBookingFacts(call, privateFacts));
     if (!norm.ok) {
-      results.push({ requested: call?.name ?? null, ok: false, error: norm.error });
+      // Every failure the owner can see MUST carry a safe Arabic reason —
+      // a bare error code renders as a useless generic apology downstream.
+      results.push({
+        requested: call?.name ?? null,
+        ok: false,
+        error: norm.error,
+        reason_ar: "لم أفهم هذا الطلب كأمر مدعوم. جرّب صياغة أوضح، مثل: «جهّز حجز لشاليه سكاي غداً».",
+      });
       continue; // unknown/invalid tool from the model is NEVER executed
     }
     if (SENSITIVE_TOOLS.has(norm.name)) {
       // The model can never run ANY sensitive action (a confirmation) — only
       // the owner via a direct invoke_tool.
-      results.push({ tool: norm.name, ok: false, error: "CONFIRMATION_REQUIRES_OWNER" });
+      results.push({
+        tool: norm.name,
+        ok: false,
+        error: "CONFIRMATION_REQUIRES_OWNER",
+        reason_ar: "التنفيذ الحسّاس لا يتم من المحادثة مباشرة: اطلب مني «جهّز الحجز» وسأعرض لك بطاقة تأكيد تضغطها بنفسك، ولن يُحفظ شيء قبلها.",
+      });
       continue;
     }
     results.push(await executeTool(deps, { ...ctxBase, norm, raw: true }));
@@ -327,7 +339,11 @@ async function executeTool(deps, { wsKey, pin, norm, activeMemories, secret, raw
   // A sensitive tool is ALWAYS a confirmation (prepare/confirm pair). There is
   // no direct-execute sensitive tool: reject any non-confirm sensitive request.
   if (spec.class === "sensitive" && !isConfirmTool(name)) {
-    return wrap(422, { ok: false, error: "SENSITIVE_TOOL_REQUIRES_CONFIRMATION" });
+    return wrap(422, {
+      ok: false,
+      error: "SENSITIVE_TOOL_REQUIRES_CONFIRMATION",
+      reason_ar: "هذا الإجراء يحتاج بطاقة تأكيد: اطلب تجهيزه أولاً ثم أكّده بنفسك. لم يتغيّر شيء.",
+    });
   }
 
   // READ tools (and draft_* / prepare_outbound draft) — no confirmation. The

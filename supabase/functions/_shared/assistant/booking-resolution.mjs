@@ -126,7 +126,21 @@ function resolvePeriodReference(chalet, args = {}) {
     if (match.status === "ok") return { ok: true, period: match.item };
     const labels = options.map((p) => p.period_label).filter(Boolean).join("، ");
     if (match.status === "ambiguous") {
-      return { ok: false, error: "PERIOD_AMBIGUOUS", reason_ar: `وجدت أكثر من فترة مطابقة؛ اختر الاسم الكامل: ${labels}.`, options };
+      // Real owner data contains periods that are IDENTICAL in every
+      // owner-visible attribute (same label, times, prices — a data-entry
+      // quirk). There is nothing the owner could say to tell them apart, so
+      // collapsing to the first one is deterministic, not a guess. Only
+      // genuinely distinguishable matches stay ambiguous — listed WITH their
+      // times, because "pick the full name" is a dead end for equal names.
+      const fingerprint = (p) =>
+        [p.label, p.start, p.end, Number(p.weekday_price) || 0, Number(p.weekend_price) || 0]
+          .map((v) => String(v ?? "")).join("|");
+      const distinct = new Set(match.matches.map(fingerprint));
+      if (distinct.size === 1) return { ok: true, period: match.matches[0] };
+      const timed = match.matches
+        .map((p) => `«${String(p.label || "—")}» (${String(p.start || "؟")}–${String(p.end || "؟")})`)
+        .join("، ");
+      return { ok: false, error: "PERIOD_AMBIGUOUS", reason_ar: `توجد عدة فترات مطابقة لهذا الاسم؛ حدد الفترة بوقتها: ${timed}.`, options };
     }
     return { ok: false, error: "PERIOD_NOT_FOUND", reason_ar: labels ? `لم أجد هذه الفترة. الفترات المفعّلة: ${labels}.` : "لا توجد فترات مفعّلة لهذا الشاليه.", options };
   }

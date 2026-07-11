@@ -133,6 +133,24 @@ describe("two-stage chat reply", () => {
     expect(deps._modelCalls).toHaveLength(1); // no retry on a missing key
   });
 
+  it("a model-requested CONFIRM is blocked with actionable Arabic guidance, not a dead-end apology", async () => {
+    const deps = makeDeps({
+      modelSeq: [
+        { ok: true, reply: "سأسجل الحجز الآن", toolCalls: [{ name: "confirm_booking_create", arguments: { action_id: "a", confirmation_token: "t" } }] },
+        { ok: false, error: "X" }, // grounding down too -> deterministic fallback must still guide
+      ],
+    });
+    const b = await chat(deps, "شاليه سكاي — الفترات: ٧ مساءً إلى ٥ صباح سجل");
+    expect(b.ok).toBe(true);
+    // The block itself: nothing executed, and the reply tells the owner HOW to
+    // proceed (prepare + confirmation card) instead of a generic apology.
+    expect(b.tool_results[0]).toMatchObject({ ok: false, error: "CONFIRMATION_REQUIRES_OWNER" });
+    expect(b.reply_ar).toContain("بطاقة تأكيد");
+    expect(b.reply_ar).not.toContain("تعذّر إكمال الطلب حالياً");
+    expect(b.reply_ar).not.toContain("CONFIRMATION_REQUIRES_OWNER");
+    expect(b.reply_ar).not.toContain("confirm_booking_create");
+  });
+
   it("retries a transient grounding (stage-2) failure once and returns the grounded reply", async () => {
     const deps = makeDeps({
       modelSeq: [

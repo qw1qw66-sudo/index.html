@@ -87,5 +87,38 @@ describe("authoritative chalet/period name resolution", () => {
     expect(result.chalets[1]).toMatchObject({ chalet_id: "tulum-real-id", chalet_name: "شاليه تولوم", capacity: 15 });
     expect(result.chalets[1].periods.map((x) => x.period_id)).toEqual(["tulum-am", "tulum-pm"]);
   });
+
+  // Real owner data: several periods carry the IDENTICAL label (a data-entry
+  // quirk seen live). Identical-in-every-attribute duplicates collapse
+  // deterministically to the first; distinguishable ones stay ambiguous and
+  // the reason lists TIMES (equal names alone would be a dead end).
+  it("collapses fully-identical duplicate periods instead of dead-ending", () => {
+    const doc = workspaceDoc();
+    doc.chalets[0].periods = [1, 2, 3, 4, 5].map((n) => ({
+      id: "dup-" + n, label: "٧ مساءً إلى ٥ صباح", start: "19:00", end: "05:00",
+      weekday_price: 400, weekend_price: 600, active: true,
+    }));
+    const result = resolveBookingCreateArgs(doc, {
+      customer_name: "عميل تجربة", chalet_name: "سكاي",
+      period_label: "٧ مساءً إلى ٥ صباح", booking_date: "2099-07-11",
+    });
+    expect(result.ok).toBe(true);
+    expect(result.args.period_id).toBe("dup-1");
+  });
+
+  it("keeps genuinely different same-name periods ambiguous, listing their times", () => {
+    const doc = workspaceDoc();
+    doc.chalets[0].periods = [
+      { id: "d-am", label: "دوام", start: "07:00", end: "12:00", weekday_price: 300, weekend_price: 500, active: true },
+      { id: "d-pm", label: "دوام", start: "17:00", end: "23:00", weekday_price: 400, weekend_price: 600, active: true },
+    ];
+    const result = resolveBookingCreateArgs(doc, {
+      customer_name: "عميل تجربة", chalet_name: "سكاي",
+      period_label: "دوام", booking_date: "2099-07-11",
+    });
+    expect(result).toMatchObject({ ok: false, error: "PERIOD_AMBIGUOUS" });
+    expect(result.reason_ar).toContain("07:00");
+    expect(result.reason_ar).toContain("17:00");
+  });
 });
 
