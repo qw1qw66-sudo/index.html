@@ -3546,6 +3546,7 @@
             return assistantConfirm(
               sourceEl.dataset.actionId,
               sourceEl.dataset.confirmTool,
+              sourceEl,
             );
           if (a === "assistant-dismiss" && sourceEl) {
             const card = sourceEl.closest(".action-card");
@@ -3706,9 +3707,35 @@
             $("assistantSendButton").disabled = false;
           }
         }
-        async function assistantConfirm(actionId, confirmTool) {
+        // Map a server-confirmed action to its specific Arabic success line.
+        // Only shown AFTER the server returns a real completed_action result —
+        // never merely because the confirmation was accepted.
+        function assistantResultMessage(result) {
+          const a = String((result && result.action) || "");
+          return (
+            {
+              booking_created: "تم إنشاء الحجز بنجاح",
+              booking_updated: "تم تعديل الحجز بنجاح",
+              booking_cancelled: "تم إلغاء الحجز",
+              manual_payment_recorded: "تم تسجيل الدفعة في السجل",
+              payment_link_created: "تم إنشاء رابط الدفع",
+              whatsapp_opened_manual: "تم فتح رسالة واتساب يدويًا",
+              whatsapp_sent: "تم إرسال الرسالة عبر واتساب",
+            }[a] || "تم تنفيذ الإجراء وتأكيده من الخادم."
+          );
+        }
+        const assistantConfirmInFlight = new Set();
+        async function assistantConfirm(actionId, confirmTool, btn) {
           const token = assistantTokens[actionId];
           if (!token) return feedback("انتهت صلاحية التأكيد. جهّز الإجراء من جديد.", "bad");
+          // Prevent double-taps: one execution per action.
+          if (assistantConfirmInFlight.has(actionId)) return;
+          assistantConfirmInFlight.add(actionId);
+          const card = btn && btn.closest ? btn.closest(".action-card") : null;
+          if (btn) {
+            btn.disabled = true;
+            btn.textContent = "جاري التنفيذ...";
+          }
           try {
             const body = await assistantCall({
               invoke_tool: {
@@ -3717,17 +3744,48 @@
               },
             });
             if (body.ok && body.kind === "completed_action") {
-              assistantAppend("bot", "✅ " + (body.done_ar || "تم تنفيذ الإجراء وتأكيده من الخادم."));
+              const msg = assistantResultMessage(body.result);
+              assistantAppend("bot", "✅ " + msg);
               delete assistantTokens[actionId];
+              if (card) card.remove();
+              // Open the manual WhatsApp link if the server produced one.
+              if (body.result && body.result.manual_url) {
+                const w = window.open(body.result.manual_url, "_blank", "noopener,noreferrer");
+                if (!w) location.href = body.result.manual_url;
+              }
+              // Refresh affected views with real data.
               renderAll();
+              if (
+                currentPaymentBookingId &&
+                body.result &&
+                (body.result.action === "manual_payment_recorded" ||
+                  body.result.action === "payment_link_created")
+              )
+                refreshPaymentPanel(currentPaymentBookingId, true);
             } else {
+              // Never show "تم" — the underlying contract did not succeed.
+              if (btn) {
+                btn.disabled = false;
+                btn.textContent = "تأكيد الإجراء";
+              }
               assistantAppend(
                 "bot",
-                "لم يكتمل الإجراء (" + (body.error || "") + "). لم يتغيّر شيء بدون تأكيد الخادم.",
+                "لم يكتمل الإجراء (" +
+                  (body.error || "") +
+                  "). لم يتغيّر شيء بدون تأكيد الخادم.",
               );
             }
           } catch (e) {
-            assistantAppend("bot", e.notDeployed ? "المساعد غير مفعّل." : "تعذّر تأكيد الإجراء.");
+            if (btn) {
+              btn.disabled = false;
+              btn.textContent = "تأكيد الإجراء";
+            }
+            assistantAppend(
+              "bot",
+              e.notDeployed ? "المساعد غير مفعّل." : "تعذّر تأكيد الإجراء.",
+            );
+          } finally {
+            assistantConfirmInFlight.delete(actionId);
           }
         }
         function assistantNew() {
