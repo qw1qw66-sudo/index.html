@@ -45,12 +45,17 @@ export function createProviderAdapter(env) {
 
   switch (provider) {
     case "test": {
-      // Hard guard: the fake adapter must never run where real users are.
+      // Hard guard: the fake adapter may run ONLY in an explicitly listed
+      // non-production environment (reverse-audit §1.5). This is an ALLOWLIST,
+      // not a denylist: an unset / unknown / development / production APP_ENV
+      // all block it. Supabase does not set APP_ENV automatically, so a real
+      // project stays blocked unless the owner deliberately sets APP_ENV to
+      // "test" or "staging" AND opts in with the explicit flag AND provides a
+      // webhook secret.
+      const appEnv = String(readEnv(env, "APP_ENV") || "").toLowerCase();
       const allow = String(readEnv(env, "PAYMENTS_ALLOW_TEST_PROVIDER") || "") === "true";
-      const runtimeEnv = String(
-        readEnv(env, "DENO_ENV") || readEnv(env, "NODE_ENV") || "",
-      ).toLowerCase();
-      if (!allow || runtimeEnv === "production") {
+      const ALLOWED_ENVS = ["test", "staging"];
+      if (!ALLOWED_ENVS.includes(appEnv) || !allow) {
         return { ok: false, error: "TEST_PROVIDER_BLOCKED" };
       }
       const webhookSecret = readEnv(env, "PAYMENT_WEBHOOK_SECRET");

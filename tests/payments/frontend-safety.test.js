@@ -108,38 +108,80 @@ describe("20. no provider secrets in logs or outputs", () => {
   });
 
   it("edge function sources record only sanitized error codes, never payload or signature material", () => {
-    const src = readFileSync("supabase/functions/payment-webhook/index.ts", "utf8");
+    // Logic now lives in the runtime-tested handler; the thin index.ts only wires deps.
+    const handler = readFileSync("supabase/functions/payment-webhook/handler.mjs", "utf8");
+    const wrapper = readFileSync("supabase/functions/payment-webhook/index.ts", "utf8");
     // error_message is set from a fixed action.error code path only.
-    expect(src).toContain("errorMessage = String(action.error)");
-    expect(src).not.toMatch(/error_message[^\n]*payload/);
-    expect(src).not.toMatch(/console\.log\([^)]*(secret|signature|pin)/i);
+    expect(handler).toContain("errorMessage = String(action.error)");
+    for (const src of [handler, wrapper]) {
+      expect(src).not.toMatch(/error_message[^\n]*payload/);
+      expect(src).not.toMatch(/console\.log\([^)]*(secret|signature|pin)/i);
+    }
   });
 });
 
-describe("test provider cannot be enabled accidentally in production", () => {
-  const env = {
+describe("test provider environment allowlist (reverse-audit §1.5)", () => {
+  // Full config that SHOULD enable the test adapter.
+  const good = {
     PAYMENT_PROVIDER: "test",
+    APP_ENV: "test",
     PAYMENTS_ALLOW_TEST_PROVIDER: "true",
     PAYMENT_WEBHOOK_SECRET: "x",
   };
 
-  it("requires the explicit allow flag", () => {
-    expect(createProviderAdapter({ ...env, PAYMENTS_ALLOW_TEST_PROVIDER: "" }))
+  it("enables the test adapter only for APP_ENV in {test, staging} with the opt-in flag", () => {
+    expect(createProviderAdapter(good).ok).toBe(true);
+    expect(createProviderAdapter({ ...good, APP_ENV: "staging" }).ok).toBe(true);
+  });
+
+  it("blocks when APP_ENV is missing", () => {
+    const { APP_ENV, ...noEnv } = good;
+    void APP_ENV;
+    expect(createProviderAdapter(noEnv)).toEqual({ ok: false, error: "TEST_PROVIDER_BLOCKED" });
+  });
+
+  it("blocks APP_ENV=production", () => {
+    expect(createProviderAdapter({ ...good, APP_ENV: "production" }))
       .toEqual({ ok: false, error: "TEST_PROVIDER_BLOCKED" });
   });
-  it("refuses production runtimes even with the allow flag", () => {
-    expect(createProviderAdapter({ ...env, NODE_ENV: "production" }))
-      .toEqual({ ok: false, error: "TEST_PROVIDER_BLOCKED" });
-    expect(createProviderAdapter({ ...env, DENO_ENV: "production" }))
+
+  it("blocks APP_ENV=development (not on the allowlist)", () => {
+    expect(createProviderAdapter({ ...good, APP_ENV: "development" }))
       .toEqual({ ok: false, error: "TEST_PROVIDER_BLOCKED" });
   });
-  it("reports missing configuration instead of guessing a provider", () => {
+
+  it("blocks an unknown APP_ENV value", () => {
+    expect(createProviderAdapter({ ...good, APP_ENV: "prod-2" }))
+      .toEqual({ ok: false, error: "TEST_PROVIDER_BLOCKED" });
+  });
+
+  it("blocks when the explicit opt-in flag is missing", () => {
+    expect(createProviderAdapter({ ...good, PAYMENTS_ALLOW_TEST_PROVIDER: "" }))
+      .toEqual({ ok: false, error: "TEST_PROVIDER_BLOCKED" });
+  });
+
+  it("does NOT rely on NODE_ENV/DENO_ENV (Supabase does not set them)", () => {
+    // Even a benign-looking NODE_ENV must not enable the adapter without APP_ENV.
+    const { APP_ENV, ...noEnv } = good;
+    void APP_ENV;
+    expect(createProviderAdapter({ ...noEnv, NODE_ENV: "staging" }))
+      .toEqual({ ok: false, error: "TEST_PROVIDER_BLOCKED" });
+  });
+
+  it("reports missing/unknown provider instead of guessing", () => {
     expect(createProviderAdapter({})).toEqual({ ok: false, error: "NO_PROVIDER_CONFIGURED" });
     expect(createProviderAdapter({ PAYMENT_PROVIDER: "unknown-gateway" }))
       .toEqual({ ok: false, error: "UNKNOWN_PROVIDER" });
   });
+
+  it("requires a webhook secret even when otherwise allowed", () => {
+    const { PAYMENT_WEBHOOK_SECRET, ...noSecret } = good;
+    void PAYMENT_WEBHOOK_SECRET;
+    expect(createProviderAdapter(noSecret)).toEqual({ ok: false, error: "MISSING_WEBHOOK_SECRET" });
+  });
+
   it("test adapter payment URLs use the reserved .invalid TLD", async () => {
-    const r = createProviderAdapter(env);
+    const r = createProviderAdapter(good);
     expect(r.ok).toBe(true);
     const session = await r.adapter.createPaymentSession({ amountHalalas: 1000, currency: "SAR" });
     expect(new URL(session.paymentUrl).hostname.endsWith(".invalid")).toBe(true);

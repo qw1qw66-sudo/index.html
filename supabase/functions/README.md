@@ -10,8 +10,8 @@ implementation is a test fake that cannot move money (see
 
 | Path | Role |
 |---|---|
-| `create-payment-session/` | Creates a payment order + provider checkout link, server-side validated (Edge Function) |
-| `payment-webhook/` | Verifies, records, deduplicates, and processes provider webhook events (Edge Function) |
+| `create-payment-session/` | `index.ts` (thin Deno wrapper) + `handler.mjs` (runtime-tested logic): creates a payment order + provider link, workspace-scoped idempotency, atomic expiry of stale orders |
+| `payment-webhook/` | `index.ts` (thin Deno wrapper) + `handler.mjs`: verifies, records, deduplicates, and processes provider events |
 | `_shared/ledger-core.mjs` | Pure decision logic (amount parsing, totals, payment-state derivation, webhook action planning) — unit-tested from `tests/payments/` with Node/vitest |
 | `_shared/providers/index.mjs` | Provider adapter factory + production guards |
 | `_shared/providers/test-adapter.mjs` | TEST-ONLY fake provider (HMAC-signed fake events, `.invalid` URLs) |
@@ -32,6 +32,7 @@ supabase functions deploy payment-webhook --project-ref <staging-ref>
 
 # 3. Configure secrets (values are owner-held; never commit them):
 supabase secrets set --project-ref <staging-ref> \
+  APP_ENV=staging \
   PAYMENT_PROVIDER=test \
   PAYMENTS_ALLOW_TEST_PROVIDER=true \
   PAYMENT_WEBHOOK_SECRET=<throwaway-staging-value> \
@@ -49,8 +50,11 @@ Required env for a real provider (names only — see `_shared/providers/index.mj
 
 ## Safety properties
 
-- The test provider refuses to start when `NODE_ENV`/`DENO_ENV` is
-  `production` or when `PAYMENTS_ALLOW_TEST_PROVIDER` is not `"true"`.
+- The test provider uses an **environment allowlist** (reverse-audit §1.5): it
+  starts only when `APP_ENV` is exactly `test` or `staging` AND
+  `PAYMENTS_ALLOW_TEST_PROVIDER` is `"true"` AND a webhook secret is set. A
+  missing / unknown / `development` / `production` `APP_ENV` all block it. It
+  does not rely on `NODE_ENV`/`DENO_ENV` (Supabase does not set those).
 - Webhook processing: signature verification precedes everything; raw events
   are stored before business logic; duplicates are acknowledged and skipped;
   the same provider transaction can never be recorded twice (DB unique
