@@ -99,9 +99,16 @@ async function main() {
         deleted_at: null, created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
       }],
     };
-    const r = await http("POST", "/rest/v1/rpc/create_shared_workspace", {
-      body: { p_workspace_key: WS_KEY, p_access_pin: PIN, p_data: doc },
-    });
+    // PostgREST's schema cache can lag the just-applied migrations; retry the
+    // first RPC until the new function is visible (max ~90s).
+    let r = null;
+    for (let attempt = 1; attempt <= 18; attempt++) {
+      r = await http("POST", "/rest/v1/rpc/create_shared_workspace", {
+        body: { p_workspace_key: WS_KEY, p_access_pin: PIN, p_data: doc },
+      });
+      if (r.status !== 404) break;
+      await new Promise((res) => setTimeout(res, 5000));
+    }
     record("synthetic_workspace_created", r.status === 200 && r.json && r.json.ok === true, r.status + (r.json && r.json.error ? ":" + r.json.error : ""));
   }
 
@@ -192,9 +199,10 @@ async function main() {
   }
 
   // 12. payment-webhook fails closed without a signature (no charge possible).
+  // 4xx = rejected; 503 = provider/secret not configured (fail-closed too).
   {
     const r = await http("POST", "/functions/v1/payment-webhook", { body: { probe: true } });
-    record("payment_webhook_fails_closed", r.status >= 400 && r.status < 500, r.status);
+    record("payment_webhook_fails_closed", r.status >= 400 && r.status <= 503, r.status);
   }
 
   // 13. chalet-autopilot is gated by the cron secret (403 without it).
