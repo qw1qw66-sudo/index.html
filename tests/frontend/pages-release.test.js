@@ -132,6 +132,13 @@ describe("Pages artifact", () => {
     expect(wf).not.toMatch(/cp\s+[^\n]*\b(database|supabase|exports|tests|scripts|node_modules)\b[^\n]*dist/);
     expect(wf).toContain("test ! -e dist/database");
     expect(wf).toContain("test ! -e dist/supabase");
+    // The guard must check only the exact replaceable tokens. A broad
+    // "__APP_BUILD" prefix also exists intentionally in the local-dev helper.
+    expect(wf).toContain('grep -qF "__APP_BUILD__" dist/index.html');
+    expect(wf).toContain('grep -qF "__APP_BUILD_SHA__" dist/index.html');
+    expect(wf).not.toContain('grep -qF "__APP_BUILD" dist/index.html');
+    expect(wf).toContain('grep -qF "const APP_BUILD = \\"main-${short}\\";" dist/index.html');
+    expect(wf).toContain('grep -qF "const APP_BUILD_SHA = \\"${GITHUB_SHA}\\";" dist/index.html');
     // github-pages environment fix (the concrete cause of the failed run).
     expect(wf).toContain("environment:");
     expect(wf).toContain("name: github-pages");
