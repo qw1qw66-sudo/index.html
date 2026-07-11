@@ -58,12 +58,38 @@ describe("migration 0002 (payment ledger) contracts", () => {
     expect(c2).toContain("currency = 'SAR'");
     expect(c2).not.toMatch(/\b(real|double precision|float4|float8)\b/i);
   });
-  it("orders: unique idempotency key, unique provider ref, positive amount, status whitelist", () => {
-    expect(m2).toContain("payment_orders_idempotency_unique unique (idempotency_key)");
+  it("orders: workspace-scoped idempotency, unique provider ref, positive amount, status whitelist", () => {
+    expect(m2).toContain("payment_orders_idempotency_unique unique (workspace_key, idempotency_key)");
     expect(m2).toContain("payment_orders_provider_ref_unique");
     expect(m2).toContain("check (amount_halalas > 0)");
     expect(m2).toContain("'pending', 'paid', 'partially_paid', 'failed', 'expired', 'cancelled'");
     expect(m2).toContain("payment_orders_one_active_per_booking");
+  });
+
+  it("transactions idempotency is also workspace-scoped", () => {
+    expect(m2).toContain("payment_tx_idempotency_unique unique (workspace_key, idempotency_key)");
+  });
+
+  it("both migrations reload the PostgREST schema cache", () => {
+    expect(c1).toContain("notify pgrst, 'reload schema'");
+    expect(c2).toContain("notify pgrst, 'reload schema'");
+  });
+
+  it("v1 legacy save now rejects conflicting documents (parity with v2)", () => {
+    expect(c1).toContain("workspace_doc_booking_conflict(p_data)");
+    // the check appears in BOTH v2 and the v1 recreation
+    expect((c1.match(/workspace_doc_booking_conflict\(p_data\)/g) || []).length).toBeGreaterThanOrEqual(2);
+    expect(c1).toContain("EMPTY_OVERWRITE_BLOCKED");
+  });
+
+  it("migration documents the owner post-rollout v1 revoke step (not run automatically)", () => {
+    expect(m1).toMatch(/revoke execute on function public\.save_shared_workspace/);
+  });
+
+  it("expired pending orders can be atomically transitioned before replacement", () => {
+    expect(c2).toContain("function public.expire_stale_payment_orders");
+    expect(c2).toContain("for update skip locked");
+    expect(c2).toContain("expires_at <= now()");
   });
   it("transactions: immutable ledger with typed entries and non-negative amounts", () => {
     expect(m2).toContain("'payment', 'manual_payment', 'refund', 'adjustment', 'legacy_opening_balance'");

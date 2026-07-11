@@ -115,7 +115,8 @@ describe("16. repeated migration runs cannot duplicate", () => {
       workspaceDoc: doc([paidBooking("b-1", 300)]),
     });
     const sql = planToSql(plan);
-    expect(sql).toContain("on conflict (idempotency_key) do nothing");
+    // Workspace-scoped conflict target (reverse-audit follow-up 1.6).
+    expect(sql).toContain("on conflict (workspace_key, idempotency_key) do nothing");
     const statements = sql
       .split("\n")
       .filter((line) => !line.trim().startsWith("--"))

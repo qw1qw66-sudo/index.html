@@ -86,7 +86,10 @@ create table if not exists public.payment_orders (
     status in ('pending', 'paid', 'partially_paid', 'failed', 'expired', 'cancelled')
   ),
   constraint payment_orders_booking_id_format check (length(booking_id) between 1 and 128),
-  constraint payment_orders_idempotency_unique unique (idempotency_key)
+  -- Idempotency is scoped to the workspace (reverse-audit follow-up 1.6):
+  -- the same key in two different workspaces are independent, and workspace B
+  -- can never retrieve workspace A's order through an idempotency collision.
+  constraint payment_orders_idempotency_unique unique (workspace_key, idempotency_key)
 );
 
 create unique index if not exists payment_orders_provider_ref_unique
@@ -189,7 +192,9 @@ create table if not exists public.payment_transactions (
     or (transaction_type = 'refund' and direction = 'out')
     or (transaction_type = 'adjustment')
   ),
-  constraint payment_tx_idempotency_unique unique (idempotency_key)
+  -- Workspace-scoped like payment_orders. Manual/legacy keys already embed the
+  -- workspace; webhook keys stay globally unique via provider_transaction_id.
+  constraint payment_tx_idempotency_unique unique (workspace_key, idempotency_key)
 );
 
 create unique index if not exists payment_tx_provider_ref_unique
@@ -501,8 +506,9 @@ begin
                           'over_collection', p_amount_halalas > v_remaining))
     returning * into v_tx;
   exception when unique_violation then
-    -- Idempotent retry: return the already-recorded transaction.
-    select * into v_tx from public.payment_transactions where idempotency_key = v_idem;
+    -- Idempotent retry: return the already-recorded transaction (workspace-scoped).
+    select * into v_tx from public.payment_transactions
+     where workspace_key = v_auth.workspace_key and idempotency_key = v_idem;
     return jsonb_build_object('ok', true, 'duplicate', true, 'transaction_id', v_tx.id);
   end;
 
@@ -722,8 +728,58 @@ end;
 $$;
 
 -- ============================================================================
+-- 10b. Atomic expiry of stale pending orders (reverse-audit follow-up 1.7)
+-- ============================================================================
+-- The one-active-pending-order-per-booking unique index cannot itself use
+-- now() in its predicate, so an EXPIRED order left in status='pending' would
+-- otherwise block a new payment link forever. create-payment-session calls
+-- this first; the time check lives in SQL (now()), not only in the Edge
+-- Function, so the database and the server logic agree. Returns the number of
+-- orders transitioned. Concurrency-safe: FOR UPDATE SKIP LOCKED means two
+-- concurrent callers cannot both flip the same row, and the status-transition
+-- trigger is the backstop.
+
+create or replace function public.expire_stale_payment_orders(
+  p_workspace_key text,
+  p_booking_id text
+)
+returns integer
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_ids uuid[];
+begin
+  select array_agg(id) into v_ids
+  from (
+    select id
+    from public.payment_orders
+    where workspace_key = p_workspace_key
+      and booking_id = p_booking_id
+      and status = 'pending'
+      and expires_at is not null
+      and expires_at <= now()
+    for update skip locked
+  ) s;
+
+  if v_ids is null then
+    return 0;
+  end if;
+
+  update public.payment_orders
+  set status = 'expired'
+  where id = any(v_ids)
+    and status = 'pending';
+
+  return coalesce(array_length(v_ids, 1), 0);
+end;
+$$;
+
+-- ============================================================================
 -- 11. Grants — RPC-only surface for anon; internals not exposed
 -- ============================================================================
+revoke all on function public.expire_stale_payment_orders(text, text) from public, anon, authenticated;
 
 revoke all on function public.riyals_to_halalas(numeric) from public, anon, authenticated;
 revoke all on function public.booking_from_workspace(text, text) from public, anon, authenticated;
@@ -741,6 +797,12 @@ revoke all on function public.reconcile_booking_payment(text, text, text, boolea
 grant execute on function public.record_manual_payment(text, text, text, bigint, text, text, text, timestamptz, text, boolean) to anon;
 grant execute on function public.get_booking_payments(text, text, text) to anon;
 grant execute on function public.reconcile_booking_payment(text, text, text, boolean) to anon;
+-- expire_stale_payment_orders is called only by the create-payment-session
+-- Edge Function (service role); no anon grant needed.
+
+-- Reload PostgREST's schema cache so the new payment RPCs are reachable
+-- immediately after applying this migration (reverse-audit §1.2 / R-6).
+notify pgrst, 'reload schema';
 
 commit;
 

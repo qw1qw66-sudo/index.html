@@ -454,13 +454,25 @@ $$;
 -- v1 bodies are re-created with the SAME signatures and error contract
 -- (raise on failure) so the currently deployed frontend keeps working:
 --   - get: adds the throttle check.
---   - save: adds the throttle check AND a server-side empty-overwrite guard —
---     replacing a NON-EMPTY workspace document with an EMPTY one is rejected.
---     This turns the AUD-001 "create account wipes existing data" click into
---     a visible error for old clients instead of silent data loss, while
---     creating genuinely new workspaces still works. v1 auto-create is
---     intentionally kept for old-frontend compatibility; disable it in a
---     future migration once all clients use create_shared_workspace.
+--   - save: adds the throttle check, a document booking-CONFLICT check
+--     (parity with v2), AND a server-side empty-overwrite guard — replacing a
+--     NON-EMPTY workspace document with an EMPTY one is rejected. This turns
+--     the AUD-001 "create account wipes existing data" click into a visible
+--     error for old clients instead of silent data loss, while creating
+--     genuinely new workspaces still works.
+--
+-- DEPRECATION / CONCURRENCY LIMITATION (do not overstate v1):
+--   v1 save does NOT provide revision-based compare-and-save. It cannot
+--   detect a lost update between two devices — only save_shared_workspace_v2
+--   does that. v1 remains only for stale cached clients that predate v2.
+--   All NEW write paths (the current frontend, and every AI write tool in the
+--   stacked assistant PR) MUST use v2 and MUST NOT fall back to v1.
+--
+-- OWNER POST-ROLLOUT STEP (do NOT run automatically here — stale clients would
+-- break): once every client is confirmed on the v2 frontend, revoke anon
+-- execute on v1 save so it can no longer be reached:
+--     revoke execute on function public.save_shared_workspace(text, text, jsonb) from anon;
+-- Keep get_shared_workspace granted (v2 has no read replacement).
 
 create or replace function public.get_shared_workspace(
   p_workspace_key text,
@@ -525,6 +537,7 @@ declare
   v_pin text;
   v_data jsonb;
   v_updated_at timestamptz;
+  v_conflict text;
 begin
   v_workspace_key := upper(regexp_replace(btrim(coalesce(p_workspace_key, '')), '[^A-Za-z0-9_-]', '', 'g'));
   v_pin := coalesce(p_access_pin, '');
@@ -543,6 +556,17 @@ begin
 
   if p_data is null or jsonb_typeof(p_data) <> 'object' then
     raise exception 'INVALID_DATA' using errcode = '22023';
+  end if;
+
+  -- Reject a document containing internally conflicting confirmed bookings.
+  -- Parity with save_shared_workspace_v2 (reverse-audit R/§1.3): before this,
+  -- a direct v1 caller or a stale cached frontend could land two overlapping
+  -- confirmed bookings that v2 rejects. v1 STILL provides no revision-based
+  -- CAS (see the deprecation note below) — it only gains conflict + empty
+  -- overwrite protection here.
+  v_conflict := public.workspace_doc_booking_conflict(p_data);
+  if v_conflict is not null then
+    raise exception '%', v_conflict using errcode = '23514';
   end if;
 
   v_data := p_data - 'updated_at';
@@ -603,6 +627,13 @@ revoke all on function public.create_shared_workspace(text, text, jsonb) from pu
 revoke all on function public.save_shared_workspace_v2(text, text, jsonb, timestamptz) from public, authenticated;
 grant execute on function public.create_shared_workspace(text, text, jsonb) to anon;
 grant execute on function public.save_shared_workspace_v2(text, text, jsonb, timestamptz) to anon;
+
+-- Tell PostgREST to reload its schema cache so the new RPCs are reachable
+-- immediately after this migration is applied via psql/SQL editor. Without
+-- this, clients can keep receiving 404 (PGRST202) for create_shared_workspace
+-- / save_shared_workspace_v2 until PostgREST reloads on its own, silently
+-- keeping the frontend on the weaker v1 path (reverse-audit §1.2 / R-6).
+notify pgrst, 'reload schema';
 
 commit;
 

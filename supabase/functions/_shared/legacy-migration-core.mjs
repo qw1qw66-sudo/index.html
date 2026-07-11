@@ -181,7 +181,7 @@ export function planToSql(plan) {
           sqlQuote(t.idempotency_key),
           sqlQuote(JSON.stringify(t.metadata)) + "::jsonb",
         ].join(", ") +
-        ") on conflict (idempotency_key) do nothing;",
+        ") on conflict (workspace_key, idempotency_key) do nothing;",
     );
   }
   lines.push("commit;");
