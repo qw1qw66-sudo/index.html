@@ -223,6 +223,39 @@ export function validateCreateSession({
   return { ok: true, amountHalalas: amount, totalHalalas, remainingHalalas: remaining };
 }
 
+/**
+ * Validate a manual payment (cash / bank transfer / POS / worker).
+ * Mirrors the SQL RPC record_manual_payment's rules; amounts in halalas.
+ */
+export function validateManualPayment({
+  booking,
+  amountHalalas,
+  paymentMethod,
+  reason,
+  netPaidHalalas,
+  allowOverCollection = false,
+}) {
+  if (!Number.isSafeInteger(amountHalalas) || amountHalalas <= 0) {
+    return { ok: false, error: "AMOUNT_MUST_BE_POSITIVE" };
+  }
+  if (!["cash", "bank_transfer", "pos", "worker", "other"].includes(paymentMethod)) {
+    return { ok: false, error: "INVALID_PAYMENT_METHOD" };
+  }
+  if (paymentMethod === "bank_transfer" && !String(reason || "").trim()) {
+    return { ok: false, error: "REFERENCE_REQUIRED_FOR_BANK_TRANSFER" };
+  }
+  if (!booking) return { ok: false, error: "BOOKING_NOT_FOUND" };
+  if (bookingIsDeleted(booking)) return { ok: false, error: "BOOKING_DELETED" };
+  if (bookingIsCancelled(booking)) return { ok: false, error: "BOOKING_CANCELLED" };
+  const conv = riyalsNumberToHalalas(Number(booking.total));
+  if (!conv.ok) return { ok: false, error: "BOOKING_TOTAL_INVALID" };
+  const remaining = Math.max(0, conv.halalas - (Number(netPaidHalalas) || 0));
+  if (amountHalalas > remaining && !allowOverCollection) {
+    return { ok: false, error: "AMOUNT_EXCEEDS_REMAINING", remainingHalalas: remaining };
+  }
+  return { ok: true, remainingHalalas: remaining, overCollection: amountHalalas > remaining };
+}
+
 // ---------------------------------------------------------------------------
 // Webhook event application — pure decision function.
 // The Edge Function shell executes the returned actions inside one DB
