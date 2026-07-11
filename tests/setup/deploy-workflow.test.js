@@ -34,7 +34,10 @@ describe("deploy-supabase-staging workflow", () => {
     expect(wf).toContain("secrets.SUPABASE_DB_PASSWORD");
     // Optional explicit override:
     expect(wf).toContain("secrets.SUPABASE_PROJECT_ID");
-    expect(wf).not.toMatch(/SERVICE_?ROLE/i);
+    // The service-role KEY is never referenced as a secret (granting to the
+    // service_role DATABASE ROLE in SQL is unrelated and fine).
+    expect(wf).not.toMatch(/secrets\.\s*SUPABASE_SERVICE_ROLE/i);
+    expect(wf).not.toMatch(/SUPABASE_SERVICE_ROLE_KEY/);
   });
 
   it("pins the Supabase CLI and applies migrations with status shown first", () => {
