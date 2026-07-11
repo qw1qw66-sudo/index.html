@@ -1,5 +1,5 @@
 // In-memory ledger store used by the payment pipeline tests. It enforces the
-// same uniqueness/transition rules as database/migrations/0002_payment_ledger.sql
+// same uniqueness/transition rules as supabase/migrations/20260701000002_payment_ledger.sql
 // (which were separately verified against a real PostgreSQL 16 instance —
 // see the audit and PR notes), so the pure decision logic can be exercised
 // end-to-end without a database.

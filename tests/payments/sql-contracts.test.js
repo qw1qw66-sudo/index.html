@@ -8,8 +8,8 @@ import { describe, expect, it } from "vitest";
 // description for the transcript summary. These pins keep the critical
 // clauses from silently disappearing in later edits.
 
-const m1 = readFileSync("database/migrations/0001_atomic_workspace_save.sql", "utf8");
-const m2 = readFileSync("database/migrations/0002_payment_ledger.sql", "utf8");
+const m1 = readFileSync("supabase/migrations/20260701000001_atomic_workspace_save.sql", "utf8");
+const m2 = readFileSync("supabase/migrations/20260701000002_payment_ledger.sql", "utf8");
 
 // Executable statements only — SQL comments (e.g. the documented rollback
 // section) must not satisfy or violate the contracts below.

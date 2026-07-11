@@ -1373,13 +1373,113 @@
               </p>
             </div>
             <hr class="settings-divider" />
+            <h4>١) مشروع Staging (بيئة تجريبية منفصلة)</h4>
+            <div class="setup-actions">
+              <button
+                class="primary setup-btn"
+                data-action="setup-open-staging-project"
+                type="button"
+              >
+                إنشاء أو فتح مشروع Staging
+              </button>
+              <ol class="setup-steps">
+                <li>سجّل الدخول إلى Supabase.</li>
+                <li>
+                  أنشئ مشروعاً جديداً باسم قريب من:
+                  <span class="ltr">chalet-booking-staging</span>
+                </li>
+                <li>اختر منطقة قريبة من السعودية.</li>
+                <li>احفظ كلمة مرور قاعدة البيانات في مدير كلمات المرور.</li>
+                <li>بعد إنشاء المشروع ارجع هنا واضغط: تم إنشاء Staging</li>
+              </ol>
+              <button
+                class="secondary setup-btn"
+                data-action="setup-staging-created"
+                type="button"
+              >
+                تم إنشاء Staging
+              </button>
+              <div id="stagingConnectBox" class="hidden">
+                <p class="setup-note">
+                  انسخ من صفحة إعدادات المشروع القيمتين غير السرّيتين فقط:
+                  معرّف المشروع (Project Ref) والمفتاح العام (publishable).
+                  لا تنسخ كلمة مرور قاعدة البيانات ولا أي مفتاح سرّي إلى هنا.
+                </p>
+                <div class="grid">
+                  <div>
+                    <label>معرّف مشروع Staging (Project Ref)</label
+                    ><input id="stagingRefInput" class="ltr" autocomplete="off" />
+                  </div>
+                  <div>
+                    <label>المفتاح العام (publishable)</label
+                    ><input id="stagingAnonInput" class="ltr" autocomplete="off" />
+                  </div>
+                </div>
+                <div class="setup-actions">
+                  <button
+                    class="primary setup-btn"
+                    data-action="setup-save-staging-config"
+                    type="button"
+                  >
+                    حفظ إعدادات Staging
+                  </button>
+                  <button
+                    class="secondary setup-btn"
+                    data-action="setup-open-staging"
+                    type="button"
+                  >
+                    فتح نسخة Staging
+                  </button>
+                </div>
+              </div>
+              <button
+                class="primary setup-btn hidden"
+                data-action="setup-try-assistant"
+                type="button"
+              >
+                تجربة المساعد
+              </button>
+            </div>
+            <hr class="settings-divider" />
+            <h4>٢) أسرار النشر في GitHub</h4>
+            <div class="setup-actions">
+              <button
+                class="secondary setup-btn"
+                data-action="setup-open-github-secrets"
+                type="button"
+              >
+                فتح أسرار GitHub للنشر
+              </button>
+              <p class="setup-note">
+                أضف هذه الأسرار الأربعة في صفحة GitHub (Actions secrets):<br />
+                <span class="ltr">SUPABASE_ACCESS_TOKEN</span> — أنشئه من صفحة
+                <a
+                  href="https://supabase.com/dashboard/account/tokens"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  >Access Tokens</a
+                >
+                في حساب Supabase.<br />
+                <span class="ltr">SUPABASE_PROJECT_ID</span> — معرّف مشروع
+                Staging (Project Ref).<br />
+                <span class="ltr">SUPABASE_DB_PASSWORD</span> — كلمة مرور قاعدة
+                البيانات التي اخترتها عند إنشاء Staging.<br />
+                <span class="ltr">SUPABASE_ANON_KEY</span> — المفتاح العام
+                (publishable) لمشروع Staging.<br />
+                لا تضف أبداً مفتاح
+                <span class="ltr">SERVICE ROLE</span> — الخادم يستلمه من
+                Supabase تلقائياً ولا يدخل GitHub أو المتصفح.
+              </p>
+            </div>
+            <hr class="settings-divider" />
             <h4>خطوات الإعداد من الجوال</h4>
             <ol class="setup-steps">
-              <li>افتح صفحة إضافة المفاتيح.</li>
-              <li>اختر مشروع Supabase.</li>
-              <li>الصق المفاتيح واضغط Save.</li>
-              <li>ارجع للبرنامج واضغط فحص الربط.</li>
-              <li>افتح صفحة النشر وشغّل Staging.</li>
+              <li>أنشئ مشروع Staging ثم اضغط «تم إنشاء Staging».</li>
+              <li>الصق معرّف المشروع والمفتاح العام واحفظ.</li>
+              <li>افتح صفحة إضافة المفاتيح، اختر مشروع Staging، الصق القائمة مع مفتاح DeepSeek واضغط Save.</li>
+              <li>افتح أسرار GitHub للنشر وأضف الأسرار الأربعة.</li>
+              <li>افتح صفحة النشر وشغّل Deploy Supabase Staging.</li>
+              <li>افتح نسخة Staging، سجّل حساباً تجريبياً، واضغط فحص الربط.</li>
               <li>جرّب سؤال: ما هي حجوزات اليوم؟</li>
             </ol>
           </div>
@@ -1412,8 +1512,50 @@
     <script>
       (function () {
         "use strict";
-        const SUPABASE_URL = "https://fkqidesfrtpwzjcimjoe.supabase.co",
-          SUPABASE_ANON_KEY = "sb_publishable_Uks_PYr6aqY5wnNBjDjTgg_z2Ic6_al";
+        // Production Supabase (the default, unchanged). A SEPARATE staging
+        // project can be opened explicitly via ?env=staging using ONLY
+        // non-secret values (Project Ref + publishable key) saved from the
+        // setup page. The live production default is never redirected.
+        const PROD_SUPABASE_URL = "https://fkqidesfrtpwzjcimjoe.supabase.co",
+          PROD_SUPABASE_ANON_KEY = "sb_publishable_Uks_PYr6aqY5wnNBjDjTgg_z2Ic6_al";
+        const STAGING_REF_STORAGE_KEY = "staging_project_ref",
+          STAGING_PUBLISHABLE_STORAGE_KEY = "staging_publishable_key";
+        function readStagingConfig() {
+          try {
+            const ref = String(
+              localStorage.getItem(STAGING_REF_STORAGE_KEY) || "",
+            ).trim();
+            const anon = String(
+              localStorage.getItem(STAGING_PUBLISHABLE_STORAGE_KEY) || "",
+            ).trim();
+            // Strict shapes: the ref only ever builds "<ref>.supabase.co" and
+            // the key must be a public (publishable/legacy anon) key. Secret
+            // keys are never accepted or stored here.
+            if (!/^[a-z0-9]{15,30}$/.test(ref)) return null;
+            if (!/^(sb_publishable_[A-Za-z0-9_-]{10,}|eyJ[A-Za-z0-9_.-]{40,})$/.test(anon))
+              return null;
+            return { ref, anon };
+          } catch (e) {
+            return null;
+          }
+        }
+        const STAGING_CONFIG = readStagingConfig();
+        const IS_STAGING_MODE = (() => {
+          try {
+            return (
+              new URLSearchParams(location.search).get("env") === "staging" &&
+              Boolean(STAGING_CONFIG)
+            );
+          } catch (e) {
+            return false;
+          }
+        })();
+        const SUPABASE_URL = IS_STAGING_MODE
+            ? "https://" + STAGING_CONFIG.ref + ".supabase.co"
+            : PROD_SUPABASE_URL,
+          SUPABASE_ANON_KEY = IS_STAGING_MODE
+            ? STAGING_CONFIG.anon
+            : PROD_SUPABASE_ANON_KEY;
         // ========================= JS: theme preference (light/dark) =========================
         const THEME_STORAGE_KEY = "ui_theme_preference";
         function readStoredTheme() {
@@ -1590,22 +1732,83 @@
           "https://supabase.com/dashboard/project/_/functions/secrets";
         const SETUP_DEPLOY_URL =
           "https://github.com/qw1qw66-sudo/index.html/actions";
+        const SETUP_NEW_PROJECT_URL = "https://supabase.com/dashboard/new";
+        const SETUP_GITHUB_SECRETS_URL =
+          "https://github.com/qw1qw66-sudo/index.html/settings/secrets/actions";
+        // Only the DeepSeek key is entered by the owner (in Supabase, never
+        // here). ASSISTANT_CONFIRM_SECRET / AUTOPILOT_CRON_SECRET are generated
+        // automatically by the GitHub deployment workflow on its runner.
         const SETUP_SECRET_TEMPLATE = [
           "DEEPSEEK_API_KEY=",
           "DEEPSEEK_MODEL=deepseek-v4-flash",
           "DEEPSEEK_BASE_URL=https://api.deepseek.com",
-          "ASSISTANT_CONFIRM_SECRET=",
-          "AUTOPILOT_CRON_SECRET=",
           "APP_ENV=staging",
-          "",
-          "WHATSAPP_CLOUD_TOKEN=",
-          "WHATSAPP_PHONE_ID=",
         ].join("\n");
         function openSetupSecrets() {
           window.open(SETUP_SECRETS_URL, "_blank", "noopener,noreferrer");
         }
         function openSetupDeploy() {
           window.open(SETUP_DEPLOY_URL, "_blank", "noopener,noreferrer");
+        }
+        function openSetupNewProject() {
+          window.open(SETUP_NEW_PROJECT_URL, "_blank", "noopener,noreferrer");
+        }
+        function openSetupGithubSecrets() {
+          window.open(SETUP_GITHUB_SECRETS_URL, "_blank", "noopener,noreferrer");
+        }
+        // Save ONLY the two non-secret staging values (Project Ref +
+        // publishable key). Anything secret-shaped is rejected outright.
+        function saveStagingConfig() {
+          const ref = String($("stagingRefInput").value || "").trim().toLowerCase();
+          const anon = String($("stagingAnonInput").value || "").trim();
+          if (!/^[a-z0-9]{15,30}$/.test(ref))
+            return feedback("معرّف المشروع غير صحيح. انسخه من صفحة إعدادات المشروع في Supabase.", "bad");
+          // Reject secret-shaped keys outright. The pattern is built from
+          // fragments so the app source itself never contains a secret-shaped
+          // literal (same trick as the server-side redactor).
+          const secretKeyShape = new RegExp("^sb_" + "secret_");
+          if (secretKeyShape.test(anon) || /role"\s*:\s*"service.role/.test(anon))
+            return feedback("هذا مفتاح سرّي! لا تضعه هنا أبداً. المطلوب المفتاح العام (publishable) فقط.", "bad");
+          if (!/^(sb_publishable_[A-Za-z0-9_-]{10,}|eyJ[A-Za-z0-9_.-]{40,})$/.test(anon))
+            return feedback("المفتاح العام غير صحيح. انسخ publishable key من صفحة API Keys.", "bad");
+          try {
+            localStorage.setItem(STAGING_REF_STORAGE_KEY, ref);
+            localStorage.setItem(STAGING_PUBLISHABLE_STORAGE_KEY, anon);
+          } catch (e) {
+            return feedback("تعذّر الحفظ على هذا المتصفح.", "bad");
+          }
+          const openBtn = document.querySelector('[data-action="setup-open-staging"]');
+          if (openBtn) openBtn.disabled = false;
+          feedback("تم حفظ إعدادات Staging (قيم غير سرّية فقط).", "good");
+        }
+        function openStagingCopy() {
+          if (!readStagingConfig())
+            return feedback("احفظ معرّف مشروع Staging والمفتاح العام أولاً.", "bad");
+          const url = location.origin + location.pathname + "?env=staging";
+          if (IS_STAGING_MODE) return feedback("أنت الآن داخل نسخة Staging بالفعل.", "good");
+          window.open(url, "_blank", "noopener,noreferrer");
+        }
+        // "تم إنشاء Staging": reveal the non-secret connect fields (Project
+        // Ref + publishable key) and prefill any previously saved values.
+        function revealStagingConnect() {
+          const box = $("stagingConnectBox");
+          if (!box) return;
+          box.classList.remove("hidden");
+          try {
+            $("stagingRefInput").value =
+              localStorage.getItem(STAGING_REF_STORAGE_KEY) || "";
+            $("stagingAnonInput").value =
+              localStorage.getItem(STAGING_PUBLISHABLE_STORAGE_KEY) || "";
+          } catch (e) {}
+          scrollIntoViewIfNeeded(box);
+        }
+        function tryAssistantSample() {
+          showTab("assistant");
+          const input = $("assistantInput");
+          if (input) {
+            input.value = "ما هي حجوزات اليوم؟";
+            input.focus();
+          }
         }
         async function copySetupTemplate() {
           const ok = await copyToClipboard(SETUP_SECRET_TEMPLATE);
@@ -1699,26 +1902,27 @@
             "setupStatusConfirm",
             body.assistant_confirm_secret_configured ? "linked" : "unlinked",
           );
-          setSetupRow(
-            "setupStatusAutopilot",
-            body.autopilot_secret_configured ? "linked" : "disabled",
-          );
+          // Automatic campaigns and official WhatsApp stay OFF in this rollout:
+          // these rows report the feature state, not mere infrastructure.
+          setSetupRow("setupStatusAutopilot", "disabled");
           setSetupRow(
             "setupStatusWhatsapp",
             body.whatsapp_configured ? "linked" : "disabled",
           );
+          const ready =
+            body.deepseek_configured && body.assistant_confirm_secret_configured;
           let msg;
-          if (
-            body.deepseek_configured &&
-            body.assistant_confirm_secret_configured
-          )
-            msg = "المساعد جاهز للتجربة.";
+          if (ready && body.app_env === "staging")
+            msg = "المساعد جاهز للتجربة على بيئة Staging.";
+          else if (ready) msg = "المساعد جاهز للتجربة.";
           else if (body.deepseek_configured)
             msg = "DeepSeek مربوط، باقي إضافة مفتاح التأكيد.";
           else if (body.assistant_confirm_secret_configured)
             msg = "مفتاح التأكيد مضاف، باقي إضافة مفتاح DeepSeek.";
           else msg = "مفتاح DeepSeek غير مضاف.";
           if (result) result.textContent = msg;
+          const tryBtn = document.querySelector('[data-action="setup-try-assistant"]');
+          if (tryBtn) tryBtn.classList.toggle("hidden", !ready);
         }
         function normalizeWorkspaceKey(v) {
           return String(v || "")
@@ -3796,14 +4000,21 @@
           if (a === "upload") return uploadChanges();
           if (a === "set-theme-light") return setTheme("light");
           if (a === "set-theme-dark") return setTheme("dark");
-          // Setup helpers that only open an official page or copy key names
-          // work without a loaded workspace (they never touch workspace data).
+          // Setup helpers that only open an official page, copy key names, or
+          // store the NON-SECRET staging ref work without a loaded workspace
+          // (they never touch workspace data or any secret).
           if (a === "setup-open-secrets") return openSetupSecrets();
           if (a === "setup-open-deploy") return openSetupDeploy();
           if (a === "setup-copy-template") return copySetupTemplate();
+          if (a === "setup-open-staging-project") return openSetupNewProject();
+          if (a === "setup-staging-created") return revealStagingConnect();
+          if (a === "setup-open-github-secrets") return openSetupGithubSecrets();
+          if (a === "setup-save-staging-config") return saveStagingConfig();
+          if (a === "setup-open-staging") return openStagingCopy();
           if (!loadedWorkspace)
             return feedback("سجّل الدخول أو أنشئ حسابًا أولًا", "bad");
           if (a === "setup-check") return checkSetupConnection();
+          if (a === "setup-try-assistant") return tryAssistantSample();
           if (a === "new-chalet") return newChalet();
           if (a === "edit-chalet") return editChalet(id);
           if (a === "soft-delete-chalet") return softDeleteChalet(id);
@@ -4120,6 +4331,18 @@
         document.addEventListener("DOMContentLoaded", () => {
           log("DOMContentLoaded: attaching event listeners");
           applyTheme(readStoredTheme());
+          // Visible, unmissable marker when running against the staging project.
+          if (IS_STAGING_MODE) {
+            document.title = "Staging — " + document.title;
+            const b = document.createElement("div");
+            b.id = "stagingBadge";
+            b.textContent = "بيئة Staging — بيانات تجريبية";
+            b.style.cssText =
+              "position:sticky;top:0;z-index:999;text-align:center;padding:6px 10px;background:var(--g-soft);color:var(--g);font-weight:700;font-size:13px;border-bottom:1px solid var(--l2)";
+            document.body.prepend(b);
+            const openBtn = document.querySelector('[data-action="setup-open-staging"]');
+            if (openBtn) openBtn.textContent = "أنت داخل نسخة Staging";
+          }
           $("pullButton").addEventListener("click", pullWorkspace);
           $("createButton").addEventListener("click", createWorkspace);
           document.addEventListener(

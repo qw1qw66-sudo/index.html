@@ -42,9 +42,9 @@ d("REAL Postgres: confirmed assistant actions write real rows", () => {
     pool = new pg.Pool({ host: HOST, port: PORT, user: USER, database: DB });
     for (const f of [
       "database/shared_workspace_sync.sql",
-      "database/migrations/0001_atomic_workspace_save.sql",
-      "database/migrations/0002_payment_ledger.sql",
-      "database/migrations/0003_chalet_assistant.sql",
+      "supabase/migrations/20260701000001_atomic_workspace_save.sql",
+      "supabase/migrations/20260701000002_payment_ledger.sql",
+      "supabase/migrations/20260711000003_chalet_assistant.sql",
     ]) {
       await pool.query(readFileSync(f, "utf8"));
     }

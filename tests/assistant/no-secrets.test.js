@@ -24,8 +24,11 @@ describe("AI feature: no secrets committed", () => {
     ...walk("supabase/functions/_shared/assistant"),
     ...walk("supabase/functions/chalet-assistant"),
     ...walk("supabase/functions/chalet-autopilot"),
+    ...walk("supabase/functions/chalet-setup-status"),
     "index.html",
-    "database/migrations/0003_chalet_assistant.sql",
+    "supabase/migrations/20260711000003_chalet_assistant.sql",
+    "scripts/staging-smoke.mjs",
+    ".github/workflows/deploy-supabase-staging.yml",
   ];
 
   it("no assigned secret value in any AI source or index.html", () => {

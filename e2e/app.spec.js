@@ -273,18 +273,37 @@ test('mobile setup page: iPhone-sized, button-only, opens official pages, checks
   await expect(page.locator('#setupCard')).toBeVisible();
   await expect(page.locator('#setupCard')).toContainText('إعداد المساعد الذكي');
 
-  // DOM evidence: the setup card is button-only — it collects NO secret input.
-  await expect(page.locator('#setupCard input')).toHaveCount(0);
+  // DOM evidence: the only inputs are the two NON-secret staging fields
+  // (Project Ref + publishable key) — no API-key/secret entry exists.
+  await expect(page.locator('#setupCard input')).toHaveCount(2);
+  await expect(page.locator('#setupCard #stagingRefInput')).toHaveCount(1);
+  await expect(page.locator('#setupCard #stagingAnonInput')).toHaveCount(1);
   await expect(page.locator('#setupCard textarea')).toHaveCount(0);
   await expect(page.locator('#setupCard [data-action="setup-check"]')).toBeVisible();
 
-  // The Supabase button opens the OFFICIAL secrets page (new tab).
+  // Official pages open in a new tab: Supabase secrets, GitHub Actions,
+  // new-project, and the repository Actions-secrets page.
   await page.locator('[data-action="setup-open-secrets"]').click();
-  // The GitHub button opens the repo Actions page.
   await page.locator('[data-action="setup-open-deploy"]').click();
+  await page.locator('[data-action="setup-open-staging-project"]').click();
+  await page.locator('[data-action="setup-open-github-secrets"]').click();
   const opened = await page.evaluate(() => window.__opened);
   expect(opened).toContain('https://supabase.com/dashboard/project/_/functions/secrets');
   expect(opened).toContain('https://github.com/qw1qw66-sudo/index.html/actions');
+  expect(opened).toContain('https://supabase.com/dashboard/new');
+  expect(opened).toContain('https://github.com/qw1qw66-sudo/index.html/settings/secrets/actions');
+
+  // "تم إنشاء Staging" reveals the non-secret connect fields; a secret-shaped
+  // key is rejected outright; valid non-secret values save.
+  await page.locator('[data-action="setup-staging-created"]').click();
+  await expect(page.locator('#stagingConnectBox')).toBeVisible();
+  await page.locator('#stagingRefInput').fill('abcdefghijklmnopqrst');
+  await page.locator('#stagingAnonInput').fill('sb_secret_this_must_be_rejected_123');
+  await page.locator('[data-action="setup-save-staging-config"]').click();
+  await expect(page.locator('#feedback')).toContainText('مفتاح سرّي');
+  await page.locator('#stagingAnonInput').fill('sb_publishable_test_key_0123456789');
+  await page.locator('[data-action="setup-save-staging-config"]').click();
+  await expect(page.locator('#feedback')).toContainText('تم حفظ إعدادات Staging');
 
   // "فحص الربط" authenticates + calls setup-status + updates the status rows.
   await page.locator('[data-action="setup-check"]').click();
@@ -316,6 +335,45 @@ test('setup connection check degrades safely when server functions are not deplo
   await page.locator('[data-action="setup-check"]').click();
   await expect(page.locator('#setupStatusFunctions')).toHaveText('يحتاج نشر');
   await expect(page.locator('#setupCheckResult')).toContainText('غير منشورة');
+});
+
+test('staging mode (?env=staging): badge, staging-ready completion, and assistant test button', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockRpc(page); // host-agnostic: also intercepts the staging host RPCs
+  await page.route('**/functions/v1/chalet-setup-status', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: true,
+        assistant_function_deployed: true,
+        deepseek_configured: true,
+        assistant_confirm_secret_configured: true,
+        autopilot_secret_configured: true,
+        whatsapp_configured: false,
+        app_env: 'staging',
+      }),
+    }),
+  );
+  // Non-secret staging config saved beforehand (as the setup page does).
+  await page.addInitScript(() => {
+    localStorage.setItem('staging_project_ref', 'abcdefghijklmnopqrst');
+    localStorage.setItem('staging_publishable_key', 'sb_publishable_test_key_0123456789');
+  });
+  await page.goto('/?env=staging');
+  // The staging banner is unmissable and the app talks to the staging host.
+  await expect(page.locator('#stagingBadge')).toBeVisible();
+  await expect(page.locator('#stagingBadge')).toContainText('بيئة Staging');
+  await create(page);
+  await page.locator('[data-tab="settings"]').click();
+  await page.locator('[data-action="setup-check"]').click();
+  await expect(page.locator('#setupCheckResult')).toContainText('المساعد جاهز للتجربة على بيئة Staging');
+  await expect(page.locator('#setupStatusAutopilot')).toHaveText('غير مفعل');
+  // The test button appears and pre-fills the assistant input with the question.
+  const tryBtn = page.locator('[data-action="setup-try-assistant"]');
+  await expect(tryBtn).toBeVisible();
+  await tryBtn.click();
+  await expect(page.locator('#tab-assistant')).toBeVisible();
+  await expect(page.locator('#assistantInput')).toHaveValue('ما هي حجوزات اليوم؟');
 });
 
 test('source has no old public auth or redirect patterns', async ({ page }) => {

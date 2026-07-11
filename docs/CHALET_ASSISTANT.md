@@ -118,7 +118,7 @@ layer resolves the real number server-side only when actually sending.
 
 ## Deploy (owner-only; staging first — NOT done here)
 
-1. Apply `database/migrations/0003_chalet_assistant.sql` to staging (after 0001/0002).
+1. Apply `supabase/migrations/20260711000003_chalet_assistant.sql` to staging (after 0001/0002).
 2. `supabase functions deploy chalet-assistant chalet-autopilot` (staging).
 3. `supabase secrets set DEEPSEEK_API_KEY=... ASSISTANT_CONFIRM_SECRET=... ...`.
 4. Wire the autopilot to a schedule (pg_cron → edge). Keep automation disabled

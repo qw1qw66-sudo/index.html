@@ -76,7 +76,7 @@ The six separated concerns required by the task map as:
 6. provider-specific code → `supabase/functions/_shared/providers/*` behind a
    narrow adapter interface.
 
-## 3. Schema (see `database/migrations/0002_payment_ledger.sql`)
+## 3. Schema (see `supabase/migrations/20260701000002_payment_ledger.sql`)
 
 ### payment_orders
 One row per *intent to collect* (a payment link / provider checkout session).

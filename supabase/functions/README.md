@@ -18,14 +18,14 @@ implementation is a test fake that cannot move money (see
 
 `record-manual-payment`, `get-booking-payments`, and
 `reconcile-booking-payment` are implemented as SQL RPCs in
-`database/migrations/0002_payment_ledger.sql` (same RPC-only access model as
+`supabase/migrations/20260701000002_payment_ledger.sql` (same RPC-only access model as
 the existing app) rather than as Edge Functions — the browser calls them via
 `/rest/v1/rpc/...` exactly like `get_shared_workspace` today.
 
 ## Deployment (owner-only, staging first — do NOT run against production casually)
 
 ```sh
-# 1. Apply database/migrations/0001 + 0002 to the STAGING project first.
+# 1. Apply supabase/migrations (baseline + 0001 + 0002) to the STAGING project first.
 # 2. Deploy functions to staging:
 supabase functions deploy create-payment-session --project-ref <staging-ref>
 supabase functions deploy payment-webhook --project-ref <staging-ref>

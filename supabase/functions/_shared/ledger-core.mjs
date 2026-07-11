@@ -6,7 +6,7 @@
 // accepted at the riyal→halala conversion boundary, which rejects sub-halala
 // precision instead of rounding silently.
 //
-// The rules here mirror database/migrations/0002_payment_ledger.sql
+// The rules here mirror supabase/migrations/20260701000002_payment_ledger.sql
 // (derive_payment_state, riyals_to_halalas, v_booking_payment_totals).
 // If you change one side, change the other and the tests.
 
