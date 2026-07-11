@@ -5,12 +5,14 @@
 # Deno functions over HTTP. It never touches the production project: the target
 # is entirely determined by SUPABASE_PROJECT_ID (the staging Project Ref).
 #
-# Required repository/environment secrets (added by the owner at
-# https://github.com/qw1qw66-sudo/index.html/settings/secrets/actions):
-#   SUPABASE_ACCESS_TOKEN — Supabase account access token (account → tokens)
-#   SUPABASE_PROJECT_ID   — the STAGING Project Ref
-#   SUPABASE_DB_PASSWORD  — the staging database password
-#   SUPABASE_ANON_KEY     — the staging public (publishable) API key
+# Repository secrets (https://github.com/qw1qw66-sudo/index.html/settings/secrets/actions):
+#   REUSED (already exist for the export workflow):
+#     SUPABASE_URL        — https://<project-ref>.supabase.co (ref derived from it)
+#     SUPABASE_ANON_KEY   — the public (publishable) API key
+#   NEW (owner adds these two):
+#     SUPABASE_ACCESS_TOKEN — Supabase account access token (account → tokens)
+#     SUPABASE_DB_PASSWORD  — the database password
+#   OPTIONAL override: SUPABASE_PROJECT_ID (explicit ref; else derived from URL).
 # The service-role key is NEVER a GitHub secret: Supabase injects it into Edge
 # Functions at runtime.
 #
@@ -44,21 +46,33 @@ jobs:
     environment: staging
     env:
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-      SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
       SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
     steps:
-      - name: Check required secrets
+      # Reuse the existing SUPABASE_URL secret: the project ref is its
+      # subdomain (non-secret — it is public in the app source). An explicit
+      # SUPABASE_PROJECT_ID secret overrides the derivation when present.
+      - name: Resolve project ref and check required secrets
+        env:
+          SUPABASE_URL_SECRET: ${{ secrets.SUPABASE_URL }}
+          EXPLICIT_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
         run: |
+          set -euo pipefail
           missing=""
           [ -n "$SUPABASE_ACCESS_TOKEN" ] || missing="$missing SUPABASE_ACCESS_TOKEN"
-          [ -n "$SUPABASE_PROJECT_ID" ] || missing="$missing SUPABASE_PROJECT_ID"
           [ -n "$SUPABASE_DB_PASSWORD" ] || missing="$missing SUPABASE_DB_PASSWORD"
           [ -n "${{ secrets.SUPABASE_ANON_KEY }}" ] || missing="$missing SUPABASE_ANON_KEY"
+          ref="$EXPLICIT_PROJECT_ID"
+          if [ -z "$ref" ] && [ -n "$SUPABASE_URL_SECRET" ]; then
+            ref="${SUPABASE_URL_SECRET#https://}"; ref="${ref%%.*}"
+          fi
+          [ -n "$ref" ] || missing="$missing SUPABASE_URL(or SUPABASE_PROJECT_ID)"
           if [ -n "$missing" ]; then
             echo "Missing repository secrets:$missing"
             echo "Add them at Settings → Secrets and variables → Actions."
             exit 1
           fi
+          echo "PROJECT_REF=$ref" >> "$GITHUB_ENV"
+          echo "EDGE_BASE_URL=https://${ref}.supabase.co" >> "$GITHUB_ENV"
 
       - name: Checkout deploy ref
         uses: actions/checkout@v4
@@ -76,7 +90,7 @@ jobs:
         run: npm install -g supabase@2.45.5 || npm install -g supabase@2
 
       - name: Link staging project
-        run: supabase link --project-ref "$SUPABASE_PROJECT_ID"
+        run: supabase link --project-ref "$PROJECT_REF"
 
       # Version list only — never prints credentials or secret values.
       - name: Show migration status
@@ -121,7 +135,7 @@ jobs:
       # Output is sanitized (safe codes/booleans only).
       - name: Staging smoke tests (real Deno + DeepSeek)
         env:
-          SUPABASE_URL: https://${{ secrets.SUPABASE_PROJECT_ID }}.supabase.co
+          SUPABASE_URL: ${{ env.EDGE_BASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         run: node scripts/staging-smoke.mjs
 

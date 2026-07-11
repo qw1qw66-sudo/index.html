@@ -1451,7 +1451,10 @@
                 فتح أسرار GitHub للنشر
               </button>
               <p class="setup-note">
-                أضف هذه الأسرار الأربعة في صفحة GitHub (Actions secrets):<br />
+                السرّان الموجودان مسبقاً يُعاد استخدامهما كما هما:
+                <span class="ltr">SUPABASE_URL</span> و
+                <span class="ltr">SUPABASE_ANON_KEY</span>. أضف فقط
+                السرّين الناقصين:<br />
                 <span class="ltr">SUPABASE_ACCESS_TOKEN</span> — أنشئه من صفحة
                 <a
                   href="https://supabase.com/dashboard/account/tokens"
@@ -1460,12 +1463,8 @@
                   >Access Tokens</a
                 >
                 في حساب Supabase.<br />
-                <span class="ltr">SUPABASE_PROJECT_ID</span> — معرّف مشروع
-                Staging (Project Ref).<br />
                 <span class="ltr">SUPABASE_DB_PASSWORD</span> — كلمة مرور قاعدة
-                البيانات التي اخترتها عند إنشاء Staging.<br />
-                <span class="ltr">SUPABASE_ANON_KEY</span> — المفتاح العام
-                (publishable) لمشروع Staging.<br />
+                البيانات للمشروع.<br />
                 لا تضف أبداً مفتاح
                 <span class="ltr">SERVICE ROLE</span> — الخادم يستلمه من
                 Supabase تلقائياً ولا يدخل GitHub أو المتصفح.

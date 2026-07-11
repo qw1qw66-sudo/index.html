@@ -25,10 +25,15 @@ describe("deploy-supabase-staging workflow", () => {
     expect(wf).toContain("contents: read");
   });
 
-  it("requires exactly the four owner-provided secrets and never a service-role key", () => {
-    for (const s of ["SUPABASE_ACCESS_TOKEN", "SUPABASE_PROJECT_ID", "SUPABASE_DB_PASSWORD", "SUPABASE_ANON_KEY"]) {
-      expect(wf).toContain(`secrets.${s}`);
-    }
+  it("reuses existing secrets, requires the two new ones, never a service-role key", () => {
+    // Reused (already configured for the export workflow):
+    expect(wf).toContain("secrets.SUPABASE_URL");
+    expect(wf).toContain("secrets.SUPABASE_ANON_KEY");
+    // New owner-provided:
+    expect(wf).toContain("secrets.SUPABASE_ACCESS_TOKEN");
+    expect(wf).toContain("secrets.SUPABASE_DB_PASSWORD");
+    // Optional explicit override:
+    expect(wf).toContain("secrets.SUPABASE_PROJECT_ID");
     expect(wf).not.toMatch(/SERVICE_?ROLE/i);
   });
 
