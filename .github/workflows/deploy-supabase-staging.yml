@@ -99,23 +99,50 @@ jobs:
       - name: Apply pending migrations to staging
         run: supabase db push --linked
 
-      # The migrations NOTIFY pgrst themselves, but delivery through the pooled
-      # migration connection has proven unreliable — force a deterministic
-      # PostgREST schema-cache reload via the Management API so the new RPCs
-      # are immediately reachable. No output is printed.
+      # The migrations NOTIFY pgrst themselves, but the Data API cache has
+      # proven stale afterwards. Force a reload two ways (status codes only,
+      # never bodies): a NOTIFY via the Management API SQL endpoint, and a
+      # no-op PATCH of the PostgREST config (same values back) which restarts
+      # the Data API and rebuilds its schema cache deterministically.
       - name: Reload PostgREST schema cache
         run: |
           set -euo pipefail
-          for i in 1 2 3; do
-            if curl -sf -X POST "https://api.supabase.com/v1/projects/$PROJECT_REF/database/query" \
+          api="https://api.supabase.com/v1/projects/$PROJECT_REF"
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$api/database/query" \
+            -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"query":"notify pgrst, '\''reload schema'\'';"}')
+          echo "notify-via-api HTTP $code"
+          cfg=$(curl -s -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" "$api/postgrest")
+          maxrows=$(printf '%s' "$cfg" | jq -r '.max_rows // empty')
+          if [ -n "$maxrows" ]; then
+            pcode=$(curl -s -o /dev/null -w '%{http_code}' -X PATCH "$api/postgrest" \
               -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
               -H "Content-Type: application/json" \
-              -d '{"query":"notify pgrst, '\''reload schema'\'';"}' -o /dev/null; then
-              echo "schema reload notified"; exit 0
-            fi
-            sleep 3
-          done
-          echo "schema reload request failed (smoke will still retry)"
+              -d "{\"max_rows\": $maxrows}")
+            echo "postgrest config no-op PATCH HTTP $pcode (forces cache rebuild)"
+          else
+            echo "postgrest config read failed (continuing)"
+          fi
+          sleep 10
+
+      # Decisive diagnostics — counts only, never data: is the new RPC in the
+      # DATABASE, and is it visible in the Data API's OpenAPI schema?
+      - name: Verify Data API exposure (counts only)
+        env:
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          set -euo pipefail
+          api="https://api.supabase.com/v1/projects/$PROJECT_REF"
+          db=$(curl -s -X POST "$api/database/query" \
+            -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"query":"select count(*)::int as n from pg_proc p join pg_namespace ns on ns.oid = p.pronamespace where ns.nspname = '\''public'\'' and p.proname = '\''create_shared_workspace'\'';"}' \
+            | grep -o '"n"[: ]*[0-9]*' | head -1 || true)
+          echo "create_shared_workspace rows in pg_proc: ${db:-unreadable}"
+          spec=$(curl -s "$EDGE_BASE_URL/rest/v1/" -H "apikey: $SUPABASE_ANON_KEY" -H "Authorization: Bearer $SUPABASE_ANON_KEY")
+          echo "OpenAPI mentions create_shared_workspace: $(printf '%s' "$spec" | grep -c create_shared_workspace || true)"
+          echo "OpenAPI mentions get_shared_workspace: $(printf '%s' "$spec" | grep -c get_shared_workspace || true)"
 
       # Generate internal secrets on the runner if (and only if) they are not
       # already configured. Values are masked immediately and never echoed;
