@@ -8,9 +8,14 @@ name: Export bookings to Excel
 
 on:
   workflow_dispatch: {}
-  schedule:
-    # Every 30 minutes (UTC). Adjust as needed.
-    - cron: "*/30 * * * *"
+  # SCHEDULE PAUSED (AUD-003): the automated 30-min cron was committing an
+  # UNREDACTED public workbook to a public repo. It stays paused until the
+  # owner completes docs/OWNER_PII_CLEANUP.md (rotate EXPORT_ACCESS_PIN, purge
+  # history / decide repo visibility). The exporter now redacts phones by
+  # default, so re-enabling this cron produces a PII-free file — re-enable by
+  # uncommenting the schedule once the history/visibility decision is made.
+  # schedule:
+  #   - cron: "*/30 * * * *"
 
 # Least-privilege: only allow writing repository contents (for the commit step).
 permissions:

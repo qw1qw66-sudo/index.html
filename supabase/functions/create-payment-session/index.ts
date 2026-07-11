@@ -15,6 +15,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { handleCreatePaymentSession } from "./handler.mjs";
 import { createProviderAdapter } from "../_shared/providers/index.mjs";
+import { corsWrap } from "../_shared/cors.mjs";
 
 // deno-lint-ignore no-explicit-any
 declare const Deno: any;
@@ -88,4 +89,5 @@ function makeDeps() {
   };
 }
 
-Deno.serve((req: Request) => handleCreatePaymentSession(req, makeDeps()));
+// Browser-facing: preflight + CORS on every response (allowlisted origins).
+Deno.serve((req: Request) => corsWrap(req, Deno.env.toObject(), () => handleCreatePaymentSession(req, makeDeps())));
