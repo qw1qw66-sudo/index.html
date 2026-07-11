@@ -861,6 +861,99 @@
               <option value="no_remaining">لا يوجد متبقي</option></select
             ><label>ملاحظة المتبقي</label
             ><textarea id="bookingRemainingNote"></textarea>
+            <!-- ===== payments ledger panel (server-side financial record) ===== -->
+            <details id="paymentSection" class="section-details">
+              <summary>سجل المدفوعات</summary>
+              <p id="paymentPanelNotice" class="muted"></p>
+              <div id="paymentSummaryBox"></div>
+              <div id="paymentTransactionsBox"></div>
+              <div id="manualPaymentBox" class="item hidden">
+                <h4>تسجيل دفعة يدوية (نقد / تحويل / شبكة)</h4>
+                <div class="grid">
+                  <div>
+                    <label>المبلغ (ريال)</label
+                    ><input
+                      id="manualPayAmount"
+                      type="text"
+                      inputmode="decimal"
+                      class="ltr"
+                    />
+                  </div>
+                  <div>
+                    <label>طريقة الدفع</label
+                    ><select id="manualPayMethod">
+                      <option value="cash">نقدًا</option>
+                      <option value="bank_transfer">تحويل بنكي</option>
+                      <option value="pos">شبكة / نقطة بيع</option>
+                      <option value="worker">استلمه العامل</option>
+                      <option value="other">أخرى</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="grid">
+                  <div>
+                    <label>اسم المستلم</label><input id="manualPayActor" />
+                  </div>
+                  <div>
+                    <label>مرجع / سبب (إلزامي للتحويل البنكي)</label
+                    ><input id="manualPayReason" />
+                  </div>
+                </div>
+                <div class="actions">
+                  <button
+                    class="primary tiny"
+                    data-action="submit-manual-payment"
+                    type="button"
+                  >
+                    تسجيل الدفعة في السجل</button
+                  ><button
+                    class="secondary tiny"
+                    data-action="hide-manual-payment"
+                    type="button"
+                  >
+                    إخفاء
+                  </button>
+                </div>
+              </div>
+              <div id="paymentLinkBox"></div>
+              <div class="actions">
+                <button
+                  id="showManualPaymentButton"
+                  class="secondary tiny"
+                  data-action="show-manual-payment"
+                  type="button"
+                >
+                  + دفعة يدوية</button
+                ><button
+                  id="createPaymentLinkButton"
+                  class="secondary tiny"
+                  data-action="create-payment-link"
+                  type="button"
+                >
+                  إنشاء رابط دفع</button
+                ><button
+                  id="copyPaymentLinkButton"
+                  class="secondary tiny hidden"
+                  data-action="copy-payment-link"
+                  type="button"
+                >
+                  نسخ الرابط</button
+                ><button
+                  id="sendPaymentLinkButton"
+                  class="secondary tiny hidden"
+                  data-action="send-payment-link-whatsapp"
+                  type="button"
+                >
+                  إرسال الرابط واتساب</button
+                ><button
+                  class="secondary tiny"
+                  data-action="refresh-payments"
+                  type="button"
+                >
+                  تحديث السجل
+                </button>
+              </div>
+            </details>
             <div class="actions">
               <button class="primary" data-action="save-booking">
                 حفظ الحجز</button
@@ -1379,6 +1472,13 @@
           }
           return body;
         }
+        // An RPC that does not exist on the server yet (migration not applied)
+        // comes back as HTTP 404 (PostgREST PGRST202). Used for graceful
+        // fallback to the legacy RPCs so the app works before AND after the
+        // owner applies database/migrations/0001+0002.
+        function isMissingRpc(e) {
+          return Boolean(e && e.status === 404);
+        }
         // ========================= JS: data normalization =========================
         function normalizeData(raw) {
           const src = raw && raw.data ? raw.data : raw || {},
@@ -1709,21 +1809,97 @@
           $("createButton").disabled = true;
           try {
             const c = readCredentials();
+            if (c.pin.length < 6)
+              throw new Error(
+                "الرقم السري للحساب الجديد يجب أن يكون 6 خانات على الأقل.",
+              );
+            // P0 guard (audit AUD-001): pressing "إنشاء حساب جديد" with the
+            // credentials of an EXISTING account used to replace its cloud
+            // data with an empty document. Probe first: if these credentials
+            // already open a workspace, open it instead of wiping it.
+            let existing = null;
+            try {
+              log("Create probe: get_shared_workspace", {
+                username: c.workspaceKey,
+              });
+              existing = await callRpc("get_shared_workspace", {
+                p_workspace_key: c.workspaceKey,
+                p_access_pin: c.pin,
+              });
+            } catch (probeErr) {
+              existing = null;
+              if (
+                String((probeErr && probeErr.message) || "").indexOf(
+                  "TOO_MANY_ATTEMPTS",
+                ) === 0
+              )
+                throw new Error(
+                  "تم إيقاف المحاولات مؤقتًا لحماية الحساب. حاول بعد قليل.",
+                );
+            }
+            if (existing && existing.ok === true) {
+              feedback(
+                "هذا الحساب موجود بالفعل — تم فتح حسابك الحالي بدل إنشاء حساب جديد حتى لا تُمسح بياناتك.",
+                "good",
+              );
+              openApp(existing);
+              return;
+            }
             const data = canonicalEmptyDataModel();
-            log("Calling save_shared_workspace with canonical empty model", {
-              username: c.workspaceKey,
-            });
-            const r = await callRpc("save_shared_workspace", {
-              p_workspace_key: c.workspaceKey,
-              p_access_pin: c.pin,
-              p_data: data,
-            });
-            if (!r || r.ok !== true) throw new Error("RPC_RESPONSE_NOT_OK");
+            let r = null;
+            try {
+              // Preferred: create-only RPC (database/migrations/0001) — it
+              // can never overwrite an existing workspace.
+              log("Calling create_shared_workspace", {
+                username: c.workspaceKey,
+              });
+              r = await callRpc("create_shared_workspace", {
+                p_workspace_key: c.workspaceKey,
+                p_access_pin: c.pin,
+                p_data: data,
+              });
+              if (!r || r.ok !== true) {
+                const code = String((r && r.error) || "");
+                if (code === "WORKSPACE_ALREADY_EXISTS")
+                  throw new Error(
+                    "اسم المستخدم مستخدم بالفعل والرقم السري غير صحيح له. استخدم زر الدخول أو اختر اسمًا آخر.",
+                  );
+                if (code === "PIN_TOO_SHORT")
+                  throw new Error(
+                    "الرقم السري للحساب الجديد يجب أن يكون 6 خانات على الأقل.",
+                  );
+                if (code === "TOO_MANY_ATTEMPTS")
+                  throw new Error(
+                    "تم إيقاف المحاولات مؤقتًا لحماية الحساب. حاول بعد قليل.",
+                  );
+                throw new Error(code || "RPC_RESPONSE_NOT_OK");
+              }
+            } catch (e2) {
+              if (!isMissingRpc(e2)) throw e2;
+              // Legacy server (migration 0001 not applied yet): the old
+              // create-by-save flow. The probe above already prevents the
+              // realistic wipe (correct credentials for an existing account);
+              // once 0001 is applied the server also blocks empty overwrites.
+              log("create_shared_workspace missing; falling back to save", {
+                username: c.workspaceKey,
+              });
+              r = await callRpc("save_shared_workspace", {
+                p_workspace_key: c.workspaceKey,
+                p_access_pin: c.pin,
+                p_data: data,
+              });
+              if (!r || r.ok !== true) throw new Error("RPC_RESPONSE_NOT_OK");
+            }
             feedback("تم إنشاء الحساب وفتح النظام.", "good");
             openApp(r);
           } catch (e) {
             loadedWorkspace = null;
-            feedback("فشل إنشاء الحساب: " + e.message, "bad");
+            const msg =
+              e.message === "WORKSPACE_NOT_FOUND_OR_PIN_INVALID" ||
+              e.message === "EMPTY_OVERWRITE_BLOCKED"
+                ? "اسم المستخدم مستخدم بالفعل والرقم السري غير صحيح له. استخدم زر الدخول أو اختر اسمًا آخر."
+                : e.message;
+            feedback("فشل إنشاء الحساب: " + msg, "bad");
             log("Create account failed", {
               message: e.message,
               status: e.status || null,
@@ -1734,8 +1910,46 @@
           }
         }
         // ========================= JS: dirty/safe upload logic =========================
+        // Small, fast, non-cryptographic content hash (djb2). Only used to
+        // deduplicate identical local backups — not for any security purpose.
+        function docHash(str) {
+          let h = 5381;
+          const s = String(str);
+          for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+          return (h >>> 0).toString(36);
+        }
+        let lastBackupHash = "";
+        // Reverse-audit R-1 fix: a failed upload (e.g. stale-revision) must not
+        // fill the 10-slot backup ring with identical copies of the same
+        // document. We back up the CURRENT document but skip when it is
+        // byte-identical (same workspace + same data) to the newest existing
+        // backup, so ten retries of the same failed push create at most one
+        // backup while genuinely different documents still each get one.
         function backupBeforePush() {
           try {
+            const hash = docHash(workspaceKey + "|" + JSON.stringify(state));
+            if (hash === lastBackupHash) {
+              log("Local backup skipped (identical to last)", { hash });
+              return;
+            }
+            const keys = [];
+            for (let i = 0; i < localStorage.length; i++) {
+              const k = localStorage.key(i);
+              if (k && k.indexOf("backup_before_cloud_push_") === 0) keys.push(k);
+            }
+            keys.sort();
+            // Cross-reload dedupe: if the newest stored backup already has this
+            // exact hash, do not create a duplicate.
+            if (keys.length) {
+              try {
+                const newest = JSON.parse(localStorage.getItem(keys[keys.length - 1]));
+                if (newest && newest.doc_hash === hash) {
+                  lastBackupHash = hash;
+                  log("Local backup skipped (matches newest stored)", { hash });
+                  return;
+                }
+              } catch (_) {}
+            }
             const key = "backup_before_cloud_push_" + now();
             localStorage.setItem(
               key,
@@ -1744,15 +1958,12 @@
                 lastCloudUpdatedAt,
                 lastCloudCounts,
                 data: state,
+                doc_hash: hash,
                 timestamp: now(),
               }),
             );
-            const keys = [];
-            for (let i = 0; i < localStorage.length; i++) {
-              const k = localStorage.key(i);
-              if (k && k.indexOf("backup_before_cloud_push_") === 0)
-                keys.push(k);
-            }
+            lastBackupHash = hash;
+            keys.push(key);
             keys
               .sort()
               .slice(0, -10)
@@ -1786,21 +1997,65 @@
             if (upBtn) upBtn.disabled = true;
           }
           try {
-            const fresh = await callRpc("get_shared_workspace", {
-              p_workspace_key: workspaceKey,
-              p_access_pin: accessPin,
-            });
-            if (String(fresh.updated_at || "") !== String(lastCloudUpdatedAt))
-              throw new Error(
-                "تم إيقاف الرفع: توجد نسخة أحدث في السحابة. اسحب البيانات أولًا.",
-              );
             backupBeforePush();
-            const r = await callRpc("save_shared_workspace", {
-              p_workspace_key: workspaceKey,
-              p_access_pin: accessPin,
-              p_data: state,
-            });
-            if (!r || r.ok !== true) throw new Error("RPC_RESPONSE_NOT_OK");
+            let r = null;
+            try {
+              // Preferred: atomic compare-and-save (database/migrations/0001).
+              // The revision check happens INSIDE the database row lock, so
+              // two devices can no longer silently overwrite each other
+              // (audit AUD-002). Errors come back as {ok:false, error}.
+              const r2 = await callRpc("save_shared_workspace_v2", {
+                p_workspace_key: workspaceKey,
+                p_access_pin: accessPin,
+                p_data: state,
+                p_expected_updated_at: lastCloudUpdatedAt,
+              });
+              if (r2 && r2.ok === true) {
+                r = r2;
+              } else {
+                const code = String((r2 && r2.error) || "");
+                if (code === "STALE_REVISION")
+                  throw new Error(
+                    "تم إيقاف الرفع: توجد نسخة أحدث في السحابة. اسحب البيانات أولًا.",
+                  );
+                if (code.indexOf("BOOKING_CONFLICT") === 0)
+                  throw new Error(
+                    "تم إيقاف الرفع: يوجد تعارض بين حجوزات مؤكدة في نفس الشاليه والفترة. راجع الحجوزات ثم أعد المحاولة.",
+                  );
+                if (code === "EMPTY_OVERWRITE_BLOCKED")
+                  throw new Error(
+                    "تم إيقاف الرفع لحماية بياناتك: لا توجد بيانات محلية بينما توجد بيانات في السحابة.",
+                  );
+                if (code === "TOO_MANY_ATTEMPTS")
+                  throw new Error(
+                    "تم إيقاف المحاولات مؤقتًا لحماية الحساب. حاول بعد قليل.",
+                  );
+                throw new Error(code || "RPC_RESPONSE_NOT_OK");
+              }
+            } catch (e2) {
+              if (!isMissingRpc(e2)) throw e2;
+              // Legacy server (migration 0001 not applied yet): keep the old
+              // best-effort pre-check + save flow unchanged.
+              log("save_shared_workspace_v2 missing; falling back to v1");
+              const fresh = await callRpc("get_shared_workspace", {
+                p_workspace_key: workspaceKey,
+                p_access_pin: accessPin,
+              });
+              if (
+                String(fresh.updated_at || "") !== String(lastCloudUpdatedAt)
+              )
+                throw new Error(
+                  "تم إيقاف الرفع: توجد نسخة أحدث في السحابة. اسحب البيانات أولًا.",
+                );
+              const r1 = await callRpc("save_shared_workspace", {
+                p_workspace_key: workspaceKey,
+                p_access_pin: accessPin,
+                p_data: state,
+              });
+              if (!r1 || r1.ok !== true)
+                throw new Error("RPC_RESPONSE_NOT_OK");
+              r = r1;
+            }
             loadedWorkspace = r;
             state = normalizeData(r.data);
             lastCloudCounts = counts(state);
@@ -2333,6 +2588,7 @@
           $("bookingRemainingStatus").value = "";
           $("bookingRemainingNote").value = "";
           $("deleteBookingButton").classList.add("hidden");
+          refreshPaymentPanel("");
           $("bookingEditorTitle").textContent = "حجز جديد";
           const list = $("bookingList");
           const editor = $("bookingEditor");
@@ -2377,6 +2633,7 @@
           $("bookingRemainingStatus").value = String(b.remaining_status || "");
           $("bookingRemainingNote").value = String(b.remaining_note || "");
           $("deleteBookingButton").classList.remove("hidden");
+          refreshPaymentPanel(b.id);
           $("bookingEditorTitle").textContent = "تعديل حجز";
           const card = findBookingCardForAction(id, sourceEl);
           const editor = $("bookingEditor");
@@ -2631,6 +2888,413 @@
           $("voucherBox").innerHTML = "";
           parkVoucherPanel();
         }
+        // ========================= JS: payments ledger panel =========================
+        // Read-only + append-only client for the server-side payment ledger
+        // (database/migrations/0002). The ledger — not the local paid field —
+        // is the financial source of truth. Everything here feature-detects
+        // the backend: before the owner applies the migrations the panel
+        // shows a clear Arabic notice and disables its actions, and the rest
+        // of the app keeps working exactly as before.
+        let currentPaymentBookingId = "",
+          currentPaymentLink = "",
+          paymentsBackendMissing = false;
+        const PAYMENT_STATE_LABELS = {
+          unpaid: "غير مدفوع",
+          pending: "بانتظار الدفع",
+          partially_paid: "مدفوع جزئيًا",
+          paid: "مدفوع بالكامل",
+          failed: "فشل الدفع",
+          expired: "انتهت صلاحية طلب الدفع",
+          partially_refunded: "مسترد جزئيًا",
+          refunded: "مسترد بالكامل",
+        };
+        const PAYMENT_STATE_CLASSES = {
+          paid: "ok",
+          partially_paid: "gold",
+          pending: "gold",
+          failed: "bad",
+          expired: "bad",
+          refunded: "bad",
+          partially_refunded: "bad",
+          unpaid: "",
+        };
+        const TX_TYPE_LABELS = {
+          payment: "دفعة إلكترونية",
+          manual_payment: "دفعة يدوية",
+          refund: "استرداد",
+          adjustment: "تسوية",
+          legacy_opening_balance: "رصيد سابق (قبل السجل)",
+        };
+        const PAY_METHOD_LABELS = {
+          provider: "مزود الدفع",
+          cash: "نقدًا",
+          bank_transfer: "تحويل بنكي",
+          pos: "شبكة",
+          worker: "استلمه العامل",
+          other: "أخرى",
+        };
+        // Strict riyal -> halala conversion for ledger calls: reuses the
+        // tolerant digit parsing (parseMoneyInput) then rejects sub-halala
+        // precision instead of rounding. Mirrors ledger-core.mjs rules.
+        function riyalsInputToHalalas(value) {
+          const n = parseMoneyInput(value);
+          if (!isFinite(n) || n < 0) return NaN;
+          const scaled = n * 100;
+          const rounded = Math.round(scaled);
+          if (Math.abs(scaled - rounded) > 1e-6) return NaN;
+          return rounded;
+        }
+        function halalasToRiyalsText(h) {
+          const n = Number(h) || 0;
+          const neg = n < 0 ? "-" : "";
+          const a = Math.abs(n);
+          const riyals = Math.floor(a / 100);
+          const frac = a % 100;
+          return (
+            neg + money(riyals) + (frac ? "." + String(frac).padStart(2, "0") : "")
+          );
+        }
+        function arabicPaymentError(code) {
+          const c = String(code || "");
+          if (c.indexOf("BOOKING_CONFLICT") === 0)
+            return "يوجد تعارض حجوزات مؤكدة في البيانات.";
+          return (
+            {
+              NO_PROVIDER_CONFIGURED:
+                "لا يوجد مزود دفع مهيأ — إنشاء روابط الدفع معطل حتى يقوم مالك النظام بتفعيل مزود دفع حقيقي.",
+              TEST_PROVIDER_BLOCKED:
+                "لا يوجد مزود دفع مهيأ — إنشاء روابط الدفع معطل حتى يقوم مالك النظام بتفعيل مزود دفع حقيقي.",
+              UNKNOWN_PROVIDER:
+                "إعداد مزود الدفع غير صحيح على الخادم. راجع مالك النظام.",
+              MISSING_WEBHOOK_SECRET:
+                "إعداد مزود الدفع غير مكتمل على الخادم. راجع مالك النظام.",
+              NOTHING_REMAINING: "لا يوجد مبلغ متبقٍ على هذا الحجز.",
+              ACTIVE_ORDER_EXISTS: "يوجد رابط دفع نشط بالفعل لهذا الحجز.",
+              AMOUNT_EXCEEDS_REMAINING: "المبلغ أكبر من المتبقي على الحجز.",
+              PARTIAL_NOT_ALLOWED: "الدفع الجزئي غير مفعّل حاليًا.",
+              AMOUNT_MUST_BE_POSITIVE: "المبلغ يجب أن يكون أكبر من صفر.",
+              REFERENCE_REQUIRED_FOR_BANK_TRANSFER:
+                "التحويل البنكي يتطلب كتابة مرجع أو سبب.",
+              BOOKING_CANCELLED: "لا يمكن تسجيل دفعات لحجز ملغي.",
+              BOOKING_DELETED: "لا يمكن تسجيل دفعات لحجز محذوف.",
+              BOOKING_NOT_FOUND:
+                "الحجز غير موجود في السحابة بعد — ارفع التعديلات أولًا ثم أعد المحاولة.",
+              BOOKING_TOTAL_INVALID:
+                "إجمالي الحجز غير صالح للسجل المالي (تحقق من المبلغ).",
+              TOO_MANY_ATTEMPTS:
+                "تم إيقاف المحاولات مؤقتًا لحماية الحساب. حاول بعد قليل.",
+              WORKSPACE_NOT_FOUND_OR_PIN_INVALID: "بيانات الدخول غير صحيحة.",
+            }[c] || "تعذرت العملية" + (c ? ": " + c : ".")
+          );
+        }
+        function paymentButtonsAvailability(available) {
+          const manualBtn = $("showManualPaymentButton");
+          const linkBtn = $("createPaymentLinkButton");
+          if (manualBtn) manualBtn.disabled = !available;
+          if (linkBtn) linkBtn.disabled = !available;
+          if (!available) {
+            const box = $("manualPaymentBox");
+            if (box) box.classList.add("hidden");
+          }
+        }
+        function setPaymentLink(url) {
+          currentPaymentLink = String(url || "");
+          const copyBtn = $("copyPaymentLinkButton");
+          const sendBtn = $("sendPaymentLinkButton");
+          if (copyBtn)
+            copyBtn.classList.toggle("hidden", !currentPaymentLink);
+          if (sendBtn)
+            sendBtn.classList.toggle("hidden", !currentPaymentLink);
+          const box = $("paymentLinkBox");
+          if (box)
+            box.innerHTML = currentPaymentLink
+              ? '<div class="item"><div class="muted">رابط الدفع:</div><div class="ltr" style="word-break:break-all">' +
+                esc(currentPaymentLink) +
+                "</div></div>"
+              : "";
+        }
+        // Arabic notice shown when the payments backend RPCs are absent (404).
+        const PAYMENTS_BACKEND_MISSING_MSG =
+          "سجل المدفوعات غير مفعّل بعد على الخادم — يعرض التطبيق حاليًا حقل (المدفوع) القديم فقط، وتسجيل الدفعات وروابط الدفع معطلة حتى يفعّل مالك النظام قاعدة بيانات المدفوعات.";
+        function showPaymentBackendMissing(notice) {
+          if (notice)
+            notice.innerHTML =
+              esc(PAYMENTS_BACKEND_MISSING_MSG) +
+              ' <button class="secondary tiny" data-action="retry-payments" type="button">إعادة المحاولة</button>';
+          paymentButtonsAvailability(false);
+        }
+        async function refreshPaymentPanel(bookingId, forceRetry) {
+          currentPaymentBookingId = String(bookingId || "");
+          setPaymentLink("");
+          const section = $("paymentSection");
+          if (!section) return;
+          const notice = $("paymentPanelNotice");
+          const sum = $("paymentSummaryBox");
+          const txb = $("paymentTransactionsBox");
+          if (sum) sum.innerHTML = "";
+          if (txb) txb.innerHTML = "";
+          if (!currentPaymentBookingId) {
+            if (notice)
+              notice.textContent =
+                "احفظ الحجز أولًا ثم افتح (تعديل) لعرض سجل المدفوعات.";
+            paymentButtonsAvailability(false);
+            return;
+          }
+          // Reverse-audit R-3 fix: once a genuine 404 proves the payments
+          // backend is absent, cache that for the session and stop firing a
+          // guaranteed-404 RPC on every booking open. Only an explicit
+          // "retry" clears it; real network errors are NOT cached this way.
+          if (paymentsBackendMissing && !forceRetry) {
+            showPaymentBackendMissing(notice);
+            return;
+          }
+          if (notice) notice.textContent = "جاري تحميل سجل المدفوعات...";
+          try {
+            const r = await callRpc("get_booking_payments", {
+              p_workspace_key: workspaceKey,
+              p_access_pin: accessPin,
+              p_booking_id: currentPaymentBookingId,
+            });
+            if (!r || r.ok !== true) {
+              if (notice)
+                notice.textContent = arabicPaymentError(r && r.error);
+              paymentButtonsAvailability(false);
+              return;
+            }
+            paymentsBackendMissing = false;
+            if (notice) notice.textContent = "";
+            renderPaymentPanel(r);
+            paymentButtonsAvailability(true);
+          } catch (e) {
+            if (isMissingRpc(e)) {
+              // Genuine 404: backend absent. Cache for the session.
+              paymentsBackendMissing = true;
+              showPaymentBackendMissing(notice);
+            } else {
+              // Real network/server error — do NOT cache as "missing"; the
+              // owner may just be offline. Next open re-probes.
+              paymentsBackendMissing = false;
+              if (notice)
+                notice.innerHTML =
+                  esc("تعذر تحميل سجل المدفوعات: " + e.message) +
+                  ' <button class="secondary tiny" data-action="retry-payments" type="button">إعادة المحاولة</button>';
+              paymentButtonsAvailability(false);
+            }
+            log("Payment panel unavailable", {
+              message: e.message,
+              status: e.status || null,
+            });
+          }
+        }
+        function renderPaymentPanel(r) {
+          const sum = $("paymentSummaryBox");
+          const txb = $("paymentTransactionsBox");
+          if (!sum || !txb) return;
+          const state = String(r.payment_state || "unpaid");
+          const totalH = r.booking_total_halalas;
+          const cloudMissing = totalH === null || totalH === undefined;
+          const rows = [
+            cloudMissing
+              ? '<div class="muted">هذا الحجز غير مرفوع للسحابة بعد أو إجماليه غير صالح — ارفع التعديلات أولًا.</div>'
+              : "",
+            '<div class="vrow"><span>حالة الدفع</span><b><span class="badge ' +
+              (PAYMENT_STATE_CLASSES[state] || "") +
+              '">' +
+              esc(PAYMENT_STATE_LABELS[state] || state) +
+              "</span></b></div>",
+            cloudMissing
+              ? ""
+              : '<div class="vrow"><span>إجمالي الحجز (من السحابة)</span><b>' +
+                halalasToRiyalsText(totalH) +
+                " ر.س</b></div>",
+            '<div class="vrow"><span>المدفوع (سجل المدفوعات)</span><b>' +
+              halalasToRiyalsText(r.gross_paid_halalas) +
+              " ر.س</b></div>",
+            '<div class="vrow"><span>المسترد</span><b>' +
+              halalasToRiyalsText(r.refunded_halalas) +
+              " ر.س</b></div>",
+            '<div class="vrow"><span>الصافي المدفوع</span><b>' +
+              halalasToRiyalsText(r.net_paid_halalas) +
+              " ر.س</b></div>",
+            cloudMissing
+              ? ""
+              : '<div class="vrow"><span>المتبقي (محسوب من السجل)</span><b>' +
+                halalasToRiyalsText(r.remaining_halalas) +
+                " ر.س</b></div>",
+          ].join("");
+          // Divergence between the legacy paid field and the ledger is shown,
+          // never silently resolved in either direction.
+          const txs = Array.isArray(r.transactions) ? r.transactions : [];
+          let mismatch = "";
+          if (txs.length > 0) {
+            const formPaidHalalas = riyalsInputToHalalas($("bookingPaid").value);
+            if (
+              isFinite(formPaidHalalas) &&
+              formPaidHalalas !== Number(r.net_paid_halalas)
+            )
+              mismatch =
+                '<div class="feedback bad">حقل (المدفوع) في الحجز لا يطابق سجل المدفوعات — بحاجة لتسوية. السجل المالي هو المرجع.</div>';
+          }
+          sum.innerHTML = '<div class="voucher">' + rows + "</div>" + mismatch;
+          txb.innerHTML = txs.length
+            ? txs
+                .map((t) => {
+                  const sign = t.direction === "out" ? "-" : "";
+                  const when = String(t.occurred_at || "")
+                    .slice(0, 16)
+                    .replace("T", " ");
+                  const bits = [
+                    esc(TX_TYPE_LABELS[t.transaction_type] || t.transaction_type),
+                    esc(PAY_METHOD_LABELS[t.payment_method] || t.payment_method),
+                    t.actor_label ? "المستلم: " + esc(t.actor_label) : "",
+                    t.reason ? "مرجع: " + esc(t.reason) : "",
+                    t.provider_reference
+                      ? '<span class="ltr">' + esc(t.provider_reference) + "</span>"
+                      : "",
+                    t.status !== "succeeded"
+                      ? '<span class="badge bad">' +
+                        esc(
+                          t.status === "pending" ? "معلقة" : "فاشلة",
+                        ) +
+                        "</span>"
+                      : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" · ");
+                  return (
+                    '<div class="item"><div class="actions between"><div>' +
+                    bits +
+                    '<div class="muted ltr">' +
+                    esc(when) +
+                    "</div></div><b>" +
+                    sign +
+                    halalasToRiyalsText(t.amount_halalas) +
+                    " ر.س</b></div></div>"
+                  );
+                })
+                .join("")
+            : '<div class="empty">لا توجد حركات مالية مسجلة لهذا الحجز.</div>';
+        }
+        async function submitManualPayment() {
+          if (!currentPaymentBookingId)
+            return feedback("افتح تعديل حجز محفوظ أولًا.", "bad");
+          const halalas = riyalsInputToHalalas($("manualPayAmount").value);
+          if (!isFinite(halalas) || halalas <= 0)
+            return feedback(
+              "مبلغ الدفعة غير صالح — أدخل مبلغًا موجبًا بدقة هللة كحد أقصى.",
+              "bad",
+            );
+          try {
+            const r = await callRpc("record_manual_payment", {
+              p_workspace_key: workspaceKey,
+              p_access_pin: accessPin,
+              p_booking_id: currentPaymentBookingId,
+              p_amount_halalas: halalas,
+              p_payment_method: $("manualPayMethod").value,
+              p_actor_label: $("manualPayActor").value.trim(),
+              p_reason: $("manualPayReason").value.trim(),
+              p_idempotency_key: "ui-manual-" + uid(),
+            });
+            if (!r || r.ok !== true)
+              return feedback(arabicPaymentError(r && r.error), "bad");
+            feedback(
+              "تم تسجيل الدفعة في السجل المالي. حقل (المدفوع) القديم لم يتغير — السجل هو المرجع.",
+              "good",
+            );
+            $("manualPayAmount").value = "";
+            $("manualPayReason").value = "";
+            refreshPaymentPanel(currentPaymentBookingId);
+          } catch (e) {
+            feedback(
+              isMissingRpc(e)
+                ? "سجل المدفوعات غير مفعّل بعد على الخادم."
+                : "فشل تسجيل الدفعة: " + e.message,
+              "bad",
+            );
+          }
+        }
+        async function createPaymentLink() {
+          if (!currentPaymentBookingId)
+            return feedback("افتح تعديل حجز محفوظ أولًا.", "bad");
+          if (paymentsBackendMissing)
+            return feedback(
+              "سجل المدفوعات غير مفعّل بعد على الخادم — روابط الدفع معطلة.",
+              "bad",
+            );
+          feedback("جاري إنشاء رابط الدفع...");
+          try {
+            const res = await fetch(
+              SUPABASE_URL + "/functions/v1/create-payment-session",
+              {
+                method: "POST",
+                headers: {
+                  apikey: SUPABASE_ANON_KEY,
+                  Authorization: "Bearer " + SUPABASE_ANON_KEY,
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                  workspace_key: workspaceKey,
+                  access_pin: accessPin,
+                  booking_id: currentPaymentBookingId,
+                  idempotency_key: "ui-link-" + uid(),
+                }),
+              },
+            );
+            const text = await res.text();
+            let body = null;
+            try {
+              body = text ? JSON.parse(text) : null;
+            } catch (_) {
+              body = null;
+            }
+            if (res.status === 404)
+              return feedback(
+                "خدمة روابط الدفع غير منشورة على الخادم بعد — روابط الدفع معطلة حتى يفعّلها مالك النظام.",
+                "bad",
+              );
+            if (!res.ok || !body || body.ok !== true)
+              return feedback(
+                arabicPaymentError(body && body.error),
+                "bad",
+              );
+            setPaymentLink(body.order && body.order.payment_url);
+            feedback(
+              "تم إنشاء رابط الدفع. ملاحظة: فتح الرابط لا يعني الدفع — الحالة تتحدث من السجل المالي فقط.",
+              "good",
+            );
+            refreshPaymentPanel(currentPaymentBookingId);
+          } catch (e) {
+            feedback("تعذر الاتصال بخدمة روابط الدفع.", "bad");
+            log("create-payment-session failed", { message: e.message });
+          }
+        }
+        async function copyPaymentLink() {
+          if (!currentPaymentLink)
+            return feedback("لا يوجد رابط دفع منشأ.", "bad");
+          if (await copyToClipboard(currentPaymentLink))
+            feedback("تم نسخ رابط الدفع.", "good");
+          else feedback("تعذر نسخ رابط الدفع.", "bad");
+        }
+        function sendPaymentLinkWhatsApp() {
+          if (!currentPaymentLink)
+            return feedback("لا يوجد رابط دفع منشأ.", "bad");
+          const b = activeBookings().find(
+            (x) => x.id === currentPaymentBookingId,
+          );
+          if (!b) return feedback("الحجز غير موجود", "bad");
+          const phone = normalizePhoneForWhatsApp(b.customer_phone);
+          if (!phone) return feedback("رقم العميل غير صالح لواتساب.", "bad");
+          const msg =
+            "السلام عليكم، هذا رابط دفع خاص بحجزكم بتاريخ " +
+            (b.booking_date || "—") +
+            ":\n" +
+            currentPaymentLink;
+          const url =
+            "https://wa.me/" + phone + "?text=" + encodeURIComponent(msg);
+          const w = window.open(url, "_blank");
+          if (!w) location.href = url;
+          feedback("تم فتح واتساب لإرسال رابط الدفع.", "good");
+        }
         // ========================= JS: report logic =========================
         function runReport(showMsg) {
           const m = $("reportMonth").value || monthNow(),
@@ -2760,6 +3424,27 @@
           if (a === "open-customer-whatsapp") return openCustomerWhatsApp(id);
           if (a === "mark-payment-complete") return markPaymentComplete();
           if (a === "open-online-excel") return openOnlineExcel();
+          if (a === "refresh-payments")
+            return refreshPaymentPanel(currentPaymentBookingId);
+          if (a === "retry-payments") {
+            paymentsBackendMissing = false;
+            return refreshPaymentPanel(currentPaymentBookingId, true);
+          }
+          if (a === "show-manual-payment") {
+            const box = $("manualPaymentBox");
+            if (box) box.classList.remove("hidden");
+            return;
+          }
+          if (a === "hide-manual-payment") {
+            const box = $("manualPaymentBox");
+            if (box) box.classList.add("hidden");
+            return;
+          }
+          if (a === "submit-manual-payment") return submitManualPayment();
+          if (a === "create-payment-link") return createPaymentLink();
+          if (a === "copy-payment-link") return copyPaymentLink();
+          if (a === "send-payment-link-whatsapp")
+            return sendPaymentLinkWhatsApp();
         }
         // ========================= JS: event binding =========================
         document.addEventListener("DOMContentLoaded", () => {
@@ -2796,6 +3481,13 @@
           });
           $("reportMonth").addEventListener("change", () => runReport(false));
           $("reportChalet").addEventListener("change", () => runReport(false));
+          // P1 guard (audit AUD-009): warn before closing the tab while local
+          // changes have not been uploaded. Never blocks; browser-standard prompt.
+          window.addEventListener("beforeunload", (e) => {
+            if (!dirty) return;
+            e.preventDefault();
+            e.returnValue = "";
+          });
           if (!restoreSessionFromStorage()) clearSessionSnapshot();
           log("Ready");
         });

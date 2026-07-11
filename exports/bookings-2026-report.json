@@ -16,7 +16,8 @@
       "شاليه سكاي"
     ],
     "full_rebuild": true,
-    "overwrite_conflicts": false
+    "overwrite_conflicts": false,
+    "phone_redacted": true
   },
   "summary": {
     "total_input_bookings": 11,
@@ -155,5 +156,6 @@
       "period_id": "b5c19d62-ba37-4aeb-8832-e7332c91d07d"
     }
   ],
-  "conflicts": []
+  "conflicts": [],
+  "redaction_note": "Customer phone numbers removed from the public workbook (AUD-003). Historic commits still contain them; see docs/OWNER_PII_CLEANUP.md."
 }
