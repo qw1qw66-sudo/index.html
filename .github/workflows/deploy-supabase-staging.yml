@@ -28,7 +28,7 @@ on:
       deploy_ref:
         description: "Git ref to deploy (branch, tag, or SHA)"
         required: true
-        default: "claude/chalet-ai-brain"
+        default: "main"
 
 permissions:
   contents: read
@@ -187,12 +187,14 @@ jobs:
           supabase secrets set APP_ENV=staging
           echo "APP_ENV=staging set"
 
+      # Use Supabase's Management API bundler instead of local Docker. This
+      # avoids Docker Hub/public ECR pull-rate limits on shared GitHub runners.
       - name: Deploy Edge Functions
         run: |
           set -euo pipefail
           for f in create-payment-session payment-webhook chalet-assistant chalet-setup-status chalet-autopilot; do
             echo "--- deploying $f"
-            supabase functions deploy "$f" --no-verify-jwt
+            supabase functions deploy "$f" --no-verify-jwt --use-api
           done
 
       # Real HTTP smoke against the deployed Deno functions: CORS preflights,
