@@ -28,7 +28,12 @@ function record(name, ok, code) {
   console.log(`${ok ? "PASS" : "FAIL"}  ${name}${code ? `  (${code})` : ""}`);
 }
 
-async function http(method, path, { body, headers = {}, origin = ORIGIN, timeoutMs = 45000 } = {}) {
+// Origin is a BROWSER header: send it only to the browser-facing Edge
+// Functions (to exercise their CORS), never to the server-side REST API —
+// the deployed gateway 404s REST calls that carry a foreign Origin, which is
+// exactly how the live app behaves (browsers on the allowed origin only).
+async function http(method, path, { body, headers = {}, origin, timeoutMs = 45000 } = {}) {
+  const useOrigin = origin === undefined ? (path.startsWith("/functions/") ? ORIGIN : null) : origin;
   const ctl = new AbortController();
   const t = setTimeout(() => ctl.abort(), timeoutMs);
   try {
@@ -38,7 +43,7 @@ async function http(method, path, { body, headers = {}, origin = ORIGIN, timeout
         apikey: ANON,
         authorization: "Bearer " + ANON,
         "content-type": "application/json",
-        ...(origin ? { origin } : {}),
+        ...(useOrigin ? { origin: useOrigin } : {}),
         ...headers,
       },
       body: body === undefined ? undefined : JSON.stringify(body),
@@ -109,7 +114,9 @@ async function main() {
       if (r.status !== 404) break;
       await new Promise((res) => setTimeout(res, 5000));
     }
-    record("synthetic_workspace_created", r.status === 200 && r.json && r.json.ok === true, r.status + (r.json && r.json.error ? ":" + r.json.error : ""));
+    const detail = r.status + (r.json && (r.json.error || r.json.code) ? ":" + (r.json.error || r.json.code) : "") +
+      (r.status !== 200 && r.json && r.json.message ? ":" + String(r.json.message).slice(0, 60) : "");
+    record("synthetic_workspace_created", r.status === 200 && r.json && r.json.ok === true, detail);
   }
 
   // 6. setup-status with valid auth: booleans only, staging env, DeepSeek ready.
