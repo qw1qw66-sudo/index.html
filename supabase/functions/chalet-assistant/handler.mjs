@@ -26,7 +26,7 @@ import { prepareConfirmation, reissueConfirmation, hashToken, hashPayload } from
 import { redactText, redactObject } from "../_shared/assistant/redact.mjs";
 import { riyadhToday, availabilityCheck, availabilityFailureAr } from "../_shared/assistant/availability.mjs";
 import { isBareConfirmPhrase, formatDateDisplay, addDaysIso, classifyMeridiemWord, parseTimeExpression, foldDigits } from "../_shared/assistant/nl-normalize.mjs";
-import { resolveChaletReference } from "../_shared/assistant/booking-resolution.mjs";
+import { normalizePeriodLookup, resolveChaletReference } from "../_shared/assistant/booking-resolution.mjs";
 import { applySafeError } from "../_shared/assistant/safe-errors.mjs";
 import {
   extractFacts,
@@ -48,6 +48,7 @@ const SECOND_STAGE_INSTRUCTION =
   "هذه نتائج الأدوات. أعطِ الآن الإجابة النهائية فقط بالعربية الطبيعية المختصرة. " +
   "لا تذكر أسماء الأدوات الداخلية، ولا أكواد الأخطاء، ولا JSON. " +
   "لا تكرّر عبارات مثل «جاري» أو «سأجلب» بعد توفّر النتائج. " +
+  "أجب بالأرقام والأسماء الواردة في النتائج تحديدًا، ولا تُجب بعبارة عامة مثل «تمام» أبدًا. " +
   "لا تدّعِ إتمام أي حفظ أو إجراء ما لم تُعِده الأداة كإجراء مكتمل.";
 
 // EVERY failed body that leaves this handler carries a safe public_code +
@@ -409,16 +410,56 @@ function renderFallbackAr(results) {
     if (r.kind === "read") { const d = describeReadAr(r.result); if (d) lines.push(d); continue; }
   }
   if (!lines.length) {
-    return anyFailure
-      ? "تعذّر إكمال الطلب حالياً، ولم يتغيّر شيء. حاول مرة أخرى."
-      : "تمام.";
+    if (anyFailure) return "تعذّر إكمال الطلب حالياً، ولم يتغيّر شيء. حاول مرة أخرى.";
+    // A read that produced nothing displayable must say so — «تمام.» after a
+    // question read as a useless filler (live IMG_6710) and is kept only for
+    // action results.
+    if (results.some((r) => r && r.kind === "read")) return "لا توجد بيانات مطابقة.";
+    return "تمام.";
   }
   return lines.join("\n").slice(0, 2000);
 }
 
+// Display-only halalas → whole riyals (owner prices are whole riyals).
+function riyalsAr(halalas) {
+  return String(Math.round(Number(halalas || 0) / 100));
+}
+
+const BOOKING_STATUS_AR = { confirmed: "مؤكد", cancelled: "ملغي", completed: "مكتمل", pending: "معلق" };
+
 // Natural Arabic description of a read result — no tool name, no raw error code.
 function describeReadAr(result) {
   const r = result && typeof result === "object" ? result : {};
+  // Outstanding balances (ledger view): the owner asked WHO owes — name every
+  // debtor with the amount. A bare count here was the live «يوجد 10 حجوزات»
+  // uselessness (IMG_6711). MUST precede the generic bookings branch.
+  if (r.source === "ledger" && Array.isArray(r.bookings)) {
+    if (!r.bookings.length) return "لا توجد مبالغ متبقية — كل الحجوزات مسددة.";
+    const shown = r.bookings.slice(0, 10);
+    const lines = shown.map(
+      (b) =>
+        `• ${b.customer_name || "بدون اسم"} — ${formatDateDisplay(b.booking_date || "") || b.booking_date || ""} — المتبقي ${riyalsAr(b.remaining_halalas)} ريال`,
+    );
+    const total = r.bookings.reduce((s, b) => s + Number(b.remaining_halalas || 0), 0);
+    const more = r.bookings.length > shown.length ? `\n…و${r.bookings.length - shown.length} حجوزات أخرى.` : "";
+    return `المبالغ المتبقية:\n${lines.join("\n")}${more}\nإجمالي المتبقي: ${riyalsAr(total)} ريال (${r.bookings.length} حجز).`;
+  }
+  // Marketing attributed revenue — a real number, never filler.
+  if (typeof r.attributed_revenue_halalas === "number") {
+    const conv = Number(r.conversions || 0);
+    if (!conv) return "لا يوجد دخل منسوب للتسويق بعد — لا توجد تحويلات مسجلة.";
+    return `دخل التسويق المنسوب: ${riyalsAr(r.attributed_revenue_halalas)} ريال من ${conv} حجز محوّل، عبر ${Number(r.messages_sent || 0)} رسالة مرسلة.`;
+  }
+  // Campaign runs — the latest few, spelled out.
+  if (Array.isArray(r.runs)) {
+    if (!r.runs.length) return "لا توجد حملات تسويق بعد.";
+    const STATUS_AR = { started: "بدأت", queued: "في الانتظار", awaiting_approval: "بانتظار موافقتك", completed: "مكتملة", failed: "فشلت", sending: "قيد الإرسال" };
+    const lines = r.runs.slice(0, 3).map(
+      (x) =>
+        `• حملة ${STATUS_AR[x.status] || x.status || "—"} — مؤهلون ${Number(x.eligible_contacts || 0)}، أُرسلت ${Number(x.sent_messages || 0)}، تحويلات ${x.converted_booking_id ? 1 : 0}، دخل ${riyalsAr(x.attributed_revenue_halalas)} ريال`,
+    );
+    return `آخر الحملات:\n${lines.join("\n")}`;
+  }
   if (Array.isArray(r.chalets)) {
     if (!r.chalets.length) return "لا توجد شاليهات مسجلة في هذه المساحة.";
     const lines = r.chalets.map((c) => {
@@ -439,11 +480,18 @@ function describeReadAr(result) {
       );
       return "النتائج:\n" + lines.join("\n");
     }
+    // Itemize with names — a bare count answers nothing the owner asked.
     const n = r.bookings.length;
     if (n === 0) return "لا توجد حجوزات مطابقة.";
-    if (n === 1) return "يوجد حجز واحد.";
-    if (n === 2) return "يوجد حجزان.";
-    return `يوجد ${n} حجوزات.`;
+    const shown = r.bookings.slice(0, 10);
+    const lines = shown.map(
+      (b) =>
+        `• ${b.customer_name || "بدون اسم"} — ${formatDateDisplay(b.booking_date || "") || b.booking_date || ""}` +
+        (b.status ? ` — ${BOOKING_STATUS_AR[b.status] || b.status}` : ""),
+    );
+    const more = n > shown.length ? `\n…و${n - shown.length} حجوزات أخرى.` : "";
+    const head = n === 1 ? "يوجد حجز واحد:" : n === 2 ? "يوجد حجزان:" : `يوجد ${n} حجوزات:`;
+    return `${head}\n${lines.join("\n")}${more}`;
   }
   if (Array.isArray(r.available)) return r.available.length ? `الفترات المتاحة: ${r.available.length}.` : "لا توجد فترات متاحة.";
   if (Array.isArray(r.empty)) {
@@ -452,8 +500,21 @@ function describeReadAr(result) {
     return "الفترات الفاضية:\n" + lines.join("\n");
   }
   if (Array.isArray(r.transactions)) return `عدد الحركات المالية: ${r.transactions.length}.`;
-  if (Array.isArray(r.payments)) return `عدد المدفوعات: ${r.payments.length}.`;
-  if (Array.isArray(r.rules)) return `عدد قواعد التسويق: ${r.rules.length}.`;
+  if (Array.isArray(r.payments)) {
+    if (!r.payments.length) return "لا توجد مدفوعات مسجلة.";
+    const lines = r.payments.slice(0, 10).map(
+      (p) => `• ${riyalsAr(p.amount_halalas)} ريال — ${formatDateDisplay(String(p.created_at || "").slice(0, 10)) || String(p.created_at || "").slice(0, 10)}`,
+    );
+    return `آخر المدفوعات (${r.payments.length}):\n${lines.join("\n")}`;
+  }
+  if (Array.isArray(r.rules)) {
+    if (!r.rules.length) return "التسويق التلقائي غير مفعّل — لا توجد قواعد.";
+    const lines = r.rules.slice(0, 5).map(
+      (x) =>
+        `• قاعدة ${x.enabled ? "مفعلة" : "معطلة"} — حد يومي ${Number(x.maximum_daily_messages || 0)} رسالة، موافقة المالك ${x.owner_approval_required === false ? "غير مطلوبة" : "مطلوبة"}`,
+    );
+    return `قواعد التسويق (${r.rules.length}):\n${lines.join("\n")}`;
+  }
   if (typeof r.draft === "string" && r.draft) return r.draft;
   if (r.error) return "تعذّر جلب هذه المعلومة حالياً.";
   return "";
@@ -775,13 +836,17 @@ function deterministicReadIntent(message, todayIso) {
   // model provider is down. Deliberately narrow: «ما هي حجوزات اليوم؟» stays on
   // the model path (the deploy smoke uses it to prove a REAL two-stage
   // DeepSeek round-trip), and any wording that smells like a write is excluded.
+  // Write words match at WORD STARTS only: the bare «الغ» substring lives
+  // inside «مبالغ», which silently sent «من عليه مبالغ متبقية؟» to the model
+  // (the live «يوجد 10 حجوزات.» uselessness rode that path).
+  const WRITEISH_RE = /(?:^|\s)(?:احجز|جهز|سج[ّل]|أضف|اضف|الغ|ألغ|امسح|احذف|عدل|عدّل)/;
   const asksTodayBookings =
     /(شنو|وش|ايش|اعرض|اظهر)/.test(text) &&
     /(حجوزات|الحجوزات)/.test(text) &&
     /(اليوم|لليوم|هذا اليوم)/.test(text) &&
-    !/(احجز|جهز|سج[ّل]|أضف|اضف|الغ|ألغ|امسح|احذف|عدل|عدّل)/.test(text);
+    !WRITEISH_RE.test(text);
   if (asksTodayBookings) return { name: "get_today_bookings", arguments: {} };
-  const writeish = /(احجز|جهز|سج[ّل]|أضف|اضف|الغ|ألغ|امسح|احذف|عدل|عدّل)/.test(text);
+  const writeish = WRITEISH_RE.test(text);
   if (writeish) return null;
   // Tomorrow's bookings / availability — same zero-model guarantee (§15).
   const tomorrowWord = /(بكرة|بكره|باكر|غدا|غداً)/.test(text);
@@ -793,12 +858,35 @@ function deterministicReadIntent(message, todayIso) {
     return { name: "find_empty_dates", arguments: { days_ahead: 2 } };
   }
   // Outstanding balances in common owner phrasings.
-  if (/(المتبقي|متبقية|الباقي|باقي فلوس|مديون|مطلوب من|عليه مبالغ|المبالغ المتبقية)/.test(text)) {
+  if (/(المتبقي|متبقية|متبقيه|الباقي|باقي فلوس|مديون|مطلوب من|عليه مبالغ|المبالغ المتبقية)/.test(text)) {
     return { name: "list_outstanding_balances", arguments: {} };
   }
   // Recent payments.
   if (/(آخر|اخر|أحدث|احدث)/.test(text) && /(مدفوعات|دفعات|المدفوعات)/.test(text)) {
     return { name: "list_recent_payments", arguments: {} };
+  }
+  // The app's OWN suggestion chips (and their natural variants) must never
+  // depend on the model (live IMG_6710/6711: «تمام.» / bare counts).
+  // Upcoming bookings.
+  if (/(القادمة|القادمه|قادمة|قادمه|الجاية|الجايه)/.test(text) && /(حجوزات|الحجوزات)/.test(text) && todayIso) {
+    return { name: "list_bookings", arguments: { from: todayIso, to: addDaysIso(todayIso, 60) } };
+  }
+  // Empty days this week.
+  if (/(فاضي|فاضية|فاضيه|متاح|متاحة|فراغ)/.test(text) && /(اسبوع|الاسبوع|الأسبوع)/.test(text)) {
+    return { name: "find_empty_dates", arguments: { days_ahead: 7 } };
+  }
+  // Marketing: attributed revenue («كم دخل جابه التسويق؟») — must precede the
+  // generic status match («دخل» questions are about money, not settings).
+  if (/(دخل|ايراد|إيراد|عائد|ارباح|أرباح)/.test(text) && /(تسويق|التسويق|حملة|حملات|جابه)/.test(text)) {
+    return { name: "get_attributed_revenue", arguments: {} };
+  }
+  // Marketing: last campaign result.
+  if (/(حملة|حملات|الحملة|الحملات)/.test(text) && /(نتيجة|نتايج|نتائج|آخر|اخر)/.test(text)) {
+    return { name: "get_campaign_results", arguments: {} };
+  }
+  // Marketing: automation status/rules.
+  if (/(تسويق|التسويق)/.test(text) && /(حالة|وضع|قواعد|حاله)/.test(text)) {
+    return { name: "get_automation_status", arguments: {} };
   }
   // Booking lookup by phone suffix: «رقمه ينتهي 1234».
   const suffix = text.match(/(?:رقمه|جواله|رقم جواله|الرقم)\s*(?:ينتهي|اخره|آخره)\s*(?:بـ|ب)?\s*(\d{3,6})/);
@@ -1002,6 +1090,18 @@ function parseAlternativePick(message, fields) {
     });
     if (hits.length === 1) alt = hits[0];
   }
+  if (!alt) {
+    // Typing the option's NAME («فترة5», «الفترة 6») instead of its number
+    // must also pick it — the bot itself asked «حدد بالاسم» (live IMG_6708).
+    // UNIQUE normalized-label hit only.
+    const wanted = normalizePeriodLookup(t);
+    if (wanted) {
+      const byLabel = alts.filter(
+        (a) => a.period_label && normalizePeriodLookup(a.period_label) === wanted,
+      );
+      if (byLabel.length === 1) alt = byLabel[0];
+    }
+  }
   if (!alt) return null;
   return {
     chalet_id: String(alt.chalet_id || ""),
@@ -1019,10 +1119,21 @@ function parseAlternativePick(message, fields) {
 // (U+0626) while «مساء» ends in the standalone hamza ء (U+0621) — without
 // them a PM answer never registered and fell to the model (live bug).
 function extractPeriodText(message) {
+  // «فترة5» glued (no space) is how the owner actually types the digit labels
+  // the app itself suggests — the glued alternative must come first.
   const m = String(message || "").match(
-    /(الفترة\s+\S+|فترة\s+\S+|(?:ال)?(?:صباحي?ة?|مسائي?ة?|ليلي?ة?|نهاري?ة?)|مساءً|مساءا|المساء|مساء|عشاء|بالليل|ليلاً|ليلا|الليلة|ظهراً|ظهرا|الظهر|عصراً|عصرا|العصر|الضحى|ضحى|الفجر|فجر)/u,
+    /((?:ال)?فترة\s*[0-9٠-٩]+|الفترة\s+\S+|فترة\s+\S+|(?:ال)?(?:صباحي?ة?|مسائي?ة?|ليلي?ة?|نهاري?ة?)|مساءً|مساءا|المساء|مساء|عشاء|بالليل|ليلاً|ليلا|الليلة|ظهراً|ظهرا|الظهر|عصراً|عصرا|العصر|الضحى|ضحى|الفجر|فجر)/u,
   );
   return m ? m[0] : "";
+}
+
+// A LABEL hint for same-time tie-breaking must be an explicit «فترة …»
+// phrase — never a bare meridiem word (that word usually fed the time parse
+// itself). The LAST phrase wins: owners append the clarification at the end
+// («فترة النهار … من ٧ الى ٥ … الفترة خمسه» — live IMG_6708).
+function extractPeriodLabelHint(message) {
+  const matches = [...String(message || "").matchAll(/(?:ال)?فترة\s*([^\s،,.!؟;؛:]+)/gu)];
+  return matches.length ? matches[matches.length - 1][0] : "";
 }
 
 // Typed draft cancellation — the guided fallback advertises «الغِ الحجز», so
@@ -1065,7 +1176,10 @@ function contextualChaletAnswer(raw) {
 function contextualPeriodAnswer(raw) {
   const s = String(raw || "").trim().replace(/[.!؟،,;؛:]+$/g, "").trim();
   if (!s || s.length > 30 || s.split(/\s+/).length > 3) return "";
-  if (!/^[\p{L}\s'’-]+$/u.test(s)) return "";
+  // Digits are ALLOWED: real period labels are «فترة 5»/«الفترة 6» — the old
+  // letters-only guard rejected the exact answers the bot itself suggested
+  // (live IMG_6708 «فترة5»).
+  if (!/^[\p{L}\p{N}\s'’-]+$/u.test(s)) return "";
   if (isBareConfirmPhrase(s) || CANCEL_DRAFT_RE.test(s)) return "";
   return s;
 }
@@ -1226,6 +1340,15 @@ async function runBookingPipeline(deps, ctx, { threadId, rawMessage, message, pr
     ? ""
     : extractPeriodText(message) ||
       (row && pendingQ && pendingQ.kind === "period" ? contextualPeriodAnswer(rawMessage) : "");
+  // A bare digit answering the PERIOD question is a label pick («٥» = «فترة
+  // 5»), never a guest count — mirror the pick guard above.
+  if (row && pendingQ && pendingQ.kind === "period" && periodWord) {
+    const folded = foldDigits(String(rawMessage || "")).trim();
+    if (/^\d{1,3}$/.test(folded)) {
+      delete facts.fields.guests;
+      delete facts.fields.total;
+    }
+  }
   const factSignal = Boolean(
     (facts.fields &&
       (facts.fields.booking_date ||
@@ -1248,6 +1371,25 @@ async function runBookingPipeline(deps, ctx, { threadId, rawMessage, message, pr
     // saved, so the stored pending_q survives for the next turn.
     if (DATEISH_RE.test(message)) {
       return { ok: true, reply_ar: DATE_CLARIFY_AR, tool_results: [] };
+    }
+    // «عطني خيارات وانا اضغط عليها» (live IMG_6709): an OPTIONS request while
+    // a numbered list is stored re-sends it with the one-tap chips — never
+    // the «لم أفهم ردّك» fallback.
+    const storedAlts = row.fields && Array.isArray(row.fields.alternatives) ? row.fields.alternatives : [];
+    if (storedAlts.length && /(خيار|خيارات|اختيار|بدائل|ازرار|أزرار|اضغط|الاختيارات)/.test(message)) {
+      return {
+        ok: true,
+        reply_ar: alternativesReplyAr(storedAlts, "هذه الخيارات المتاحة — اضغط أحدها أو اكتب رقمه:"),
+        tool_results: [],
+        next_actions: storedAlts.map((a, i) => ({
+          pick: i + 1,
+          chalet_name: a.chalet_name,
+          date: a.date,
+          start: a.start,
+          end: a.end,
+          price: a.price ?? null,
+        })),
+      };
     }
     const missing0 = missingFields(row.fields || {});
     const pendingText =
@@ -1283,6 +1425,13 @@ async function runBookingPipeline(deps, ctx, { threadId, rawMessage, message, pr
   const dateChanged = Boolean(facts.fields && facts.fields.booking_date);
   if (timeText) {
     fields.period_text = timeText;
+    // The owner often names the period IN THE SAME sentence as the time
+    // («من ٧ الى العصر ٥ … الفترة خمسه»). The time drives resolution, but an
+    // explicit «فترة …» NAME is kept as a tie-breaker for same-time periods —
+    // discarding it was the live IMG_6708 dead-end.
+    const labelHint = extractPeriodLabelHint(rawMessage);
+    if (labelHint) fields.period_label_hint = labelHint;
+    else delete fields.period_label_hint;
     fields.canonical_start = facts.time.start;
     fields.canonical_end = facts.time.end;
     fields.wraps_next_day = facts.time.wraps_next_day;
@@ -1292,12 +1441,14 @@ async function runBookingPipeline(deps, ctx, { threadId, rawMessage, message, pr
     delete fields.period_label;
   } else if (periodWord && !fields.period_id) {
     fields.period_text = periodWord;
+    delete fields.period_label_hint;
   } else if (periodWord && fields.period_id) {
     // A period CORRECTION by name («خلها الصباحية») unbinds and re-resolves —
     // otherwise the old slot silently survives the edit.
     fields.period_text = periodWord;
     delete fields.period_id;
     delete fields.period_label;
+    delete fields.period_label_hint;
   }
   // A chalet correction by name rebinds too (and its periods with it).
   if (fields.chalet_id && /شاليه/.test(message) && doc0) {
@@ -1392,6 +1543,7 @@ async function runBookingPipeline(deps, ctx, { threadId, rawMessage, message, pr
       {
         chalet_id: fields.chalet_id,
         period_label: fields.period_text || undefined,
+        period_label_hint: fields.period_label_hint || undefined,
         booking_date: fields.booking_date || undefined,
       },
       ctx.pin,
@@ -1402,6 +1554,7 @@ async function runBookingPipeline(deps, ctx, { threadId, rawMessage, message, pr
       if (pres.args.period_start) fields.canonical_start = String(pres.args.period_start);
       if (pres.args.period_end) fields.canonical_end = String(pres.args.period_end);
       delete fields.period_text;
+      delete fields.period_label_hint;
     } else if (pres && (pres.error === "BOOKING_CONFLICT" || pres.error === "AVAILABILITY_UNPROVABLE")) {
       return conflictWithAlternatives(deps, ctx, { fields, doc, today, ask, saveDraft, head: pres.reason_ar });
     } else if (pres && (pres.error === "PERIOD_AMBIGUOUS" || pres.error === "PERIOD_TIME_INCOMPLETE")) {
@@ -1419,6 +1572,23 @@ async function runBookingPipeline(deps, ctx, { threadId, rawMessage, message, pr
             price: a.price ?? null,
           })),
         });
+      }
+      if (pres.error === "PERIOD_AMBIGUOUS" && doc && fields.booking_date) {
+        // EVERY same-time candidate is unavailable that date: asking the owner
+        // to pick between occupied slots was the live dead-end («حدد بالاسم»,
+        // IMG_6708). Say WHO occupies it and offer REAL alternatives instead.
+        const firstOpt = Array.isArray(pres.options) && pres.options[0] ? pres.options[0] : null;
+        const chalet = (doc.chalets || []).find((c) => String(c.id) === String(fields.chalet_id));
+        const period = chalet && firstOpt
+          ? (chalet.periods || []).find((p) => String(p.id) === String(firstOpt.period_id))
+          : null;
+        if (period) {
+          const check = availabilityCheck(doc, fields.chalet_id, fields.booking_date, period);
+          if (!check.available) {
+            const fail = availabilityFailureAr(check, { tail: "لم يتم تجهيز أي حجز." });
+            return conflictWithAlternatives(deps, ctx, { fields, doc, today, ask, saveDraft, head: fail.reason_ar });
+          }
+        }
       }
       return ask(pres.reason_ar || "حدد الفترة بالاسم أو بالوقت.", { pending_q: { kind: "period" } });
     } else if (pres && pres.error === "PERIOD_NOT_FOUND" && fields.period_text) {

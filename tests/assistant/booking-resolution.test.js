@@ -173,4 +173,46 @@ describe("authoritative chalet/period name resolution", () => {
     });
     expect(two).toMatchObject({ ok: true, args: { chalet_id: "tulum2-real-id" } });
   });
+
+  // R7 (IMG_6708): the bot suggested answering «فترة 5» by name — every way
+  // an owner actually types that name must normalize to the SAME lookup key.
+  it("«فترة5» / «فترة 5» / «الفترة ٥» / spoken «الفترة خمسه» all match the stored «فترة 5»", () => {
+    expect(normalizePeriodLookup("فترة5")).toBe(normalizePeriodLookup("فترة 5"));
+    expect(normalizePeriodLookup("الفترة ٥")).toBe(normalizePeriodLookup("فترة 5"));
+    expect(normalizePeriodLookup("الفترة خمسه")).toBe(normalizePeriodLookup("فترة 5"));
+    const doc = workspaceDoc();
+    doc.chalets[1].periods = [
+      { id: "f5", label: "فترة 5", start: "07:00", end: "17:00", active: true, weekday_price: 400, weekend_price: 400 },
+      { id: "f6", label: "الفترة 6", start: "19:00", end: "23:00", active: true, weekday_price: 300, weekend_price: 300 },
+    ];
+    for (const typed of ["فترة5", "فترة 5", "الفترة ٥", "الفترة خمسه"]) {
+      const r = resolveBookingCreateArgs(doc, {
+        customer_name: "عميل", chalet_name: "تولوم",
+        period_label: typed, booking_date: "2099-07-11",
+      });
+      expect(r).toMatchObject({ ok: true, args: { period_id: "f5" } });
+    }
+  });
+
+  it("a «فترة …» label HINT breaks a same-time tie; without it the ambiguity stays", () => {
+    const doc = workspaceDoc();
+    // Two periods with IDENTICAL times, digit labels (the live IMG_6708 shape).
+    doc.chalets[1].periods = [
+      { id: "f5", label: "فترة 5", start: "07:00", end: "17:00", active: true, weekday_price: 450, weekend_price: 450 },
+      { id: "f6", label: "الفترة 6", start: "07:00", end: "17:00", active: true, weekday_price: 400, weekend_price: 400 },
+    ];
+    const withHint = resolveBookingCreateArgs(doc, {
+      customer_name: "عميل", chalet_name: "تولوم",
+      period_label: "من 7 صباحا الى 5 مساء", period_label_hint: "الفترة خمسه",
+      booking_date: "2099-07-11",
+    });
+    expect(withHint).toMatchObject({ ok: true, args: { period_id: "f5", period_label: "فترة 5" } });
+    const noHint = resolveBookingCreateArgs(doc, {
+      customer_name: "عميل", chalet_name: "تولوم",
+      period_label: "من 7 صباحا الى 5 مساء",
+      booking_date: "2099-07-11",
+    });
+    expect(noHint).toMatchObject({ ok: false, error: "PERIOD_AMBIGUOUS" });
+    expect(noHint.reason_ar).toContain("حدد بالاسم");
+  });
 });

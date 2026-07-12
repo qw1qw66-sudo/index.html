@@ -16,6 +16,9 @@ function normalizedTokens(value, ignored) {
   // Fold Arabic-Indic/Persian digits to ASCII first — NFKC does NOT, so
   // «تولوم ٢» (phone keyboard) would otherwise never match the stored
   // «شاليه تولوم 2» and the substring fallback picks the wrong sibling.
+  // Letter↔digit boundaries then split into their own tokens so the glued
+  // phone spelling «فترة5» tokenizes exactly like the stored «فترة 5» —
+  // stripping the period word leaves the same key either way (IMG_6708).
   return foldDigits(String(value ?? ""))
     .normalize("NFKC")
     .toLowerCase()
@@ -24,6 +27,8 @@ function normalizedTokens(value, ignored) {
     .replace(/ى/g, "ي")
     .replace(/ؤ/g, "و")
     .replace(/ئ/g, "ي")
+    .replace(/(\p{L})(\p{N})/gu, "$1 $2")
+    .replace(/(\p{N})(\p{L})/gu, "$1 $2")
     .split(/[^\p{L}\p{N}]+/u)
     .filter(Boolean)
     .filter((token) => !ignored.has(token));
@@ -50,8 +55,25 @@ const FAMILY_CANON = {
 // pass found nothing.
 const CROSS_FAMILY = { ليل: "مساء", عشاء: "مساء" };
 
+// Spoken number words → digits, for PERIOD lookup only («الفترة خمسه» must
+// match the stored «فترة 5» exactly like the typed digit does).
+const SPOKEN_NUM = {
+  واحد: "1", واحدة: "1", واحده: "1",
+  اثنين: "2", اثنان: "2", ثنين: "2",
+  ثلاثة: "3", ثلاثه: "3", ثلاث: "3",
+  اربعة: "4", اربعه: "4", اربع: "4",
+  خمسة: "5", خمسه: "5", خمس: "5",
+  ستة: "6", سته: "6", ست: "6",
+  سبعة: "7", سبعه: "7", سبع: "7",
+  ثمانية: "8", ثمانيه: "8", ثمان: "8",
+  تسعة: "9", تسعه: "9", تسع: "9",
+  عشرة: "10", عشره: "10", عشر: "10",
+};
+
 function periodLookupBase(value) {
-  const joined = normalizedTokens(value, PERIOD_WORDS).join("");
+  const joined = normalizedTokens(value, PERIOD_WORDS)
+    .map((token) => SPOKEN_NUM[token] || token)
+    .join("");
   return joined.startsWith("ال") ? joined.slice(2) : joined;
 }
 
@@ -188,12 +210,24 @@ function periodOptions(list) {
   }));
 }
 
+// The owner often gives BOTH a time and the period's name in one sentence
+// («من ٧ الى العصر ٥ … الفترة خمسه» — live IMG_6708). When the time alone is
+// ambiguous, that name is the tie-breaker; discarding it was the dead-end.
+function hintTieBreak(candidates, hint) {
+  if (!hint) return null;
+  const native = uniqueNameMatch(candidates, hint, (p) => p.label, normalizePeriodNative);
+  if (native.status === "ok") return native.item;
+  const lenient = uniqueNameMatch(candidates, hint, (p) => p.label, normalizePeriodLookup);
+  return lenient.status === "ok" ? lenient.item : null;
+}
+
 function resolvePeriodReference(chalet, args = {}) {
   const all = activePeriods(chalet);
   // Bookable periods only: incomplete times FAIL CLOSED for new bookings.
   const periods = all.filter((p) => isPeriodBookable(p).ok);
   const options = periodOptions(periods);
   const byLabel = String(args.period_label || "");
+  const labelHint = String(args.period_label_hint || "");
   if (byLabel) {
     // TIER 1 — exact canonical TIME match: «من ٧ مساء إلى ٥ صباح», «19:00-05:00»,
     // «7-5». The owner never needs the stored label wording.
@@ -205,6 +239,8 @@ function resolvePeriodReference(chalet, args = {}) {
       if (sameBoth.length) {
         const collapsed = collapseIdentical(sameBoth);
         if (collapsed) return { ok: true, period: collapsed };
+        const hinted = hintTieBreak(sameBoth, labelHint);
+        if (hinted) return { ok: true, period: hinted };
         return { ok: false, error: "PERIOD_AMBIGUOUS", reason_ar: `توجد عدة فترات بنفس هذا الوقت؛ حدد بالاسم: ${timedListAr(sameBoth)}.`, options: periodOptions(sameBoth) };
       }
       const sameStart = periods.filter((p) => normalizeTimeHHmm(p.start) === t.start);
@@ -212,6 +248,8 @@ function resolvePeriodReference(chalet, args = {}) {
       if (sameStart.length > 1) {
         const collapsed = collapseIdentical(sameStart);
         if (collapsed) return { ok: true, period: collapsed };
+        const hinted = hintTieBreak(sameStart, labelHint);
+        if (hinted) return { ok: true, period: hinted };
         return { ok: false, error: "PERIOD_AMBIGUOUS", reason_ar: `توجد عدة فترات تبدأ بهذا الوقت؛ حدد الفترة: ${timedListAr(sameStart)}.`, options: periodOptions(sameStart) };
       }
       return {

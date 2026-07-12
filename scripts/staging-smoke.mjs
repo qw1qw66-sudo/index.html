@@ -515,6 +515,37 @@ async function main() {
     record("chalet_answer_binds", askedChalet && advanced, detail);
   }
 
+  // 10j. R7 CHIP TRUTH (IMG_6711): «من عليه مبالغ متبقية؟» must answer with
+  // the debtor NAMES + amounts, deterministically — never the bare count
+  // («يوجد N حجوزات») and never a model turn. The seeded «عميل تجريبي» has
+  // total 500 / paid 0, so the ledger view owes 500.
+  {
+    const r = await assistant({ message: "من عليه مبالغ متبقية؟" });
+    const b = r.json || {};
+    const named = /عميل تجريبي/.test(String(b.reply_ar || ""));
+    const amounts = /المتبقي/.test(String(b.reply_ar || "")) && /ريال/.test(String(b.reply_ar || ""));
+    const notBareCount = !/^يوجد \d+ حجوزات\.$/.test(String(b.reply_ar || "").trim());
+    record(
+      "balances_names_listed",
+      r.status === 200 && b.ok === true && b.model_calls === 0 && named && amounts && notBareCount && !leaks(r.text),
+      "model_calls=" + b.model_calls + ",named=" + named,
+    );
+  }
+
+  // 10k. R7 CHIP TRUTH (IMG_6710): «كم دخل جابه التسويق؟» answers with a real
+  // number or an honest zero — never the «تمام.» filler, never a model turn.
+  {
+    const r = await assistant({ message: "كم دخل جابه التسويق؟" });
+    const b = r.json || {};
+    const reply = String(b.reply_ar || "").trim();
+    const meaningful = reply !== "تمام." && (/ريال/.test(reply) || /لا يوجد دخل/.test(reply));
+    record(
+      "marketing_revenue_deterministic",
+      r.status === 200 && b.ok === true && b.model_calls === 0 && meaningful && !leaks(r.text),
+      "model_calls=" + b.model_calls,
+    );
+  }
+
   // 11. No automation rule exists/enabled on staging.
   {
     const r = await assistant({ invoke_tool: { name: "get_automation_status", arguments: {} } });
