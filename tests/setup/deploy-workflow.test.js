@@ -152,7 +152,7 @@ describe("staging smoke script safety", () => {
       "cors_assistant_preflight_allowed", "cors_assistant_preflight_denied", "cors_payment_preflight_allowed",
       "setup_status_rejects_bad_auth", "synthetic_workspace_created", "setup_status_booleans",
       "deepseek_real_grounded_read", "assistant_thread_persisted", "booking_prepared",
-      "booking_confirmed_created", "booking_exactly_one", "booking_cancelled",
+      "booking_confirmed_created", "booking_save_echo_verified", "booking_exactly_one", "booking_cancelled",
       "agent_reported_transcript_exact",
       "automation_rules_all_disabled", "payment_webhook_fails_closed", "autopilot_gated",
     ]) {

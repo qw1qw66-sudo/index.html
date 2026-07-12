@@ -27,6 +27,7 @@ const ALL_CODES = [
   "WORKSPACE_NOT_FOUND",
   "THREAD_NOT_FOUND",
   "BOOKING_ID_MISSING",
+  "BOOKING_ID_CONFLICT",
   // invalid_input
   "INVALID_DATE",
   "PAST_DATE",
@@ -57,6 +58,7 @@ const ALL_CODES = [
   // unavailable
   "NETWORK",
   "SAVE_FAILED",
+  "SAVE_VERIFICATION_FAILED",
   "READ_FAILED",
   "PREPARE_FAILED",
   "CONSUME_FAILED",

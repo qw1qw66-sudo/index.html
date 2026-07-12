@@ -32,6 +32,16 @@ function makeDeps() {
       if (error) throw { code: (error as { code?: string }).code ?? "INSERT_FAILED" };
       return data;
     },
+    async findWebhookEvent(provider: string, providerEventId: string) {
+      const { data, error } = await supabase
+        .from("payment_webhook_events")
+        .select("id, event_type, processing_status")
+        .eq("provider", provider)
+        .eq("provider_event_id", providerEventId)
+        .maybeSingle();
+      if (error) throw { code: (error as { code?: string }).code ?? "EVENT_READ_FAILED" };
+      return data ?? null;
+    },
     async findOrderByProviderRef(provider: string, providerOrderId: string) {
       const { data } = await supabase
         .from("payment_orders")
@@ -44,7 +54,7 @@ function makeDeps() {
     async findTxByProviderRef(provider: string, providerTxnId: string) {
       const { data } = await supabase
         .from("payment_transactions")
-        .select("id, status")
+        .select("id, status, transaction_type, amount_halalas")
         .eq("provider", provider)
         .eq("provider_transaction_id", providerTxnId)
         .maybeSingle();
@@ -55,16 +65,28 @@ function makeDeps() {
       if (error) throw { code: (error as { code?: string }).code ?? "INSERT_FAILED" };
     },
     async updateOrderStatus(orderId: string, from: string, to: string) {
-      await supabase.from("payment_orders").update({ status: to }).eq("id", orderId).eq("status", from);
+      const { data, error } = await supabase
+        .from("payment_orders")
+        .update({ status: to })
+        .eq("id", orderId)
+        .eq("status", from)
+        .select("id");
+      if (error) throw { code: (error as { code?: string }).code ?? "ORDER_UPDATE_FAILED" };
+      if (!data || data.length !== 1) throw { code: "ORDER_UPDATE_ROW_MISMATCH" };
     },
     async insertAuditFlag(row: Record<string, unknown>) {
-      await supabase.from("payment_audit_log").insert(row);
+      const { error } = await supabase.from("payment_audit_log").insert(row);
+      if (error) throw { code: (error as { code?: string }).code ?? "AUDIT_WRITE_FAILED" };
     },
     async markEventProcessed(eventId: string, status: string, errorMessage: string | null) {
-      await supabase
+      const { data, error } = await supabase
         .from("payment_webhook_events")
         .update({ processing_status: status, processed_at: new Date().toISOString(), error_message: errorMessage })
-        .eq("id", eventId);
+        .eq("id", eventId)
+        .eq("processing_status", "received")
+        .select("id");
+      if (error) throw { code: (error as { code?: string }).code ?? "EVENT_FINALIZE_FAILED" };
+      if (!data || data.length !== 1) throw { code: "EVENT_FINALIZE_ROW_MISMATCH" };
     },
   };
 }

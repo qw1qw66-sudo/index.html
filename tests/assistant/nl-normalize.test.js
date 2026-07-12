@@ -181,12 +181,21 @@ describe('parseDateExpression', () => {
     expect(parseDateExpression('2026-08-15', TODAY)).toEqual({ date: '2026-08-15', confidence: 'high' });
     expect(parseDateExpression('15-08-2026', TODAY)).toEqual({ date: '2026-08-15', confidence: 'high' });
     expect(parseDateExpression('15/08/2026', TODAY)).toEqual({ date: '2026-08-15', confidence: 'high' });
+    // Phone keyboards and copied option text produce several Unicode dash
+    // characters. Date and time parsing must fold the same complete set.
+    expect(parseDateExpression('15‑08‑2026', TODAY)).toEqual({ date: '2026-08-15', confidence: 'high' });
+    expect(parseDateExpression('2026−08−15', TODAY)).toEqual({ date: '2026-08-15', confidence: 'high' });
+    expect(parseTimeExpression('07:00‑12:00')).toEqual({ start: '07:00', end: '12:00', wraps_next_day: false, confidence: 'high' });
   });
 
   it('rolls no-year DD/MM into next year when already past', () => {
     expect(parseDateExpression('15/08', '2026-12-20')).toEqual({ date: '2027-08-15', confidence: 'medium' });
     expect(parseDateExpression('15/08', TODAY)).toEqual({ date: '2026-08-15', confidence: 'medium' });
     expect(parseDateExpression('15-08', TODAY)).toEqual({ date: '2026-08-15', confidence: 'medium' });
+    // A short pair where both sides are valid hours is time, not a silently
+    // invented day/month. Slash remains the unambiguous short-date form.
+    expect(parseDateExpression('7-5', TODAY)).toBeNull();
+    expect(parseTimeExpression('7-5')).toEqual({ start: '19:00', end: '05:00', wraps_next_day: true, confidence: 'medium' });
   });
 
   it('rejects impossible calendar dates', () => {

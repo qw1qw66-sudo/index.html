@@ -235,7 +235,9 @@ describe("booking agent frontend (structured card + safe errors)", () => {
     expect(html).toContain('id="refreshBookingsButton"');
     // Called after a successful assistant confirm and a session restore.
     const confirmRegion = jsRegion("async function assistantConfirm", "async function assistantDraftAction");
-    expect(confirmRegion).toContain("refreshFromCloud({ quiet: true })");
+    expect(confirmRegion).toContain("await syncAssistantBookingResult(body.result)");
+    expect(confirmRegion).toContain("if (bookingConfirm && dirty)");
+    expect(html).toContain("function revealBooking");
     const restoreRegion = jsRegion("function restoreSessionFromStorage", "function readCredentials");
     expect(restoreRegion).toContain("if (!restoredDirty) refreshFromCloud({ quiet: true })");
   });

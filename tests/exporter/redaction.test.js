@@ -88,8 +88,15 @@ d("8. public Excel export is PII-free", () => {
       "import sys,zipfile;z=zipfile.ZipFile(sys.argv[1]);" +
       "print('\\n'.join(z.read(n).decode('utf-8','replace') for n in z.namelist() if n.endswith('.xml')))",
       xlsxPath]).toString();
-    allXml = listing;
-    sharedStrings = listing;
+    // openpyxl may serialize Arabic as literal UTF-8 or numeric XML entities
+    // depending on its version. Decode numeric entities before both the PII
+    // scan and the booked-marker assertion so the test checks workbook text,
+    // not one serializer representation.
+    const decoded = listing
+      .replace(/&#x([0-9a-f]+);/gi, (_m, hex) => String.fromCodePoint(parseInt(hex, 16)))
+      .replace(/&#(\d+);/g, (_m, dec) => String.fromCodePoint(Number(dec)));
+    allXml = decoded;
+    sharedStrings = decoded;
   });
 
   it("contains no Saudi mobile-number patterns", () => {

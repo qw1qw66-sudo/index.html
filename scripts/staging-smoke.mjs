@@ -233,7 +233,7 @@ async function main() {
   // 9. Confirmed booking create through the real contracts (staging only).
   let newBookingId = null;
   {
-    const prep = await assistant({ invoke_tool: { name: "prepare_booking_create", arguments: { customer_name: "حجز تجريبي", chalet_name: "تولوم", booking_date: RIYADH_TOMORROW, period_label: "المسائية", total: 400, guests: 2 } } });
+    const prep = await assistant({ invoke_tool: { name: "prepare_booking_create", arguments: { customer_name: "مهره اختبار", chalet_name: "تولوم", booking_date: RIYADH_TOMORROW, period_label: "المسائية", total: 400, guests: 2 } } });
     const p = prep.json || {};
     const prepared = prep.status === 200 && p.kind === "prepared_action" && p.action_id && p.confirmation_token && String(p.summary_ar || "").includes("شاليه تولوم") && String(p.summary_ar || "").includes("مسائي");
     record("booking_prepared", Boolean(prepared), prep.status + (p.error ? ":" + p.error : ""));
@@ -242,9 +242,18 @@ async function main() {
       const c = conf.json || {};
       newBookingId = c.result && c.result.booking_id;
       record("booking_confirmed_created", conf.status === 200 && c.ok === true && c.result && c.result.action === "booking_created", conf.status + (c.error ? ":" + c.error : ""));
+      const projection = c.result && c.result.booking;
+      const projectionOk = projection && projection.id === newBookingId &&
+        projection.customer_name === "مهره اختبار" &&
+        projection.booking_date === RIYADH_TOMORROW &&
+        projection.status === "confirmed" &&
+        projection.total === 400 && projection.paid === 0;
+      record("booking_save_echo_verified", Boolean(projectionOk), "projection=" + Boolean(projection));
       const listB = await assistant({ invoke_tool: { name: "list_bookings", arguments: { from: RIYADH_TOMORROW, to: RIYADH_TOMORROW } } });
-      const n = listB.json && listB.json.result && Array.isArray(listB.json.result.bookings) ? listB.json.result.bookings.length : -1;
-      record("booking_exactly_one", n === 1, "count=" + n);
+      const listed = listB.json && listB.json.result && Array.isArray(listB.json.result.bookings) ? listB.json.result.bookings : null;
+      const n = listed ? listed.length : -1;
+      const visible = listed && listed.some((b) => String(b.id) === String(newBookingId) && b.customer_name === "مهره اختبار" && b.booking_date === RIYADH_TOMORROW && b.status === "confirmed");
+      record("booking_exactly_one", n === 1 && visible, "count=" + n + ",visible=" + Boolean(visible));
 
       // 9b. REPLAY the exact same confirmation (double-tap / retry): the server
       // must return the stored outcome (replayed) and NEVER create a second
@@ -264,7 +273,8 @@ async function main() {
     if (prep.status === 200 && p.action_id) {
       const conf = await assistant({ invoke_tool: { name: "confirm_booking_cancel", arguments: { action_id: p.action_id, confirmation_token: p.confirmation_token } } });
       const c = conf.json || {};
-      record("booking_cancelled", conf.status === 200 && c.ok === true && c.result && c.result.action === "booking_cancelled", conf.status + (c.error ? ":" + c.error : ""));
+      const cancelProjection = c.result && c.result.booking;
+      record("booking_cancelled", conf.status === 200 && c.ok === true && c.result && c.result.action === "booking_cancelled" && cancelProjection && cancelProjection.id === newBookingId && cancelProjection.status === "cancelled", conf.status + (c.error ? ":" + c.error : ""));
     } else {
       record("booking_cancelled", false, prep.status + ":" + (p.error || "PREPARE_FAILED"));
     }
