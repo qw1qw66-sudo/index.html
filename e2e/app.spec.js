@@ -372,8 +372,170 @@ test('assistant: a prepared action renders a confirmation card (still gated)', a
   await page.locator('#assistantInput').fill('جهز حجز');
   await page.locator('[data-action="assistant-send"]').click();
   await expect(page.locator('#assistantActions .action-card')).toHaveCount(1);
-  await expect(page.locator('#assistantActions')).toContainText('إجراء مُجهّز');
+  await expect(page.locator('#assistantActions')).toContainText('حجز جديد');
   await expect(page.locator('#assistantActions [data-action="assistant-confirm"]')).toBeVisible();
+});
+
+// A full structured card as the server now sends it (card rows + buttons).
+const BOOKING_CARD_BODY = {
+  ok: true,
+  thread_id: 'th-1',
+  reply_ar: 'جهّزت الحجز — راجع البطاقة ثم اضغط حفظ الحجز.',
+  model_calls: 0,
+  tool_results: [
+    {
+      kind: 'prepared_action',
+      ok: true,
+      action_id: 'act-9',
+      confirmation_token: 'tok-live',
+      confirm_tool: 'confirm_booking_create',
+      summary_ar: 'تجهيز حجز جديد.',
+      card: {
+        title: 'حجز جديد',
+        rows: [
+          { k: 'العميل', v: 'علي تجربة', ltr: false },
+          { k: 'الجوال', v: '05••••4567', ltr: true },
+          { k: 'الشاليه', v: 'شاليه تولوم', ltr: false },
+          { k: 'التاريخ', v: '13-07-2026', ltr: true },
+          { k: 'الفترة', v: '19:00 → 05:00', ltr: true },
+          { k: 'الضيوف', v: '4', ltr: true },
+          { k: 'الإجمالي', v: '500 ريال', ltr: true },
+          { k: 'الملاحظات', v: 'لا توجد', ltr: false },
+        ],
+      },
+    },
+  ],
+};
+
+test('booking card: structured rows, LTR values, three buttons, dark theme, above the nav (390x844)', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockRpc(page);
+  await routeAssistant(page, BOOKING_CARD_BODY);
+  await page.goto('/');
+  await create(page);
+  // Dark theme must render the card too.
+  await page.locator('[data-tab="settings"]').click();
+  await page.locator('#themeDarkButton').click();
+  await page.locator('[data-tab="assistant"]').click();
+  await page.locator('#assistantInput').fill('احجز تولوم بكرة بالليل لأربعة بخمسمئة، العميل علي تجربة');
+  await page.locator('[data-action="assistant-send"]').click();
+  const card = page.locator('#assistantActions .action-card');
+  await expect(card).toHaveCount(1);
+  await expect(card).toContainText('حجز جديد');
+  await expect(card).toContainText('علي تجربة');
+  // Date/time/phone/amount live in .ltr wrappers.
+  await expect(card.locator('.booking-v.ltr')).toHaveCount(5);
+  await expect(card.locator('[data-action="assistant-confirm"]')).toHaveText('حفظ الحجز');
+  await expect(card.locator('[data-action="assistant-edit"]')).toBeVisible();
+  await expect(card.locator('[data-action="assistant-cancel-draft"]')).toBeVisible();
+  // No raw ids/tokens/codes anywhere in the visible card.
+  const text = await card.innerText();
+  expect(text).not.toMatch(/act-9|tok-live|[A-Z]{2,}_[A-Z]/);
+  // The buttons are REACHABLE above the fixed bottom nav: after scrolling
+  // them into view they must sit fully above it (the page reserves space).
+  const saveBtn = card.locator('[data-action="assistant-confirm"]');
+  await saveBtn.scrollIntoViewIfNeeded();
+  await page.evaluate(() => window.scrollBy(0, 200)); // push to the very end
+  const btnBox = await saveBtn.boundingBox();
+  const navBox = await page.locator('.bottom-nav').boundingBox();
+  expect(btnBox.y + btnBox.height).toBeLessThanOrEqual(navBox.y + 1);
+  // No horizontal overflow in dark RTL mobile.
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+  );
+  expect(overflow).toBeLessThanOrEqual(1);
+});
+
+test('typed «سجل» flashes the card and never fires a request; double-tap confirms once', async ({ page }) => {
+  await mockRpc(page);
+  let assistantCalls = 0;
+  let confirmCalls = 0;
+  await page.route('**/functions/v1/chalet-assistant', async (route) => {
+    assistantCalls++;
+    const body = JSON.parse(route.request().postData() || '{}');
+    if (body.invoke_tool && String(body.invoke_tool.name).startsWith('confirm_')) {
+      confirmCalls++;
+      // Slow response so a double-tap window exists.
+      await new Promise((r) => setTimeout(r, 400));
+      return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true, kind: 'completed_action', tool: body.invoke_tool.name, result: { action: 'booking_created', booking_id: 'bk-1' } }) });
+    }
+    return route.fulfill({ contentType: 'application/json', body: JSON.stringify(BOOKING_CARD_BODY) });
+  });
+  await page.goto('/');
+  await create(page);
+  await page.locator('[data-tab="assistant"]').click();
+  await page.locator('#assistantInput').fill('احجز تولوم');
+  await page.locator('[data-action="assistant-send"]').click();
+  await expect(page.locator('#assistantActions .action-card')).toHaveCount(1);
+  const callsAfterCard = assistantCalls;
+  // «سجل» -> client-side reminder only, no network call, no execution.
+  await page.locator('#assistantInput').fill('سجل');
+  await page.locator('[data-action="assistant-send"]').click();
+  await expect(page.locator('#assistantLog')).toContainText('راجع البطاقة واضغط حفظ الحجز');
+  expect(assistantCalls).toBe(callsAfterCard);
+  // Double-tap the save button: exactly ONE confirm request.
+  const save = page.locator('[data-action="assistant-confirm"]');
+  await save.click();
+  await save.click({ force: true }).catch(() => {});
+  await expect(page.locator('#assistantLog')).toContainText('تم إنشاء الحجز بنجاح');
+  expect(confirmCalls).toBe(1);
+});
+
+test('تعديل keeps the draft fields; إلغاء cancels safely (server-driven)', async ({ page }) => {
+  await mockRpc(page);
+  await page.route('**/functions/v1/chalet-assistant', async (route) => {
+    const body = JSON.parse(route.request().postData() || '{}');
+    if (body.draft_action === 'reopen') {
+      return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true, reply_ar: 'تمام — ماذا تريد تعديله؟ اكتب التغيير فقط.' }) });
+    }
+    if (body.draft_action === 'cancel') {
+      return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true, draft_cancelled: true, reply_ar: 'تم الإلغاء، لم يُحفظ شيء.' }) });
+    }
+    return route.fulfill({ contentType: 'application/json', body: JSON.stringify(BOOKING_CARD_BODY) });
+  });
+  await page.goto('/');
+  await create(page);
+  await page.locator('[data-tab="assistant"]').click();
+  await page.locator('#assistantInput').fill('احجز تولوم');
+  await page.locator('[data-action="assistant-send"]').click();
+  await expect(page.locator('#assistantActions .action-card')).toHaveCount(1);
+  await page.locator('[data-action="assistant-edit"]').click();
+  await expect(page.locator('#assistantLog')).toContainText('ماذا تريد تعديله');
+  // The retired card leaves with its dead button; the edit yields a NEW card.
+  await expect(page.locator('#assistantActions .action-card')).toHaveCount(0);
+  await page.locator('#assistantInput').fill('الضيوف ستة');
+  await page.locator('[data-action="assistant-send"]').click();
+  await expect(page.locator('#assistantActions .action-card')).toHaveCount(1);
+  // إلغاء dismisses and closes the draft safely.
+  await page.locator('[data-action="assistant-cancel-draft"]').click();
+  await expect(page.locator('#assistantActions .action-card')).toHaveCount(0);
+  await expect(page.locator('#assistantLog')).toContainText('تم الإلغاء، لم يُحفظ شيء.');
+});
+
+test('pending booking card is recovered after a reload (rotated token, nothing in storage)', async ({ page }) => {
+  await mockRpc(page);
+  await page.route('**/functions/v1/chalet-setup-status', (route) =>
+    route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true, assistant_function_deployed: true, deepseek_configured: true, assistant_confirm_secret_configured: true, autopilot_secret_configured: true, whatsapp_configured: false, app_env: 'staging' }) }),
+  );
+  await page.route('**/functions/v1/chalet-assistant', async (route) => {
+    const body = JSON.parse(route.request().postData() || '{}');
+    if (body.pending_action === 'latest') {
+      return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true, pending: { ...BOOKING_CARD_BODY.tool_results[0], confirmation_token: 'tok-rotated', thread_id: 'th-1' } }) });
+    }
+    return route.fulfill({ contentType: 'application/json', body: JSON.stringify(BOOKING_CARD_BODY) });
+  });
+  await page.goto('/');
+  await create(page);
+  // Reload: the session snapshot restores login; the pending card returns from
+  // the SERVER (with a rotated token) — no token ever sits in storage.
+  await page.reload();
+  await expect(page.locator('#appShell')).toBeVisible();
+  await page.locator('[data-tab="assistant"]').click();
+  await expect(page.locator('#assistantActions .action-card')).toHaveCount(1);
+  await expect(page.locator('#assistantLog')).toContainText('بانتظار تأكيدك');
+  const stored = await page.evaluate(() => JSON.stringify([Object.entries(localStorage), Object.entries(sessionStorage)]));
+  expect(stored).not.toContain('tok-rotated');
+  expect(stored).not.toContain('tok-live');
 });
 
 test('mobile setup page: iPhone-sized, button-only, opens official pages, checks connection', async ({ page }) => {

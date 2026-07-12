@@ -23,7 +23,7 @@
 
 import { riyalsNumberToHalalas } from "../ledger-core.mjs";
 import { resolveOutbound, detectMode } from "./whatsapp.mjs";
-import { isSlotAvailable } from "./availability.mjs";
+import { isSlotAvailable, isPeriodBookable } from "./availability.mjs";
 
 const ALLOWED = new Set([
   "confirm_booking_create",
@@ -46,21 +46,49 @@ function findBooking(doc, id) {
 
 // Validate a RESULTING booking against the authoritative document. Used by both
 // create and update so a write can never persist an invalid booking (unknown/
-// inactive chalet, period not belonging to that chalet, bad date, over-capacity
-// guests, non-finite/negative or sub-halala total, or a blank customer name).
-function validateResultingBooking(doc, booking) {
+// inactive chalet, period not belonging to that chalet or with incomplete
+// times, bad date, over-capacity guests, non-finite/negative or sub-halala
+// total, an unintended zero total, a malformed phone, or a blank name).
+// opts: { allowZeroTotal, validatePhone }
+const BOOKING_STATUSES = new Set(["confirmed", "pending", "cancelled", "completed"]);
+function validPhoneShape(raw) {
+  // Saudi mobile, mirroring the handler's extractBookingPhone normalization.
+  let digits = String(raw || "").replace(/[\s()-]/g, "").replace(/\D/g, "");
+  if (digits.startsWith("00966")) digits = digits.slice(5);
+  else if (digits.startsWith("966")) digits = digits.slice(3);
+  if (digits.startsWith("5") && digits.length === 9) digits = "0" + digits;
+  return /^05\d{8}$/.test(digits);
+}
+function validateResultingBooking(doc, booking, opts = {}) {
   const chalet = findChalet(doc, String(booking.chalet_id || ""));
   if (!chalet) return { ok: false, error: "CHALET_NOT_FOUND" };
-  if (!findPeriod(chalet, String(booking.period_id || ""))) return { ok: false, error: "PERIOD_NOT_FOUND" };
+  const period = findPeriod(chalet, String(booking.period_id || ""));
+  if (!period) return { ok: false, error: "PERIOD_NOT_FOUND" };
+  // Fail CLOSED on incomplete/malformed period times for any NEW write —
+  // availability cannot be proven when the interval cannot be computed.
+  if (!isPeriodBookable(period).ok) return { ok: false, error: "PERIOD_TIME_INCOMPLETE" };
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(booking.booking_date || ""))) return { ok: false, error: "INVALID_DATE" };
   if (!String(booking.customer_name || "").trim()) return { ok: false, error: "CUSTOMER_NAME_REQUIRED" };
+  if (!BOOKING_STATUSES.has(String(booking.status || ""))) return { ok: false, error: "INVALID_STATUS" };
   const guests = Number(booking.guests);
-  if (!Number.isInteger(guests) || guests < 1) return { ok: false, error: "INVALID_GUESTS" };
+  if (!Number.isInteger(guests) || guests < 1) {
+    // An update that does NOT touch guests must not newly reject a legacy
+    // booking that predates the guests field; NEW bookings always require it.
+    if (!(opts.allowMissingGuests && booking.guests === undefined)) {
+      return { ok: false, error: "INVALID_GUESTS" };
+    }
+  }
   const capacity = Number(chalet.capacity) || 0; // 0 => capacity not set (no cap)
   if (capacity > 0 && guests > capacity) return { ok: false, error: "GUESTS_EXCEED_CAPACITY" };
   const total = Number(booking.total);
   const halalas = riyalsNumberToHalalas(total);
   if (!halalas.ok) return { ok: false, error: "INVALID_TOTAL" };
+  // A zero price must be an explicit owner decision («الحجز مجاني») — never an
+  // omitted or unparsed amount silently becoming free.
+  if (total === 0 && !opts.allowZeroTotal) return { ok: false, error: "INVALID_TOTAL" };
+  if (opts.validatePhone && String(booking.customer_phone || "").trim() && !validPhoneShape(booking.customer_phone)) {
+    return { ok: false, error: "INVALID_PHONE" };
+  }
   return { ok: true };
 }
 
@@ -127,8 +155,10 @@ async function bookingCreate(wsKey, pin, args, deps) {
     chalet_id: chalet.id,
     booking_date: String(args.booking_date || ""),
     period_id: period.id,
-    guests: Math.max(1, Number(args.guests) || 1),
-    total: Number(args.total) || 0,
+    // NO silent defaults: a missing/invalid guests or total fails validation
+    // below (INVALID_GUESTS / INVALID_TOTAL) instead of becoming 1 / 0.
+    guests: Number(args.guests),
+    total: Number(args.total),
     paid: 0,
     status: "confirmed",
     notes: String(args.notes || "").trim(),
@@ -139,7 +169,10 @@ async function bookingCreate(wsKey, pin, args, deps) {
     created_at: now,
     updated_at: now,
   };
-  const valid = validateResultingBooking(doc, booking);
+  const valid = validateResultingBooking(doc, booking, {
+    allowZeroTotal: args.total_is_free === true,
+    validatePhone: true,
+  });
   if (!valid.ok) return valid;
   // Overlap-aware conflict check (mirrors the app's findConflict time rule).
   if (!isSlotAvailable(doc, booking.chalet_id, booking.booking_date, period)) {
@@ -171,7 +204,7 @@ async function bookingUpdate(wsKey, pin, args, deps) {
   if (args.chalet_id !== undefined) patch.chalet_id = String(args.chalet_id);
   if (args.period_id !== undefined) patch.period_id = String(args.period_id);
   if (args.booking_date !== undefined) patch.booking_date = String(args.booking_date);
-  if (args.guests !== undefined) patch.guests = Math.max(1, Number(args.guests) || 1);
+  if (args.guests !== undefined) patch.guests = Number(args.guests); // invalid => INVALID_GUESTS below
   if (args.total !== undefined) patch.total = Number(args.total);
   if (args.notes !== undefined) patch.notes = String(args.notes).trim();
 
@@ -180,7 +213,14 @@ async function bookingUpdate(wsKey, pin, args, deps) {
   // chalet, a period that is not that chalet's, an over-capacity guest count,
   // or an invalid total.
   const resulting = { ...existing, ...patch, id: existing.id, paid: existing.paid, updated_at: new Date().toISOString() };
-  const valid = validateResultingBooking(doc, resulting);
+  const valid = validateResultingBooking(doc, resulting, {
+    // An untouched legacy zero-total stays editable; a NEW zero total needs
+    // the explicit free flag. Phones are validated only when being changed,
+    // and a legacy row without guests stays editable while guests untouched.
+    allowZeroTotal: args.total === undefined ? true : args.total_is_free === true,
+    validatePhone: args.customer_phone !== undefined,
+    allowMissingGuests: args.guests === undefined,
+  });
   if (!valid.ok) return valid;
   const chalet = findChalet(doc, String(resulting.chalet_id));
   const period = findPeriod(chalet, String(resulting.period_id));

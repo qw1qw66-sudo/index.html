@@ -142,7 +142,7 @@ async function confirm(deps, wsKey, pin, confirmTool, actionId, token) {
 describe("confirmed booking executors (real dispatcher)", () => {
   it("1. confirmed booking create succeeds and writes the booking via v2", async () => {
     const { deps, ws } = makeHarness();
-    const prep = await prepare(deps, "WSA", "123456", "prepare_booking_create", { customer_name: "علي", chalet_id: "c1", booking_date: "2099-06-01", period_id: "p1", total: 900 });
+    const prep = await prepare(deps, "WSA", "123456", "prepare_booking_create", { customer_name: "علي", chalet_id: "c1", booking_date: "2099-06-01", period_id: "p1", guests: 2, total: 900 });
     const { body } = await confirm(deps, "WSA", "123456", "confirm_booking_create", prep.action_id, prep.confirmation_token);
     expect(body.ok).toBe(true);
     expect(body.result.action).toBe("booking_created");
@@ -154,7 +154,7 @@ describe("confirmed booking executors (real dispatcher)", () => {
   it("2. booking create that would conflict fails; no partial booking", async () => {
     const existing = { id: "b0", customer_name: "سابق", chalet_id: "c1", booking_date: "2099-06-01", period_id: "p1", total: 500, paid: 0, status: "confirmed", deleted_at: null };
     const { deps, ws } = makeHarness({ workspaces: { WSA: { pin: "123456", doc: docWith([existing]), revision: 1 } } });
-    const prep = await prepare(deps, "WSA", "123456", "prepare_booking_create", { customer_name: "علي", chalet_id: "c1", booking_date: "2099-06-01", period_id: "p1", total: 900 });
+    const prep = await prepare(deps, "WSA", "123456", "prepare_booking_create", { customer_name: "علي", chalet_id: "c1", booking_date: "2099-06-01", period_id: "p1", guests: 2, total: 900 });
     const { body } = await confirm(deps, "WSA", "123456", "confirm_booking_create", prep.action_id, prep.confirmation_token);
     expect(body.ok).toBe(false);
     expect(String(body.error)).toContain("BOOKING_CONFLICT");
@@ -163,7 +163,7 @@ describe("confirmed booking executors (real dispatcher)", () => {
 
   it("3. stale revision fails the create safely", async () => {
     const { deps, ws } = makeHarness();
-    const prep = await prepare(deps, "WSA", "123456", "prepare_booking_create", { customer_name: "علي", chalet_id: "c1", booking_date: "2099-06-02", period_id: "p1", total: 900 });
+    const prep = await prepare(deps, "WSA", "123456", "prepare_booking_create", { customer_name: "علي", chalet_id: "c1", booking_date: "2099-06-02", period_id: "p1", guests: 2, total: 900 });
     ws.WSA.revision += 1; // someone else saved in between
     const { body } = await confirm(deps, "WSA", "123456", "confirm_booking_create", prep.action_id, prep.confirmation_token);
     // consume's revision check OR v2's revision check rejects it.
@@ -263,7 +263,7 @@ describe("cross-cutting safety (real dispatcher)", () => {
   it("9. cross-workspace confirmation cannot execute", async () => {
     const workspaces = { WSA: { pin: "111111", doc: docWith(), revision: 1 }, WSB: { pin: "222222", doc: docWith(), revision: 1 } };
     const { deps } = makeHarness({ workspaces });
-    const prep = await prepare(deps, "WSA", "111111", "prepare_booking_create", { customer_name: "x", chalet_id: "c1", booking_date: "2099-09-01", period_id: "p1", total: 100 });
+    const prep = await prepare(deps, "WSA", "111111", "prepare_booking_create", { customer_name: "x", chalet_id: "c1", booking_date: "2099-09-01", period_id: "p1", guests: 1, total: 100 });
     const res = await handleAssistant(req({ workspace_key: "WSB", access_pin: "222222", invoke_tool: { name: "confirm_booking_create", arguments: { action_id: prep.action_id, confirmation_token: prep.confirmation_token } } }), deps);
     expect((await res.json()).error).toBe("ACTION_NOT_FOUND");
     expect(workspaces.WSA.doc.bookings).toHaveLength(0);
@@ -271,7 +271,7 @@ describe("cross-cutting safety (real dispatcher)", () => {
 
   it("10. wrong PIN cannot confirm", async () => {
     const { deps } = makeHarness();
-    const prep = await prepare(deps, "WSA", "123456", "prepare_booking_create", { customer_name: "x", chalet_id: "c1", booking_date: "2099-09-02", period_id: "p1", total: 100 });
+    const prep = await prepare(deps, "WSA", "123456", "prepare_booking_create", { customer_name: "x", chalet_id: "c1", booking_date: "2099-09-02", period_id: "p1", guests: 1, total: 100 });
     const res = await handleAssistant(req({ workspace_key: "WSA", access_pin: "wrong", invoke_tool: { name: "confirm_booking_create", arguments: { action_id: prep.action_id, confirmation_token: prep.confirmation_token } } }), deps);
     expect(res.status).toBe(401);
   });
@@ -303,7 +303,7 @@ describe("cross-cutting safety (real dispatcher)", () => {
 
   it("20. the confirm secret / PIN never appears in a response", async () => {
     const { deps } = makeHarness();
-    const prep = await prepare(deps, "WSA", "123456", "prepare_booking_create", { customer_name: "x", chalet_id: "c1", booking_date: "2099-09-03", period_id: "p1", total: 100 });
+    const prep = await prepare(deps, "WSA", "123456", "prepare_booking_create", { customer_name: "x", chalet_id: "c1", booking_date: "2099-09-03", period_id: "p1", guests: 1, total: 100 });
     const res = await handleAssistant(req({ workspace_key: "WSA", access_pin: "123456", invoke_tool: { name: "confirm_booking_create", arguments: { action_id: prep.action_id, confirmation_token: prep.confirmation_token } } }), deps);
     const text = await res.text();
     expect(text).not.toContain(SECRET);
@@ -312,7 +312,7 @@ describe("cross-cutting safety (real dispatcher)", () => {
 
   it("19. action status becomes succeeded / failed consistently", async () => {
     const { deps, actions } = makeHarness();
-    const prep = await prepare(deps, "WSA", "123456", "prepare_booking_create", { customer_name: "x", chalet_id: "c1", booking_date: "2099-09-04", period_id: "p1", total: 100 });
+    const prep = await prepare(deps, "WSA", "123456", "prepare_booking_create", { customer_name: "x", chalet_id: "c1", booking_date: "2099-09-04", period_id: "p1", guests: 1, total: 100 });
     await confirm(deps, "WSA", "123456", "confirm_booking_create", prep.action_id, prep.confirmation_token);
     expect(actions.get(prep.action_id).status).toBe("succeeded");
   });

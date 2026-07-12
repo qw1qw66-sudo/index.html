@@ -124,6 +124,12 @@ export async function callDeepSeek({ env, systemPrompt, history, fetchImpl }) {
     ok: true,
     reply: typeof parsed.reply === "string" ? parsed.reply : "",
     toolCalls: Array.isArray(parsed.tool_calls) ? parsed.tool_calls : [],
+    // Optional structured extraction of booking WORDING (never ids) — the
+    // deterministic planner merges it into the server-side draft.
+    bookingFields:
+      parsed.booking_fields && typeof parsed.booking_fields === "object" && !Array.isArray(parsed.booking_fields)
+        ? parsed.booking_fields
+        : null,
     usage: { prompt_tokens: usage.prompt_tokens ?? null, completion_tokens: usage.completion_tokens ?? null },
     model: cfg.model,
   };

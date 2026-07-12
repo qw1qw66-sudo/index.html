@@ -135,6 +135,56 @@ describe("setup status states are distinct and honest", () => {
   });
 });
 
+describe("booking agent frontend (structured card + safe errors)", () => {
+  it("renders the structured card rows with LTR isolation and the three buttons", () => {
+    const region = jsRegion("const ASSISTANT_CONFIRM_LABELS", "function renderToolResults");
+    expect(region).toContain("booking-rows");
+    expect(region).toContain('data-action="assistant-confirm"');
+    expect(region).toContain('data-action="assistant-edit"');
+    expect(region).toContain('data-action="assistant-cancel-draft"');
+    expect(region).toContain("حفظ الحجز");
+    expect(region).toContain("تعديل");
+    expect(region).toContain("إلغاء");
+    expect(region).toContain('role", "group'.replace('", "', '", "')); // role=group set via setAttribute
+    // No raw action id/token rendered as text content.
+    expect(region).not.toContain("confirmation_token +");
+  });
+
+  it("never concatenates body.error into the DOM anywhere", () => {
+    expect(html).not.toMatch(/\+\s*\(?\s*body\.error/);
+    expect(html).not.toMatch(/\+\s*\(?\s*r\.error/);
+    expect(html).toContain("function assistantSafeError");
+  });
+
+  it("typed confirmation words re-display the card client-side (never execute)", () => {
+    expect(html).toContain("ASSISTANT_CONFIRM_WORDS");
+    const region = jsRegion("async function assistantSend", "assistantBusy = true");
+    expect(region).toContain("assistantLatestCard()");
+    expect(region).toContain("راجع البطاقة واضغط حفظ الحجز");
+  });
+
+  it("pending work is recovered after login without tokens in storage", () => {
+    expect(html).toContain("assistantRecoverPending");
+    expect(html).toMatch(/pending_action:\s*"latest"/);
+    // Tokens never persisted: no assistantTokens writes to any storage API.
+    expect(html).not.toMatch(/localStorage[^\n]{0,60}assistantTokens/);
+    expect(html).not.toMatch(/sessionStorage[^\n]{0,60}assistantTokens/);
+  });
+
+  it("Settings carries the read-only data-quality report", () => {
+    expect(html).toContain('id="dataQualitySection"');
+    expect(html).toContain("جودة البيانات");
+    expect(html).toContain("renderDataQuality");
+    expect(html).toContain("وقت الفترة غير مكتمل");
+  });
+
+  it("dates display as DD-MM-YYYY inside .ltr and today() is Riyadh-anchored", () => {
+    expect(html).toContain("function formatDateDisplay");
+    expect(html).toMatch(/RIYADH_OFFSET_MS = 3 \* 60 \* 60 \* 1000/);
+    expect(html).toMatch(/<span class="ltr">' \+ esc\(formatDateDisplay\(b\.booking_date\)\)/);
+  });
+});
+
 // ---- Pages artifact: simulate the workflow build (copy + sed) ----
 describe("Pages artifact", () => {
   const FAKE_SHA = "abcdef0123456789abcdef0123456789abcdef01";

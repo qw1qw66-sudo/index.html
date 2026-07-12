@@ -96,7 +96,7 @@ describe("assistant handler: safety rules", () => {
   });
 
   it("a prepare tool creates an action + token but does NOT execute anything", async () => {
-    const deps = makeDeps({ model: { ok: true, reply: "جهزت الحجز", toolCalls: [{ name: "prepare_booking_create", arguments: { customer_name: "علي", chalet_id: "c1", booking_date: "2099-06-01", period_id: "p1" } }] } });
+    const deps = makeDeps({ model: { ok: true, reply: "جهزت الحجز", toolCalls: [{ name: "prepare_booking_create", arguments: { customer_name: "علي", chalet_id: "c1", booking_date: "2099-06-01", period_id: "p1", guests: 2, total: 400 } }] } });
     const res = await handleAssistant(chat({ workspace_key: WS, access_pin: "123456", message: "جهز حجز" }), deps);
     const b = await res.json();
     const prep = b.tool_results[0];
@@ -107,7 +107,7 @@ describe("assistant handler: safety rules", () => {
 
   it("a booking named «تولوم» is bound to authoritative ids before confirmation", async () => {
     const deps = makeDeps({
-      model: { ok: true, reply: "أجهّز الحجز", toolCalls: [{ name: "prepare_booking_create", arguments: { customer_name: "علي", chalet_name: "تولوم", period_label: "المسائية", booking_date: "2099-06-01" } }] },
+      model: { ok: true, reply: "أجهّز الحجز", toolCalls: [{ name: "prepare_booking_create", arguments: { customer_name: "علي", chalet_name: "تولوم", period_label: "المسائية", booking_date: "2099-06-01", guests: 2, total: 400 } }] },
       resolver: (args) => ({ ok: true, args: { ...args, chalet_id: "real-tulum", chalet_name: "شاليه تولوم", period_id: "real-evening", period_label: "مسائي" } }),
     });
     const b = await (await handleAssistant(chat({ workspace_key: WS, access_pin: "123456", message: "جهز حجز في تولوم" }), deps)).json();
@@ -120,7 +120,7 @@ describe("assistant handler: safety rules", () => {
 
   it("an unknown chalet fails closed and creates no pending action", async () => {
     const deps = makeDeps({
-      model: { ok: true, reply: "", toolCalls: [{ name: "prepare_booking_create", arguments: { customer_name: "علي", chalet_name: "غير موجود", period_label: "مسائي", booking_date: "2099-06-01" } }] },
+      model: { ok: true, reply: "", toolCalls: [{ name: "prepare_booking_create", arguments: { customer_name: "علي", chalet_name: "غير موجود", period_label: "مسائي", booking_date: "2099-06-01", guests: 2, total: 400 } }] },
       resolver: () => ({ ok: false, error: "CHALET_NOT_FOUND", reason_ar: "الشاليهات المسجلة: شاليه سكاي، شاليه تولوم." }),
     });
     const b = await (await handleAssistant(chat({ workspace_key: WS, access_pin: "123456", message: "جهز حجز" }), deps)).json();

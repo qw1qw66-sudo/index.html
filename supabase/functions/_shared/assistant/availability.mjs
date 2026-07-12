@@ -26,13 +26,39 @@ export function addDays(dateIso, n) {
   return dt.toISOString().slice(0, 10);
 }
 
+// Canonical HH:mm validation (accepts a 1-digit hour and pads it, fixing the
+// old mjs-vs-SQL "7:00" inconsistency). Times a Date can't parse are invalid.
+export function normalizeTimeHHmm(value) {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(String(value ?? "").trim());
+  if (!m) return null;
+  const h = Number(m[1]), mi = Number(m[2]);
+  if (h < 0 || h > 23 || mi < 0 || mi > 59) return null;
+  return String(h).padStart(2, "0") + ":" + m[2];
+}
+
+// FAIL-CLOSED gate for anything that books: a period is bookable only when
+// both times are valid HH:mm and the interval is not zero-length. Missing or
+// malformed times mean availability CANNOT be proven — «وقت الفترة غير مكتمل».
+export function validatePeriodTimes(period) {
+  const start = normalizeTimeHHmm(period?.start);
+  const end = normalizeTimeHHmm(period?.end);
+  if (!start || !end) return { ok: false, error: "PERIOD_TIME_INCOMPLETE" };
+  if (start === end) return { ok: false, error: "PERIOD_TIME_INCOMPLETE" };
+  return { ok: true, start, end };
+}
+export function isPeriodBookable(period) {
+  return validatePeriodTimes(period);
+}
+
 // Epoch-ms interval for a booking's period on a specific date. null when the
-// period lacks start/end times (cannot reason about overlap — treated as
-// "does not block", mirroring intervalFor returning null).
+// period's times are missing/malformed — callers must FAIL CLOSED on null
+// (unknown time can never prove availability).
 export function periodInterval(period, dateIso) {
-  if (!period || !period.start || !period.end || !/^\d{4}-\d{2}-\d{2}$/.test(String(dateIso))) return null;
-  const s = new Date(`${dateIso}T${period.start}:00Z`).getTime();
-  let e = new Date(`${dateIso}T${period.end}:00Z`).getTime();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(dateIso))) return null;
+  const t = validatePeriodTimes(period);
+  if (!t.ok) return null;
+  const s = new Date(`${dateIso}T${t.start}:00Z`).getTime();
+  let e = new Date(`${dateIso}T${t.end}:00Z`).getTime();
   if (!isFinite(s) || !isFinite(e)) return null;
   if (e <= s) e += 86400000; // wraps past midnight
   return { start: s, end: e };
@@ -55,10 +81,15 @@ function periodsOf(chalet) {
  * Is the (chalet, date, candidatePeriod) slot free of confirmed bookings?
  * Uses time-interval overlap across ALL confirmed bookings of that chalet
  * (so a wrap-past-midnight booking on the prior day is still considered).
+ *
+ * FAIL CLOSED (never assume availability when overlap cannot be calculated):
+ *  - a candidate whose times are incomplete is NOT available;
+ *  - a confirmed booking whose interval cannot be computed BLOCKS the chalet
+ *    for that comparison (the unknown could overlap anything).
  */
 export function isSlotAvailable(doc, chaletId, dateIso, candidatePeriod, { excludeBookingId } = {}) {
   const ci = periodInterval(candidatePeriod, dateIso);
-  if (!ci) return true; // no times => cannot conflict (matches intervalFor null)
+  if (!ci) return false; // incomplete candidate times => cannot prove free
   const chalet = activeChalets(doc).find((c) => String(c.id) === String(chaletId));
   if (!chalet) return true;
   const byId = periodsOf(chalet);
@@ -66,16 +97,18 @@ export function isSlotAvailable(doc, chaletId, dateIso, candidatePeriod, { exclu
     if (b.status !== "confirmed" || String(b.chalet_id) !== String(chaletId)) continue;
     if (excludeBookingId && String(b.id) === String(excludeBookingId)) continue;
     const bi = periodInterval(byId.get(String(b.period_id)), String(b.booking_date));
+    if (!bi) return false; // unknown existing interval => cannot prove free
     if (intervalsOverlap(ci, bi)) return false;
   }
   return true;
 }
 
-/** Available active periods for a chalet on a date (overlap-aware). */
+/** Available active periods for a chalet on a date (overlap-aware). Periods
+ * with incomplete times are excluded up front (they are not bookable). */
 export function availablePeriodsOn(doc, chaletId, dateIso, opts = {}) {
   const chalet = activeChalets(doc).find((c) => String(c.id) === String(chaletId));
   if (!chalet) return { error: "NOT_FOUND" };
-  const periods = (chalet.periods || []).filter((p) => p.active);
+  const periods = (chalet.periods || []).filter((p) => p.active && isPeriodBookable(p).ok);
   const available = periods.filter((p) => isSlotAvailable(doc, chaletId, dateIso, p, opts));
   return { chalet_id: chalet.id, date: dateIso, available };
 }

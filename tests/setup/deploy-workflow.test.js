@@ -79,7 +79,7 @@ describe("deploy-supabase-staging workflow", () => {
 describe("supabase/migrations — single, ordered source of truth", () => {
   const files = readdirSync("supabase/migrations").filter((f) => f.endsWith(".sql")).sort();
 
-  it("contains exactly the baseline + three migrations, in apply order", () => {
+  it("contains exactly the known migration chain, in apply order", () => {
     expect(files).toEqual([
       "20260601000000_shared_workspace_baseline.sql",
       "20260701000001_atomic_workspace_save.sql",
@@ -87,6 +87,8 @@ describe("supabase/migrations — single, ordered source of truth", () => {
       "20260711000003_chalet_assistant.sql",
       "20260711000004_pgcrypto_search_path.sql",
       "20260711000005_payment_reads_volatile.sql",
+      // Booking Agent: server-owned per-thread drafts (additive only).
+      "20260712000006_assistant_booking_drafts.sql",
     ]);
   });
 

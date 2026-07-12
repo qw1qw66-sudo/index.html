@@ -146,6 +146,10 @@
       .page {
         max-width: 1080px;
         margin: auto;
+        /* Reserve space for the FIXED bottom navigation so the last control
+           on any tab (e.g. the booking card's save button) can always scroll
+           fully above it — nothing is ever stuck underneath. */
+        padding-bottom: calc(84px + env(safe-area-inset-bottom));
       }
       .card,
       .item {
@@ -411,6 +415,59 @@
         padding: 12px;
         margin: 8px 0;
         background: var(--card);
+      }
+      /* Structured booking confirmation card: semantic label/value rows.
+         Dates, times, phones and amounts sit inside .ltr so RTL can never
+         reorder them. Extra bottom margin keeps the buttons reachable above
+         the fixed bottom navigation on phones. */
+      .booking-card h4 {
+        margin: 0 0 10px;
+        font-size: 16px;
+      }
+      .booking-rows {
+        display: grid;
+        gap: 6px;
+        margin-bottom: 10px;
+      }
+      .booking-row {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        border-bottom: 1px dashed var(--l2);
+        padding-bottom: 6px;
+      }
+      .booking-k {
+        color: var(--m);
+        font-size: 13px;
+        white-space: nowrap;
+      }
+      .booking-v {
+        font-weight: 600;
+        text-align: left;
+        overflow-wrap: anywhere;
+      }
+      .booking-card-actions {
+        margin-bottom: calc(8px + env(safe-area-inset-bottom));
+      }
+      .booking-card[aria-busy="true"] {
+        opacity: 0.75;
+      }
+      /* Brief highlight when typed «سجل» brings the card back into view. */
+      @keyframes cardFlash {
+        0% { box-shadow: 0 0 0 3px var(--g2); }
+        100% { box-shadow: 0 0 0 0 transparent; }
+      }
+      .card-flash {
+        animation: cardFlash 1.2s ease-out 2;
+      }
+      /* Visually hidden live region for assistive announcements. */
+      .sr-live {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
+        white-space: nowrap;
       }
       .tab-button {
         background: transparent;
@@ -1192,6 +1249,10 @@
             <div class="chat-suggest" id="assistantSuggestions"></div>
             <div id="assistantLog" class="chat-log"></div>
             <div id="assistantActions"></div>
+            <!-- Assistive announcements: the latest bot outcome is mirrored
+                 here so screen readers hear success/failure without focus
+                 changes. Visually hidden. -->
+            <div id="assistantLive" class="sr-live" aria-live="polite"></div>
             <div class="actions">
               <input
                 id="assistantInput"
@@ -1297,6 +1358,18 @@
             </div>
           </div>
           <!-- ========================= HTML: mobile setup (إعداد الربط) ========================= -->
+          <!-- Non-destructive data-quality report: duplicate periods and
+               periods with incomplete times. Read-only — the owner fixes them
+               manually from تبويب الشاليهات; nothing is ever auto-deleted. -->
+          <details class="card section-details" id="dataQualitySection">
+            <summary>جودة البيانات</summary>
+            <p class="muted settings-line">
+              فحص للقراءة فقط: الفترات المكررة والفترات الناقصة الوقت تؤثر على
+              دقة التوفر. عدّلها يدوياً من تبويب الشاليهات — لا يُحذف شيء
+              تلقائياً.
+            </p>
+            <div id="dataQualityReport" class="muted settings-line">—</div>
+          </details>
           <div id="setupCard" class="card setup-card">
             <h3>إعداد المساعد الذكي</h3>
             <p class="setup-note">
@@ -1647,8 +1720,32 @@
         function now() {
           return new Date().toISOString();
         }
+        // "Today" is the RIYADH calendar day (UTC+3, no DST) — the same rule
+        // the server uses — so a booking created near midnight never lands on
+        // the wrong day because the phone clock renders UTC.
+        const RIYADH_OFFSET_MS = 3 * 60 * 60 * 1000;
         function today() {
-          return now().slice(0, 10);
+          return new Date(Date.now() + RIYADH_OFFSET_MS).toISOString().slice(0, 10);
+        }
+        // Owner-facing date form: DD-MM-YYYY, always rendered inside an .ltr
+        // wrapper so RTL text can never reorder the parts.
+        function formatDateDisplay(iso) {
+          const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || ""));
+          return m ? m[3] + "-" + m[2] + "-" + m[1] : String(iso || "—");
+        }
+        // A period is BOOKABLE only when both times are valid HH:mm. New
+        // bookings on timeless periods fail closed (availability cannot be
+        // proven); historical bookings still display normally.
+        function periodTimesValid(p) {
+          const re = /^(\d{1,2}):(\d{2})$/;
+          const okOne = (v) => {
+            const m = re.exec(String(v || ""));
+            if (!m) return false;
+            const h = Number(m[1]), mi = Number(m[2]);
+            return h >= 0 && h <= 23 && mi >= 0 && mi <= 59;
+          };
+          if (!okOne(p && p.start) || !okOne(p && p.end)) return false;
+          return String(p.start) !== String(p.end); // zero-length is invalid
         }
         function monthNow() {
           return today().slice(0, 7);
@@ -2464,6 +2561,9 @@
           // environment badge right after login, so the owner never reads the
           // stale pre-check placeholders. Fire-and-forget — never blocks login.
           checkSetupConnection({ quiet: true });
+          // Pending work survives a refresh: recover the latest prepared card
+          // with a server-rotated token (never stored client-side).
+          assistantRecoverPending();
         }
         async function pullWorkspace() {
           log("Login clicked");
@@ -2837,7 +2937,7 @@
               ? " (" + esc(periodTimeRange(b.chalet_id, b.period_id)) + ")"
               : "") +
             " · " +
-            esc(b.booking_date || "—") +
+            '<span class="ltr">' + esc(formatDateDisplay(b.booking_date)) + "</span>" +
             '</div><span class="badge ' +
             (b.status === "confirmed"
               ? "ok"
@@ -2909,7 +3009,7 @@
             '</b><div class="muted">' +
             esc(ch ? ch.name : "—") +
             " · " +
-            esc(b.booking_date || "—") +
+            '<span class="ltr">' + esc(formatDateDisplay(b.booking_date)) + "</span>" +
             '</div><div class="muted ltr">' +
             esc(b.customer_phone || "—") +
             "</div></div><div><b>" +
@@ -3030,6 +3130,50 @@
             const c = lastCloudCounts || { chalets: "—", bookings: "—" };
             lc.textContent =
               "الشاليهات " + c.chalets + " · الحجوزات " + c.bookings;
+          }
+          renderDataQuality();
+        }
+        // Read-only data-quality report (§ duplicate/invalid periods): groups
+        // periods by the canonical fingerprint label|start|end|prices and
+        // flags incomplete times. Advice only — never mutates anything.
+        function renderDataQuality() {
+          const el = $("dataQualityReport");
+          if (!el) return;
+          const problems = [];
+          for (const ch of state.chalets || []) {
+            if (ch.deleted_at) continue;
+            const active = (ch.periods || []).filter((p) => p.active !== false);
+            const seen = {};
+            for (const p of active) {
+              if (!periodTimesValid(p)) {
+                problems.push(
+                  "⚠️ «" + (ch.name || "—") + "» — الفترة «" + (p.label || "—") +
+                    "»: وقت الفترة غير مكتمل (لن تُقبل حجوزات جديدة عليها حتى يكتمل الوقت).",
+                );
+                continue;
+              }
+              const fp = [p.label, p.start, p.end, Number(p.weekday_price) || 0, Number(p.weekend_price) || 0].join("|");
+              seen[fp] = (seen[fp] || 0) + 1;
+            }
+            for (const fp of Object.keys(seen)) {
+              if (seen[fp] > 1) {
+                const label = fp.split("|")[0] || "—";
+                problems.push(
+                  "🔁 «" + (ch.name || "—") + "» — الفترة «" + label + "» مكررة " +
+                    seen[fp] + " مرات بنفس الوقت والسعر. يعامل المساعد النسخ المتطابقة كخيار واحد؛ يُفضّل حذف الزائد يدوياً أو إعادة تسميته.",
+                );
+              }
+            }
+          }
+          el.textContent = problems.length ? "" : "لا توجد ملاحظات — الفترات سليمة.";
+          if (problems.length) {
+            el.textContent = "";
+            for (const p of problems.slice(0, 20)) {
+              const d = document.createElement("div");
+              d.textContent = p;
+              d.style.marginBottom = "6px";
+              el.appendChild(d);
+            }
           }
         }
         // ========================= JS: chalet logic =========================
@@ -3224,13 +3368,14 @@
               (p) =>
                 '<option value="' +
                 esc(p.id) +
-                '">' +
+                '"' +
+                (periodTimesValid(p) ? "" : " disabled") +
+                ">" +
                 esc(p.label) +
-                " (" +
-                esc(formatTime12(p.start)) +
-                " - " +
-                esc(formatTime12(p.end)) +
-                ")</option>",
+                (periodTimesValid(p)
+                  ? " (" + esc(formatTime12(p.start)) + " - " + esc(formatTime12(p.end)) + ")"
+                  : " — وقت الفترة غير مكتمل") +
+                "</option>",
             )
             .join("");
           if (old && list.some((p) => p.id === old))
@@ -3389,8 +3534,21 @@
           const selectedPeriod = getPeriodAny(selectedChalet, b.period_id);
           if (!selectedChalet || !selectedPeriod)
             return feedback("الفترة المختارة غير متاحة لهذا الشاليه.", "bad");
+          // Fail CLOSED: a period whose times are incomplete cannot prove
+          // availability, so no NEW/EDITED booking may land on it. Existing
+          // bookings keep displaying; fixing the period times unblocks it.
+          if (!periodTimesValid(selectedPeriod))
+            return feedback(
+              "وقت الفترة غير مكتمل لهذه الفترة. أكمل وقت البداية والنهاية من تبويب الشاليهات ثم أعد المحاولة.",
+              "bad",
+            );
           if (b.guests < 1)
             return feedback("عدد الضيوف يجب أن يكون 1 على الأقل.", "bad");
+          // Phone: warn (don't block) when it doesn't normalize to a Saudi
+          // mobile — a warning instead of silently dropping or rejecting it.
+          const phoneWarn = Boolean(
+            b.customer_phone && !normalizePhoneForWhatsApp(b.customer_phone),
+          );
           if (!isFinite(b.total) || !isFinite(b.paid))
             return feedback("المبلغ غير صالح.", "bad");
           if (b.total < 0 || b.paid < 0)
@@ -3440,7 +3598,12 @@
           $("bookingEditor").classList.add("hidden");
           setDirty(true, "save booking");
           renderAll();
-          feedback("تم حفظ الحجز محليًا", "good");
+          feedback(
+            phoneWarn
+              ? "تم حفظ الحجز محليًا. تنبيه: رقم الجوال لا يبدو صحيحاً (المتوقع 05xxxxxxxx)."
+              : "تم حفظ الحجز محليًا",
+            phoneWarn ? "bad" : "good",
+          );
         }
         function softDeleteBooking(id) {
           const b = state.bookings.find((x) => x.id === id);
@@ -4179,6 +4342,10 @@
             if (card) card.remove();
             return;
           }
+          if (a === "assistant-edit" && sourceEl)
+            return assistantDraftAction("reopen", sourceEl.dataset.actionId || "");
+          if (a === "assistant-cancel-draft" && sourceEl)
+            return assistantDraftAction("cancel", sourceEl.dataset.actionId || "");
         }
         // ========================= JS: assistant (Chalet Brain) =========================
         // Talks ONLY to the server-side chalet-assistant Edge Function. The
@@ -4225,6 +4392,11 @@
           div.textContent = String(text || "");
           log.appendChild(div);
           log.scrollTop = log.scrollHeight;
+          // Screen readers hear bot outcomes without focus juggling.
+          if (role !== "user") {
+            const live = $("assistantLive");
+            if (live) live.textContent = String(text || "");
+          }
         }
         function setAssistantConn(text, cls) {
           const el = $("assistantConn");
@@ -4233,25 +4405,98 @@
             el.className = cls || "";
           }
         }
+        // DEFENSIVE error mapper: the server already sends reason_ar +
+        // public_code on every failure; this layer guarantees that even a
+        // malformed/legacy response can never print a raw code, a UUID, or
+        // body.error into the chat.
+        const ASSISTANT_PUBLIC_AR = {
+          conflict: "هذه الفترة محجوزة بالفعل. لم يتم حفظ الحجز.",
+          stale: "تغيّرت بيانات الحجوزات بعد تجهيز الطلب. تحققت منها من جديد.",
+          expired: "انتهت صلاحية التأكيد. أعدت تجهيز الطلب بأحدث البيانات.",
+          already_done: "تم التعامل مع هذا الطلب مسبقاً. لا حاجة لإعادته.",
+          not_found: "لم أجد العنصر المطلوب في بياناتك الحالية.",
+          invalid_input: "بعض البيانات ناقصة أو غير صحيحة. راجعها ثم أعد المحاولة.",
+          auth: "فشل التحقق من الدخول. سجّل الخروج ثم ادخل مرة أخرى.",
+          unavailable: "تعذّر تنفيذ الطلب حالياً، ولم يتغيّر شيء. حاول مرة أخرى بعد قليل.",
+        };
+        function assistantSafeError(body) {
+          const candidate = body && typeof body.reason_ar === "string" ? body.reason_ar.trim() : "";
+          // Never trust a reason that smells like an internal code or id.
+          const leaky = /[A-Z]{2,}_[A-Z]|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}/i;
+          if (candidate && !leaky.test(candidate)) return candidate;
+          const pub = body && body.public_code;
+          return ASSISTANT_PUBLIC_AR[pub] || ASSISTANT_PUBLIC_AR.unavailable;
+        }
+        // Bare confirmation words re-display the pending card — typed text can
+        // NEVER execute a sensitive action; only the card button can.
+        const ASSISTANT_CONFIRM_WORDS =
+          /^(?:\s*(?:سجل|سجّل|أكد|أكّد|اكد|نعم|تمام|نفذ|نفّذ|احفظ|حفظ|اعتمد|موافق|ok|ايوه|أجل|اجل)\s*){1,3}(?:الحجز|الإجراء)?\s*[.!؟]*$/;
+        function assistantLatestCard() {
+          const box = $("assistantActions");
+          return box ? box.querySelector(".action-card") : null;
+        }
+        // The primary button label per confirm tool (booking create is the
+        // owner's main flow; everything else keeps a generic confirm label).
+        const ASSISTANT_CONFIRM_LABELS = {
+          confirm_booking_create: "حفظ الحجز",
+          confirm_booking_update: "حفظ التعديل",
+          confirm_booking_cancel: "تأكيد الإلغاء",
+        };
+        // ONE structured semantic card (the latest prepared action replaces any
+        // previous card — its token is superseded server-side anyway). Values
+        // come from the server's card data; no raw ids or tokens are rendered.
         function renderPreparedAction(r) {
           const box = $("assistantActions");
           if (!box) return;
           if (r.confirmation_token) assistantTokens[r.action_id] = r.confirmation_token;
+          box.innerHTML = "";
           const card = document.createElement("div");
-          card.className = "action-card";
+          card.className = "action-card booking-card";
+          card.setAttribute("role", "group");
+          const isBooking = String(r.confirm_tool || "").indexOf("confirm_booking") === 0;
+          card.setAttribute("aria-label", isBooking ? "بطاقة تأكيد الحجز" : "بطاقة تأكيد الإجراء");
+          const cd = r.card && Array.isArray(r.card.rows) ? r.card : null;
+          const rowsHtml = cd
+            ? '<div class="booking-rows">' +
+              cd.rows
+                .map(
+                  (row) =>
+                    '<div class="booking-row"><span class="booking-k">' +
+                    esc(row.k) +
+                    '</span><span class="booking-v' +
+                    (row.ltr ? " ltr" : "") +
+                    '">' +
+                    esc(row.v) +
+                    "</span></div>",
+                )
+                .join("") +
+              "</div>"
+            : '<div class="muted">' + esc(r.summary_ar || "راجع التفاصيل ثم أكّد.") + "</div>";
           card.innerHTML =
-            '<div><b>إجراء مُجهّز</b></div><div class="muted">' +
-            esc(r.summary_ar || "راجع التفاصيل ثم أكّد.") +
-            "</div>" +
+            "<h4>" +
+            esc((cd && cd.title) || (isBooking ? "حجز جديد" : "إجراء مُجهّز")) +
+            "</h4>" +
+            rowsHtml +
             (Array.isArray(r.warnings) && r.warnings.length
               ? '<div class="feedback bad">' + r.warnings.map(esc).join("<br>") + "</div>"
               : "") +
-            '<div class="actions"><button class="primary tiny" type="button" data-action="assistant-confirm" data-action-id="' +
+            '<div class="actions booking-card-actions"><button class="primary" type="button" data-action="assistant-confirm" data-action-id="' +
             esc(r.action_id) +
             '" data-confirm-tool="' +
             esc(r.confirm_tool) +
-            '">تأكيد الإجراء</button><button class="secondary tiny" type="button" data-action="assistant-dismiss">تجاهل</button></div>';
+            '">' +
+            esc(ASSISTANT_CONFIRM_LABELS[r.confirm_tool] || "تأكيد الإجراء") +
+            "</button>" +
+            (isBooking
+              ? '<button class="secondary" type="button" data-action="assistant-edit" data-action-id="' +
+                esc(r.action_id) +
+                '">تعديل</button>'
+              : "") +
+            '<button class="danger tiny" type="button" data-action="assistant-cancel-draft" data-action-id="' +
+            esc(r.action_id) +
+            '">إلغاء</button></div>';
           box.appendChild(card);
+          card.scrollIntoView({ block: "nearest" });
         }
         function renderToolResults(results) {
           (results || []).forEach((r) => {
@@ -4318,6 +4563,25 @@
           if (!message) return;
           if (forceText == null) input.value = "";
           assistantAppend("user", message);
+          // Typed confirmation words NEVER execute anything. When a card is
+          // already on screen, just bring it back into view — the button is
+          // the only way to run a sensitive action. (The server enforces the
+          // same rule; this shortcut simply saves a round-trip.)
+          // Narrow to BOOKING cards: for other card types (or none) the word
+          // goes to the server, which answers with the right guidance.
+          const liveCard = assistantLatestCard();
+          const liveCardIsBooking = Boolean(
+            liveCard &&
+              liveCard.querySelector('[data-confirm-tool="confirm_booking_create"]'),
+          );
+          if (ASSISTANT_CONFIRM_WORDS.test(message) && liveCardIsBooking) {
+            liveCard.scrollIntoView({ block: "center" });
+            liveCard.classList.remove("card-flash");
+            void liveCard.offsetWidth; // restart the highlight animation
+            liveCard.classList.add("card-flash");
+            assistantAppend("bot", "الحجز جاهز. راجع البطاقة واضغط حفظ الحجز.");
+            return;
+          }
           assistantBusy = true;
           $("assistantSendButton").disabled = true;
           setAssistantConn("جارٍ التفكير", "");
@@ -4341,7 +4605,8 @@
               if (body.reply_ar) assistantAppend("bot", body.reply_ar);
               renderToolResults(body.tool_results);
             } else {
-              assistantAppend("bot", "تعذّر تنفيذ الطلب: " + (body.error || ""));
+              // Defensive mapper: never a raw code, UUID, or body.error.
+              assistantAppend("bot", assistantSafeError(body));
             }
           } catch (e) {
             if (e.notDeployed)
@@ -4379,17 +4644,24 @@
           );
         }
         const assistantConfirmInFlight = new Set();
+        function setCardBusy(card, busy, btn) {
+          if (!card) return;
+          card.setAttribute("aria-busy", busy ? "true" : "false");
+          card.querySelectorAll("button").forEach((b) => {
+            b.disabled = busy;
+          });
+          if (btn) btn.textContent = busy ? "جاري التنفيذ..." : btn.dataset.label || btn.textContent;
+        }
         async function assistantConfirm(actionId, confirmTool, btn) {
           const token = assistantTokens[actionId];
           if (!token) return feedback("انتهت صلاحية التأكيد. جهّز الإجراء من جديد.", "bad");
-          // Prevent double-taps: one execution per action.
+          // Prevent double-taps: one execution per action, and every button on
+          // the card is disabled while the server works.
           if (assistantConfirmInFlight.has(actionId)) return;
           assistantConfirmInFlight.add(actionId);
           const card = btn && btn.closest ? btn.closest(".action-card") : null;
-          if (btn) {
-            btn.disabled = true;
-            btn.textContent = "جاري التنفيذ...";
-          }
+          if (btn && !btn.dataset.label) btn.dataset.label = btn.textContent;
+          setCardBusy(card, true, btn);
           try {
             const body = await assistantCall({
               invoke_tool: {
@@ -4416,30 +4688,74 @@
                   body.result.action === "payment_link_created")
               )
                 refreshPaymentPanel(currentPaymentBookingId, true);
+            } else if (body.fresh_action && body.fresh_action.action_id) {
+              // Stale-revision / expired-token recovery: the server already
+              // revalidated against fresh data and prepared a NEW card. The
+              // owner must confirm again — nothing executed automatically.
+              delete assistantTokens[actionId];
+              assistantAppend("bot", assistantSafeError(body));
+              renderPreparedAction(body.fresh_action);
             } else {
-              // Never show "تم" — the underlying contract did not succeed.
-              if (btn) {
-                btn.disabled = false;
-                btn.textContent = "تأكيد الإجراء";
-              }
-              assistantAppend(
-                "bot",
-                "لم يكتمل الإجراء (" +
-                  (body.error || "") +
-                  "). لم يتغيّر شيء بدون تأكيد الخادم.",
-              );
+              // Never show "تم" — the underlying contract did not succeed, and
+              // never show a raw code either.
+              setCardBusy(card, false, btn);
+              assistantAppend("bot", assistantSafeError(body));
             }
           } catch (e) {
-            if (btn) {
-              btn.disabled = false;
-              btn.textContent = "تأكيد الإجراء";
-            }
+            setCardBusy(card, false, btn);
             assistantAppend(
               "bot",
-              e.notDeployed ? "المساعد غير مفعّل." : "تعذّر تأكيد الإجراء.",
+              e.notDeployed ? "المساعد غير مفعّل." : "تعذّر الاتصال بالخادم مؤقتاً. لم يتغيّر شيء.",
             );
           } finally {
             assistantConfirmInFlight.delete(actionId);
+          }
+        }
+        // تعديل / إلغاء on the card: the server reopens the draft (fields kept)
+        // or cancels it. The card leaves the screen only on server success.
+        async function assistantDraftAction(kind, actionId) {
+          try {
+            const body = await assistantCall({
+              draft_action: kind,
+              action_id: actionId || undefined,
+            });
+            if (body.ok) {
+              if (kind === "cancel") {
+                $("assistantActions").innerHTML = "";
+                delete assistantTokens[actionId];
+                assistantAppend("bot", body.reply_ar || "تم الإلغاء، لم يُحفظ شيء.");
+              } else {
+                // The old card's action is retired server-side — its save
+                // button must go with it; a fresh card arrives after the edit.
+                $("assistantActions").innerHTML = "";
+                delete assistantTokens[actionId];
+                assistantAppend("bot", body.reply_ar || "تمام — ماذا تريد تعديله؟ اكتب التغيير فقط.");
+              }
+            } else {
+              assistantAppend("bot", assistantSafeError(body));
+            }
+          } catch (e) {
+            assistantAppend("bot", e.notDeployed ? "المساعد غير مفعّل." : "تعذّر الاتصال بالخادم مؤقتاً. لم يتغيّر شيء.");
+          }
+        }
+        // Refresh recovery: after login, ask the server for the latest pending
+        // prepared action. The server ROTATES the confirmation token (fresh
+        // expiry, old token dead) — nothing token-shaped ever touches
+        // localStorage/sessionStorage/URL.
+        async function assistantRecoverPending() {
+          if (!loadedWorkspace || assistantBackendMissing) return;
+          try {
+            const body = await assistantCall({ pending_action: "latest" });
+            if (body && body.ok && body.pending && body.pending.action_id) {
+              if (body.pending.thread_id) assistantThreadId = body.pending.thread_id;
+              renderPreparedAction(body.pending);
+              assistantAppend(
+                "bot",
+                "لديك حجز مجهّز بانتظار تأكيدك — راجع البطاقة واضغط حفظ الحجز.",
+              );
+            }
+          } catch (e) {
+            log("pending recovery skipped", { message: e && e.message });
           }
         }
         function assistantNew() {
@@ -4448,6 +4764,10 @@
           assistantThreadId = null;
           $("assistantLog").innerHTML = "";
           $("assistantActions").innerHTML = "";
+          // Old cards are gone, so their tokens and in-flight locks go too —
+          // otherwise orphaned tokens accumulate for the whole session.
+          for (const k of Object.keys(assistantTokens)) delete assistantTokens[k];
+          assistantConfirmInFlight.clear();
           assistantAppend(
             "bot",
             "أهلاً! أنا مساعد الشاليهات. أقدر أجاوبك عن الحجوزات والأيام الفاضية والمبالغ المتبقية، وأجهّز لك الحجوزات والرسائل. أي إجراء حسّاس يحتاج تأكيدك.",
