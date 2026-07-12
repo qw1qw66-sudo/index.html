@@ -365,4 +365,75 @@ describe("live transcript corpus (owner-reported conversations, zero model calls
     expect(deps._drafts.get("th-1").fields.chalet_id).toBe("tulum");
     expect(deps._modelCalls).toHaveLength(0);
   });
+
+  it("R7 (IMG_6708): the verbatim opener with «الفترة خمسه» binds «فترة 5» — no dead-end, phone never echoed", async () => {
+    const doc = fixtureDoc();
+    // The owner's real shape: two digit-labelled periods with IDENTICAL times.
+    doc.chalets[0].periods.push(
+      { id: "f5", label: "فترة 5", start: "07:00", end: "17:00", active: true, sort: 3, weekday_price: 450, weekend_price: 450 },
+      { id: "f6", label: "الفترة 6", start: "07:00", end: "17:00", active: true, sort: 4, weekday_price: 400, weekend_price: 400 },
+    );
+    const deps = makeDeps({ doc });
+    const replies = [];
+    const t1 = await chat(deps, "عدد الضيوف ١٠ احجز الشاليه تولوم ٤٥٠ فترة النهار بكرا من ٧ الى العصر ٥ رقم الجوال 0503666853 الفترة خمسه");
+    replies.push(t1.reply_ar);
+    expect(t1.ok).toBe(true);
+    expect(t1.model_calls).toBe(0);
+    const f = deps._drafts.get("th-1").fields;
+    expect(f.chalet_id).toBe("tulum");
+    expect(f.period_id).toBe("f5"); // «الفترة خمسه» broke the same-time tie
+    expect(f.guests).toBe(10);
+    expect(t1.reply_ar).not.toContain("توجد عدة فترات"); // no ambiguity question
+    expect(t1.reply_ar).not.toContain("لم أفهم ردّك");
+    // A bare «٤٥٠» with no currency word is never silently banked — the flow
+    // advances to the PRICE question (system price = the same 450).
+    expect(t1.reply_ar).toContain("سعر النظام");
+    const t2 = await chat(deps, "اعتمد", "th-1");
+    replies.push(t2.reply_ar);
+    expect(t2.model_calls).toBe(0);
+    expect(deps._drafts.get("th-1").fields.total).toBe(450);
+    const t3 = await chat(deps, "علي", "th-1");
+    replies.push(t3.reply_ar);
+    expect((t3.tool_results || []).some((x) => x.kind === "prepared_action")).toBe(true);
+    expect(deps._modelCalls).toHaveLength(0);
+    for (const rep of replies) expect(String(rep || "")).not.toContain("0503666853");
+  });
+
+  it("R7 (IMG_6708, fallback path): without the hint, the question is a numbered pick and «فترة5» answers it", async () => {
+    const doc = fixtureDoc();
+    doc.chalets[0].periods.push(
+      { id: "f5", label: "فترة 5", start: "07:00", end: "17:00", active: true, sort: 3, weekday_price: 450, weekend_price: 450 },
+      { id: "f6", label: "الفترة 6", start: "07:00", end: "17:00", active: true, sort: 4, weekday_price: 400, weekend_price: 400 },
+    );
+    const deps = makeDeps({ doc });
+    const q = await chat(deps, "احجز تولوم بكرا من ٧ صباحا الى ٥ مساء عدد الضيوف ١٠ باسم علي تجربة بمئة ريال");
+    expect(q.model_calls).toBe(0);
+    expect(q.reply_ar).toContain("1."); // numbered, tappable — not «حدد بالاسم» free text
+    expect(Array.isArray(q.next_actions)).toBe(true);
+    const r = await chat(deps, "فترة5", "th-1");
+    expect(r.model_calls).toBe(0);
+    expect(r.reply_ar).not.toContain("لم أفهم ردّك");
+    expect(deps._drafts.get("th-1").fields.period_id).toBe("f5");
+    expect(deps._modelCalls).toHaveLength(0);
+  });
+
+  it("R7 (IMG_6710/6711): the balances and marketing chips answer with real names/numbers, zero model calls", async () => {
+    const deps = makeDeps();
+    deps.runReadTool = async (_k, name) => {
+      if (name === "list_outstanding_balances") {
+        return { source: "ledger", bookings: [{ booking_id: "b1", customer_name: "أبو فهد", booking_date: "2099-07-11", remaining_halalas: 50000 }] };
+      }
+      if (name === "get_attributed_revenue") return { attributed_revenue_halalas: 90000, conversions: 2, messages_sent: 5 };
+      return {};
+    };
+    const balances = await chat(deps, "من عليه مبالغ متبقية؟");
+    expect(balances.model_calls).toBe(0);
+    expect(balances.reply_ar).toContain("أبو فهد");
+    expect(balances.reply_ar).toContain("المتبقي 500 ريال");
+    const revenue = await chat(deps, "كم دخل جابه التسويق؟");
+    expect(revenue.model_calls).toBe(0);
+    expect(revenue.reply_ar).toContain("900 ريال");
+    expect(revenue.reply_ar).not.toBe("تمام.");
+    expect(deps._modelCalls).toHaveLength(0);
+  });
 });

@@ -166,21 +166,117 @@ describe("two-stage chat reply", () => {
     expect(b.reply_ar).toBe("لا توجد حجوزات اليوم.");
   });
 
-  it("second-stage failure => deterministic Arabic fallback: no seed, no tool name, no error code", async () => {
+  it("«من عليه مبالغ متبقية؟» answers with NAMES and amounts, zero model calls (live IMG_6711)", async () => {
     const deps = makeDeps({
-      modelSeq: [
-        { ok: true, reply: "سأجلب لك المتبقيات الآن...", toolCalls: [{ name: "list_outstanding_balances", arguments: {} }] },
-        { ok: false, error: "DEEPSEEK_TIMEOUT" },
-      ],
-      readResult: () => ({ source: "ledger", bookings: [{ booking_id: "b1" }, { booking_id: "b2" }] }),
+      modelSeq: [{ ok: false, error: "DEEPSEEK_UNREACHABLE" }],
+      readResult: () => ({
+        source: "ledger",
+        bookings: [
+          { booking_id: "b1", customer_name: "أبو فهد", booking_date: "2099-07-11", remaining_halalas: 50000 },
+          { booking_id: "b2", customer_name: "أم سلمان", booking_date: "2099-07-12", remaining_halalas: 30000 },
+        ],
+      }),
     });
     const b = await chat(deps, "من عليه مبالغ متبقية؟");
     expect(b.ok).toBe(true);
-    // Grounded on the real data (2 rows) ...
-    expect(b.reply_ar.length).toBeGreaterThan(0);
-    // ... but WITHOUT the stage-1 seed, the tool name, or the raw error code.
+    expect(b.model_calls).toBe(0);
+    expect(deps._modelCalls).toHaveLength(0);
+    // The owner asked WHO — the reply must name every debtor with the amount.
+    expect(b.reply_ar).toContain("أبو فهد");
+    expect(b.reply_ar).toContain("أم سلمان");
+    expect(b.reply_ar).toContain("المتبقي 500 ريال");
+    expect(b.reply_ar).toContain("إجمالي المتبقي: 800 ريال");
+    // Never the useless bare count of the live incident.
+    expect(b.reply_ar).not.toMatch(/يوجد \d+ حجوزات\.$/);
     expect(b.reply_ar).not.toContain("سأجلب");
     expect(b.reply_ar).not.toContain("list_outstanding_balances");
+    expect(b.reply_ar).not.toMatch(/PGRST|42\d{3}|_[A-Z]{3,}/);
+  });
+
+  it("«كم دخل جابه التسويق؟» answers with the real number, never «تمام.» (live IMG_6710)", async () => {
+    const deps = makeDeps({
+      modelSeq: [{ ok: false, error: "DEEPSEEK_UNREACHABLE" }],
+      readResult: () => ({ attributed_revenue_halalas: 90000, conversions: 2, messages_sent: 5 }),
+    });
+    const b = await chat(deps, "كم دخل جابه التسويق؟");
+    expect(b.model_calls).toBe(0);
+    expect(b.reply_ar).toContain("900 ريال");
+    expect(b.reply_ar).toContain("2");
+    expect(b.reply_ar).not.toBe("تمام.");
+
+    const zero = makeDeps({
+      modelSeq: [{ ok: false, error: "DEEPSEEK_UNREACHABLE" }],
+      readResult: () => ({ attributed_revenue_halalas: 0, conversions: 0, messages_sent: 0 }),
+    });
+    const z = await chat(zero, "كم دخل جابه التسويق؟");
+    expect(z.model_calls).toBe(0);
+    expect(z.reply_ar).toContain("لا يوجد دخل منسوب");
+  });
+
+  it("campaign results and automation status answer deterministically and spelled out", async () => {
+    const runs = makeDeps({
+      modelSeq: [{ ok: false, error: "DEEPSEEK_UNREACHABLE" }],
+      readResult: () => ({ runs: [{ id: "r1", status: "completed", eligible_contacts: 4, sent_messages: 3, converted_booking_id: "bk9", attributed_revenue_halalas: 45000 }] }),
+    });
+    const cr = await chat(runs, "اعرض نتيجة آخر حملة");
+    expect(cr.model_calls).toBe(0);
+    expect(cr.reply_ar).toContain("مكتملة");
+    expect(cr.reply_ar).toContain("450 ريال");
+
+    const rules = makeDeps({
+      modelSeq: [{ ok: false, error: "DEEPSEEK_UNREACHABLE" }],
+      readResult: () => ({ rules: [{ id: "x", enabled: true, maximum_daily_messages: 10, owner_approval_required: true }] }),
+    });
+    const st = await chat(rules, "اعرض حالة التسويق");
+    expect(st.model_calls).toBe(0);
+    expect(st.reply_ar).toContain("مفعلة");
+    expect(st.reply_ar).toContain("موافقة المالك مطلوبة");
+
+    const noRules = makeDeps({
+      modelSeq: [{ ok: false, error: "DEEPSEEK_UNREACHABLE" }],
+      readResult: () => ({ rules: [] }),
+    });
+    const nr = await chat(noRules, "اعرض حالة التسويق");
+    expect(nr.reply_ar).toContain("التسويق التلقائي غير مفعّل");
+  });
+
+  it("upcoming bookings and this-week empty days answer deterministically with items", async () => {
+    const upcoming = makeDeps({
+      modelSeq: [{ ok: false, error: "DEEPSEEK_UNREACHABLE" }],
+      readResult: () => ({ bookings: [
+        { customer_name: "علي تجربة", booking_date: "2099-07-13", status: "confirmed" },
+        { customer_name: "فهد تجربة", booking_date: "2099-07-14", status: "pending" },
+      ] }),
+    });
+    const up = await chat(upcoming, "اعرض الحجوزات القادمة");
+    expect(up.model_calls).toBe(0);
+    expect(up.reply_ar).toContain("علي تجربة");
+    expect(up.reply_ar).toContain("مؤكد");
+    expect(up.reply_ar).not.toMatch(/^يوجد \d+ حجوزات\.$/);
+
+    const week = makeDeps({
+      modelSeq: [{ ok: false, error: "DEEPSEEK_UNREACHABLE" }],
+      readResult: () => ({ empty: [{ chalet_name: "شاليه تولوم", period_label: "مسائي", date: "2099-07-13" }] }),
+    });
+    const wk = await chat(week, "اعرض الأيام الفاضية هذا الأسبوع");
+    expect(wk.model_calls).toBe(0);
+    expect(wk.reply_ar).toContain("شاليه تولوم");
+  });
+
+  it("second-stage failure => deterministic Arabic fallback: no seed, no tool name, no error code", async () => {
+    const deps = makeDeps({
+      modelSeq: [
+        { ok: true, reply: "سأجلب لك الحجوزات الآن...", toolCalls: [{ name: "get_booking_details", arguments: { booking_id: "b1" } }] },
+        { ok: false, error: "DEEPSEEK_TIMEOUT" },
+      ],
+      readResult: () => ({ booking: { id: "b1" } }),
+    });
+    const b = await chat(deps, "وش تفاصيل حجز العميل الأخير؟");
+    expect(b.ok).toBe(true);
+    expect(b.reply_ar.length).toBeGreaterThan(0);
+    // ... WITHOUT the stage-1 seed, the tool name, or the raw error code.
+    expect(b.reply_ar).not.toContain("سأجلب");
+    expect(b.reply_ar).not.toContain("get_booking_details");
     expect(b.reply_ar).not.toContain("DEEPSEEK_TIMEOUT");
     expect(b.reply_ar).not.toMatch(/PGRST|42\d{3}|_[A-Z]{3,}/); // no error-code shapes
   });

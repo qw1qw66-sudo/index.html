@@ -750,6 +750,91 @@ describe("answer matrix: every pending question accepts its bare answer", () => 
     expect(deps._actions.get(prep.action_id).args.total).toBe(800);
   });
 
+  // R7 (IMG_6708/6709): digit-labelled same-time periods — the exact live shape.
+  function sameTimeDoc() {
+    const doc = fixtureDoc();
+    doc.chalets[0].periods.push(
+      { id: "f5", label: "فترة 5", start: "07:00", end: "17:00", active: true, sort: 3, weekday_price: 450, weekend_price: 450 },
+      { id: "f6", label: "الفترة 6", start: "07:00", end: "17:00", active: true, sort: 4, weekday_price: 400, weekend_price: 400 },
+    );
+    return doc;
+  }
+  const SAME_TIME_OPENER = "احجز تولوم بكرة من ٧ صباحا الى ٥ مساء لشخصين بمئة ريال باسم علي تجربة";
+
+  it("an explicit «الفترة خمسه» hint binds «فترة 5» directly — no ambiguity question", async () => {
+    const deps = makeDeps({ doc: sameTimeDoc() });
+    const r = await chat(deps, SAME_TIME_OPENER + " الفترة خمسه");
+    expect(r.model_calls).toBe(0);
+    const f = deps._drafts.get("th-1").fields;
+    expect(f.period_id).toBe("f5");
+    expect((r.tool_results || []).some((x) => x.kind === "prepared_action")).toBe(true);
+  });
+
+  it("same-time ambiguity is a NUMBERED pick with chips; «فترة5», «الفترة 6» and «٢» all bind", async () => {
+    const cases = [
+      { answer: "فترة5", expect_id: "f5" },
+      { answer: "الفترة 6", expect_id: "f6" },
+      { answer: "٢", expect_id: "f6" }, // options keep period order: 1=فترة 5, 2=الفترة 6
+    ];
+    for (const c of cases) {
+      const deps = makeDeps({ doc: sameTimeDoc() });
+      const q = await chat(deps, SAME_TIME_OPENER);
+      expect(q.model_calls).toBe(0);
+      expect(q.reply_ar).toContain("1.");
+      expect(Array.isArray(q.next_actions)).toBe(true);
+      expect(q.next_actions).toHaveLength(2);
+      expect(deps._drafts.get("th-1").fields.pending_q.kind).toBe("pick");
+      const r = await chat(deps, c.answer, "th-1");
+      expect(r.model_calls).toBe(0);
+      expect(r.reply_ar).not.toContain("لم أفهم ردّك");
+      const f = deps._drafts.get("th-1").fields;
+      expect(f.period_id).toBe(c.expect_id);
+      expect(f.guests).toBe(2); // a digit answer never overwrites the headcount
+      expect((r.tool_results || []).some((x) => x.kind === "prepared_action")).toBe(true);
+    }
+  });
+
+  it("when EVERY same-time candidate is occupied, the reply names the blocker with alternatives — never «حدد بالاسم»", async () => {
+    const doc = sameTimeDoc();
+    doc.bookings.push(
+      { id: "bz5", customer_name: "حاجز خمسة", chalet_id: "tulum", booking_date: TOMORROW, period_id: "f5", guests: 2, total: 100, paid: 0, status: "confirmed", deleted_at: null },
+      { id: "bz6", customer_name: "حاجز ستة", chalet_id: "tulum", booking_date: TOMORROW, period_id: "f6", guests: 2, total: 100, paid: 0, status: "confirmed", deleted_at: null },
+    );
+    const deps = makeDeps({ doc });
+    const r = await chat(deps, SAME_TIME_OPENER);
+    expect(r.model_calls).toBe(0);
+    expect(r.reply_ar).not.toContain("حدد بالاسم");
+    expect(r.reply_ar).toContain("محجوزة");
+    expect(r.reply_ar).toContain("حاجز خمسة"); // names WHO blocks
+    expect(Array.isArray(r.next_actions)).toBe(true);
+    expect(r.next_actions.length).toBeGreaterThan(0);
+  });
+
+  it("«عطني خيارات وانا اضغط عليها» re-sends the stored numbered options with chips", async () => {
+    const deps = makeDeps({ doc: sameTimeDoc() });
+    await chat(deps, SAME_TIME_OPENER); // -> pick question, alternatives stored
+    const r = await chat(deps, "عطني خيارات وانا اضغط عليها", "th-1");
+    expect(r.model_calls).toBe(0);
+    expect(deps._modelCalls).toHaveLength(0);
+    expect(r.reply_ar).not.toContain("لم أفهم ردّك");
+    expect(r.reply_ar).toContain("1.");
+    expect(Array.isArray(r.next_actions)).toBe(true);
+    expect(r.next_actions).toHaveLength(2);
+  });
+
+  it("pending period + bare «٥» binds «فترة 5» and keeps the stated guests", async () => {
+    // Reach a pending «period» question: no time given, several labels exist.
+    const deps = makeDeps({ doc: sameTimeDoc() });
+    const q = await chat(deps, "احجز تولوم بكرة لشخصين بمئة ريال باسم علي تجربة");
+    expect(deps._drafts.get("th-1").fields.pending_q.kind).toBe("period");
+    expect(q.model_calls).toBe(0);
+    const r = await chat(deps, "٥", "th-1");
+    expect(r.model_calls).toBe(0);
+    const f = deps._drafts.get("th-1").fields;
+    expect(f.period_id).toBe("f5");
+    expect(f.guests).toBe(2);
+  });
+
   it("ENUMERATION GUARD: every pending_q kind the handler can emit has a registered answer path", () => {
     const src = readFileSync(
       new URL("../../supabase/functions/chalet-assistant/handler.mjs", import.meta.url),
