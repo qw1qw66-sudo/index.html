@@ -206,7 +206,7 @@ describe("two-stage chat reply", () => {
   it("confirmation tokens never reach model context or the stored transcript", async () => {
     const deps = makeDeps({
       modelSeq: [
-        { ok: true, reply: "أجهّز الحجز...", toolCalls: [{ name: "prepare_booking_create", arguments: { customer_name: "علي", chalet_id: "c1", booking_date: "2099-06-01", period_id: "p1" } }] },
+        { ok: true, reply: "أجهّز الحجز...", toolCalls: [{ name: "prepare_booking_create", arguments: { customer_name: "علي", chalet_id: "c1", booking_date: "2099-06-01", period_id: "p1", guests: 2, total: 500 } }] },
         { ok: true, reply: "جهّزت الحجز، بانتظار تأكيدك.", toolCalls: [] },
       ],
     });
@@ -223,7 +223,7 @@ describe("two-stage chat reply", () => {
   it("keeps a supplied customer phone out of model context but binds it server-side", async () => {
     const deps = makeDeps({
       modelSeq: [
-        { ok: true, reply: "أجهّز الحجز...", toolCalls: [{ name: "prepare_booking_create", arguments: { customer_name: "علي", chalet_name: "تولوم", period_label: "مسائي", booking_date: "2099-06-01" } }] },
+        { ok: true, reply: "أجهّز الحجز...", toolCalls: [{ name: "prepare_booking_create", arguments: { customer_name: "علي", chalet_name: "تولوم", period_label: "مسائي", booking_date: "2099-06-01", guests: 2, total: 500 } }] },
         { ok: true, reply: "جهّزت الحجز، بانتظار تأكيدك.", toolCalls: [] },
       ],
     });

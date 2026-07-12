@@ -3,7 +3,8 @@
 // real ids that already exist in this workspace, or fails closed with real
 // choices from the document.
 
-import { isSlotAvailable } from "./availability.mjs";
+import { isSlotAvailable, isPeriodBookable, normalizeTimeHHmm } from "./availability.mjs";
+import { parseTimeExpression } from "./nl-normalize.mjs";
 
 const ARABIC_MARKS = /[\u0610-\u061a\u064b-\u065f\u0670\u06d6-\u06ed\u0640]/g;
 const CHALET_WORDS = new Set(["شاليه", "الشاليه", "شاليهات", "الشاليهات", "chalet", "chalets"]);
@@ -31,11 +32,14 @@ export function normalizePeriodLookup(value) {
   const joined = normalizedTokens(value, PERIOD_WORDS).join("");
   const withoutArticle = joined.startsWith("ال") ? joined.slice(2) : joined;
   const aliases = {
-    صباح: "صباح", صباحي: "صباح", صباحية: "صباح",
+    صباح: "صباح", صباحي: "صباح", صباحية: "صباح", الصبح: "صباح", فجر: "صباح", فجري: "صباح",
+    // Owners say «بالليل/ليلاً» for the evening-to-morning slot; real chalets
+    // label it «مسائي». Fold the whole night family onto the evening family so
+    // «بكرة بالليل» matches an evening period without the exact stored label.
     مساء: "مساء", مسائي: "مساء", مسائية: "مساء", مسايي: "مساء", مسايية: "مساء",
-    ليل: "ليل", ليلي: "ليل", ليلية: "ليل",
+    ليل: "مساء", ليلي: "مساء", ليلية: "مساء", بالليل: "مساء", ليلا: "مساء", الليلة: "مساء", عشاء: "مساء", عشائية: "مساء",
     نهار: "نهار", نهاري: "نهار", نهارية: "نهار",
-    ظهر: "ظهر", ظهيرة: "ظهر", عصري: "عصر", عصر: "عصر",
+    ظهر: "ظهر", ظهيرة: "ظهر", عصري: "عصر", عصر: "عصر", ضحى: "ضحى", الضحى: "ضحى",
   };
   return aliases[withoutArticle] || withoutArticle;
 }
@@ -68,19 +72,34 @@ function uniqueNameMatch(items, query, valueOf, normalize) {
 
 export function chaletCatalog(doc) {
   return {
-    chalets: activeChalets(doc).map((c) => ({
-      chalet_id: String(c.id || ""),
-      chalet_name: String(c.name || ""),
-      capacity: Number(c.capacity) || 0,
-      periods: activePeriods(c).map((p) => ({
-        period_id: String(p.id || ""),
-        period_label: String(p.label || ""),
-        start: String(p.start || ""),
-        end: String(p.end || ""),
-        weekday_price: Number(p.weekday_price) || 0,
-        weekend_price: Number(p.weekend_price) || 0,
-      })),
-    })),
+    chalets: activeChalets(doc).map((c) => {
+      // Identical duplicates (same label/times/prices) display as ONE logical
+      // option — the owner is never shown five copies of the same slot. The
+      // backing ids stay internal; availability is time-overlap anyway.
+      const seen = new Set();
+      const grouped = [];
+      for (const p of activePeriods(c)) {
+        const fp = [p.label, p.start, p.end, Number(p.weekday_price) || 0, Number(p.weekend_price) || 0]
+          .map((v) => String(v ?? "")).join("|");
+        if (seen.has(fp)) continue;
+        seen.add(fp);
+        grouped.push({
+          period_id: String(p.id || ""),
+          period_label: String(p.label || ""),
+          start: String(p.start || ""),
+          end: String(p.end || ""),
+          weekday_price: Number(p.weekday_price) || 0,
+          weekend_price: Number(p.weekend_price) || 0,
+          time_incomplete: !isPeriodBookable(p).ok || undefined,
+        });
+      }
+      return {
+        chalet_id: String(c.id || ""),
+        chalet_name: String(c.name || ""),
+        capacity: Number(c.capacity) || 0,
+        periods: grouped,
+      };
+    }),
   };
 }
 
@@ -112,8 +131,34 @@ export function resolveChaletReference(doc, args = {}) {
   return { ok: false, error: "CHALET_REQUIRED", reason_ar: "اذكر اسم الشاليه. سأطابقه تلقائياً مع بياناتك المسجلة.", options };
 }
 
+// Duplicate grouping (§ duplicate data): the canonical slot fingerprint. Fully
+// identical periods collapse to ONE logical option; the deterministic pick is
+// the lowest sort, then the lowest id — never a guess between distinguishable
+// records.
+function periodFingerprint(p) {
+  return [p.label, p.start, p.end, Number(p.weekday_price) || 0, Number(p.weekend_price) || 0]
+    .map((v) => String(v ?? "")).join("|");
+}
+function canonicalOf(matches) {
+  return [...matches].sort((a, b) => {
+    const s = (Number(a.sort) || 0) - (Number(b.sort) || 0);
+    return s !== 0 ? s : String(a.id).localeCompare(String(b.id));
+  })[0];
+}
+function collapseIdentical(matches) {
+  const distinct = new Set(matches.map(periodFingerprint));
+  return distinct.size === 1 ? canonicalOf(matches) : null;
+}
+function timedListAr(list) {
+  return list
+    .map((p) => `«${String(p.label || "—")}» (${String(p.start || "؟")}–${String(p.end || "؟")})`)
+    .join("، ");
+}
+
 function resolvePeriodReference(chalet, args = {}) {
-  const periods = activePeriods(chalet);
+  const all = activePeriods(chalet);
+  // Bookable periods only: incomplete times FAIL CLOSED for new bookings.
+  const periods = all.filter((p) => isPeriodBookable(p).ok);
   const options = periods.map((p) => ({
     period_id: String(p.id || ""),
     period_label: String(p.label || ""),
@@ -122,38 +167,70 @@ function resolvePeriodReference(chalet, args = {}) {
   }));
   const byLabel = String(args.period_label || "");
   if (byLabel) {
+    // TIER 1 — exact canonical TIME match: «من ٧ مساء إلى ٥ صباح», «19:00-05:00»,
+    // «7-5». The owner never needs the stored label wording.
+    const t = parseTimeExpression(byLabel);
+    if (t && t.confidence !== "low") {
+      const sameBoth = periods.filter(
+        (p) => normalizeTimeHHmm(p.start) === t.start && normalizeTimeHHmm(p.end) === t.end,
+      );
+      if (sameBoth.length) {
+        const collapsed = collapseIdentical(sameBoth);
+        if (collapsed) return { ok: true, period: collapsed };
+        return { ok: false, error: "PERIOD_AMBIGUOUS", reason_ar: `توجد عدة فترات بنفس هذا الوقت؛ حدد بالاسم: ${timedListAr(sameBoth)}.`, options };
+      }
+      const sameStart = periods.filter((p) => normalizeTimeHHmm(p.start) === t.start);
+      if (sameStart.length === 1) return { ok: true, period: sameStart[0] };
+      if (sameStart.length > 1) {
+        const collapsed = collapseIdentical(sameStart);
+        if (collapsed) return { ok: true, period: collapsed };
+        return { ok: false, error: "PERIOD_AMBIGUOUS", reason_ar: `توجد عدة فترات تبدأ بهذا الوقت؛ حدد الفترة: ${timedListAr(sameStart)}.`, options };
+      }
+      return {
+        ok: false,
+        error: "PERIOD_NOT_FOUND",
+        reason_ar: options.length
+          ? `لا توجد فترة بهذا الوقت. الفترات المتاحة: ${timedListAr(periods)}.`
+          : "لا توجد فترات مكتملة الوقت لهذا الشاليه.",
+        options,
+      };
+    }
+    // TIER 2/3 — alias + normalized label + cautious substring (existing).
     const match = uniqueNameMatch(periods, byLabel, (p) => p.label, normalizePeriodLookup);
     if (match.status === "ok") return { ok: true, period: match.item };
     const labels = options.map((p) => p.period_label).filter(Boolean).join("، ");
     if (match.status === "ambiguous") {
-      // Real owner data contains periods that are IDENTICAL in every
-      // owner-visible attribute (same label, times, prices — a data-entry
-      // quirk). There is nothing the owner could say to tell them apart, so
-      // collapsing to the first one is deterministic, not a guess. Only
-      // genuinely distinguishable matches stay ambiguous — listed WITH their
-      // times, because "pick the full name" is a dead end for equal names.
-      const fingerprint = (p) =>
-        [p.label, p.start, p.end, Number(p.weekday_price) || 0, Number(p.weekend_price) || 0]
-          .map((v) => String(v ?? "")).join("|");
-      const distinct = new Set(match.matches.map(fingerprint));
-      if (distinct.size === 1) return { ok: true, period: match.matches[0] };
-      const timed = match.matches
-        .map((p) => `«${String(p.label || "—")}» (${String(p.start || "؟")}–${String(p.end || "؟")})`)
-        .join("، ");
-      return { ok: false, error: "PERIOD_AMBIGUOUS", reason_ar: `توجد عدة فترات مطابقة لهذا الاسم؛ حدد الفترة بوقتها: ${timed}.`, options };
+      const collapsed = collapseIdentical(match.matches);
+      if (collapsed) return { ok: true, period: collapsed };
+      return { ok: false, error: "PERIOD_AMBIGUOUS", reason_ar: `توجد عدة فترات مطابقة لهذا الاسم؛ حدد الفترة بوقتها: ${timedListAr(match.matches)}.`, options };
     }
-    return { ok: false, error: "PERIOD_NOT_FOUND", reason_ar: labels ? `لم أجد هذه الفترة. الفترات المفعّلة: ${labels}.` : "لا توجد فترات مفعّلة لهذا الشاليه.", options };
+    // The wording may have matched an UNBOOKABLE (timeless) period — say so
+    // precisely instead of a generic not-found.
+    const timelessHit = all.filter((p) => !isPeriodBookable(p).ok);
+    if (timelessHit.length) {
+      const m2 = uniqueNameMatch(timelessHit, byLabel, (p) => p.label, normalizePeriodLookup);
+      if (m2.status === "ok" || m2.status === "ambiguous") {
+        return { ok: false, error: "PERIOD_TIME_INCOMPLETE", reason_ar: "وقت الفترة غير مكتمل لهذه الفترة، فلا يمكن حجزها. أكمل وقت البداية والنهاية من تبويب الشاليهات ثم أعد المحاولة.", options };
+      }
+    }
+    return { ok: false, error: "PERIOD_NOT_FOUND", reason_ar: labels ? `لم أجد هذه الفترة. الفترات المفعّلة: ${labels}.` : "لا توجد فترات مكتملة الوقت لهذا الشاليه.", options };
   }
   const byId = String(args.period_id || "");
   if (byId) {
     const period = periods.find((p) => String(p.id) === byId);
-    return period
-      ? { ok: true, period }
-      : { ok: false, error: "PERIOD_NOT_FOUND", reason_ar: "معرّف الفترة غير موجود أو غير مفعّل لهذا الشاليه.", options };
+    if (period) return { ok: true, period };
+    const timeless = all.find((p) => String(p.id) === byId);
+    if (timeless) return { ok: false, error: "PERIOD_TIME_INCOMPLETE", reason_ar: "وقت الفترة غير مكتمل لهذه الفترة، فلا يمكن حجزها. أكمل وقت البداية والنهاية من تبويب الشاليهات ثم أعد المحاولة.", options };
+    return { ok: false, error: "PERIOD_NOT_FOUND", reason_ar: "معرّف الفترة غير موجود أو غير مفعّل لهذا الشاليه.", options };
   }
-  if (periods.length === 1) return { ok: true, period: periods[0] };
+  // Grouped single-option auto-pick: several identical duplicates still count
+  // as ONE logical period.
+  if (periods.length >= 1) {
+    const collapsed = collapseIdentical(periods);
+    if (collapsed) return { ok: true, period: collapsed };
+  }
   const labels = options.map((p) => p.period_label).filter(Boolean).join("، ");
-  return { ok: false, error: "PERIOD_REQUIRED", reason_ar: labels ? `اختر الفترة: ${labels}.` : "لا توجد فترات مفعّلة لهذا الشاليه.", options };
+  return { ok: false, error: "PERIOD_REQUIRED", reason_ar: labels ? `اختر الفترة: ${timedListAr(periods)}.` : "لا توجد فترات مكتملة الوقت لهذا الشاليه.", options };
 }
 
 export function resolveBookingCreateArgs(doc, args = {}) {
@@ -179,6 +256,10 @@ export function resolveBookingCreateArgs(doc, args = {}) {
       chalet_name: String(chaletResult.chalet.name || ""),
       period_id: String(periodResult.period.id || ""),
       period_label: String(periodResult.period.label || ""),
+      // Canonical times travel with the payload so the confirmation card can
+      // always render «start → end» without re-reading the document.
+      period_start: normalizeTimeHHmm(periodResult.period.start) || "",
+      period_end: normalizeTimeHHmm(periodResult.period.end) || "",
     },
   };
 }

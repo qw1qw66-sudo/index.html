@@ -4,6 +4,8 @@
 // whether sending is permitted. Pure functions (no I/O, no Date.now — the
 // caller passes today's date / now-ms so runs are reproducible and testable).
 
+import { isSlotAvailable, isPeriodBookable } from "./availability.mjs";
+
 function addDays(iso, n) {
   const [y, m, d] = iso.split("-").map(Number);
   const dt = new Date(Date.UTC(y, m - 1, d));
@@ -45,12 +47,10 @@ export function findEmptyVacancies({ workspaceKey, doc, rule, todayIso }) {
   const eligibleWeekdays = (rule.eligible_weekdays && rule.eligible_weekdays.length)
     ? new Set(rule.eligible_weekdays)
     : null;
-  const periods = (chalet.periods || []).filter((p) => p.active);
-  const booked = new Set(
-    activeBookings(doc)
-      .filter((b) => b.status === "confirmed" && b.chalet_id === chalet.id)
-      .map((b) => `${b.booking_date}|${b.period_id}`),
-  );
+  // Same engine as bookings: time-overlap availability (a cross-period
+  // overlapping booking blocks the slot) and FAIL CLOSED on incomplete times —
+  // the autopilot must never advertise a slot the booking flow would reject.
+  const periods = (chalet.periods || []).filter((p) => p.active && isPeriodBookable(p).ok);
 
   const out = [];
   const horizon = Math.max(1, Math.min(120, Number(rule.scan_days_ahead) || 14));
@@ -59,7 +59,7 @@ export function findEmptyVacancies({ workspaceKey, doc, rule, todayIso }) {
     if (eligibleWeekdays && !eligibleWeekdays.has(weekdayOf(date))) continue;
     for (const p of periods) {
       if (eligiblePeriodIds && !eligiblePeriodIds.has(p.id)) continue;
-      if (booked.has(`${date}|${p.id}`)) continue;
+      if (!isSlotAvailable(doc, chalet.id, date, p)) continue;
       const price = periodPriceHalalas(p, date);
       if (price < (Number(rule.minimum_price_halalas) || 0)) continue; // respect minimum price
       out.push({
@@ -74,8 +74,12 @@ export function findEmptyVacancies({ workspaceKey, doc, rule, todayIso }) {
   return out;
 }
 
-/** Re-check that a specific vacancy is still empty (called before send). */
+/** Re-check that a specific vacancy is still empty (called before send).
+ * Overlap-aware: a cross-period overlapping confirmed booking occupies it. */
 export function isVacancyStillEmpty(doc, { chalet_id, date, period_id }) {
+  const chalet = activeChalets(doc).find((c) => c.id === chalet_id);
+  const period = chalet ? (chalet.periods || []).find((p) => p.id === period_id) : null;
+  if (chalet && period) return isSlotAvailable(doc, chalet_id, date, period);
   return !activeBookings(doc).some(
     (b) => b.status === "confirmed" && b.chalet_id === chalet_id && b.booking_date === date && b.period_id === period_id,
   );

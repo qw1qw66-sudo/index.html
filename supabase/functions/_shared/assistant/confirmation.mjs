@@ -52,6 +52,19 @@ export function prepareConfirmation({
 }
 
 /**
+ * Re-mint the confirmation credentials for an EXISTING prepared action (same
+ * payload hash, fresh token + expiry). Used by refresh recovery and by the
+ * typed-«سجل» reminder: the owner gets a working card again without the old
+ * token ever being persisted anywhere client-side.
+ * @returns {{ token, tokenHash, expiresAtMs }}
+ */
+export function reissueConfirmation({ secret, ttlMs = 5 * 60 * 1000, nowMs }) {
+  const token = `${randomUUID()}.${randomUUID()}`;
+  const base = typeof nowMs === "number" ? nowMs : Date.now();
+  return { token, tokenHash: hashToken(token, secret), expiresAtMs: base + ttlMs };
+}
+
+/**
  * Client-side / handler-side pre-check before calling the SQL consume RPC.
  * The SQL RPC is the AUTHORITATIVE one-time check; this mirrors it so tests and
  * the handler can reason about outcomes without a DB.

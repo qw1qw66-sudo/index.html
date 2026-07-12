@@ -54,6 +54,9 @@ export const TOOL_REGISTRY = {
   find_available_periods: { class: "read", schema: { chalet_id: { type: "string", maxLen: 64 }, chalet_name: { type: "string", maxLen: 120 }, date: { type: "date" } }, desc: "الفترات المتاحة" },
   find_empty_dates: { class: "read", schema: { chalet_id: { type: "string", maxLen: 64 }, chalet_name: { type: "string", maxLen: 120 }, days_ahead: { type: "integer", min: 1, max: 120, default: 14 } }, desc: "الأيام الفاضية" },
   list_outstanding_balances: { class: "read", schema: {}, desc: "المبالغ المتبقية" },
+  // Lookup by the owner's own words — a name fragment or the last digits of a
+  // phone. Results always carry MASKED phones (never a full number back out).
+  find_bookings: { class: "read", schema: { customer_name: { type: "string", maxLen: 120 }, phone_suffix: { type: "string", maxLen: 10 } }, desc: "البحث عن حجز بالاسم أو نهاية الجوال" },
   get_booking_payment_history: { class: "read", schema: { booking_id: { type: "string", required: true, maxLen: 64 } }, desc: "سجل مدفوعات الحجز", usesContract: "get_booking_payments" },
   list_recent_payments: { class: "read", schema: { limit: { type: "integer", min: 1, max: 50, default: 10 } }, desc: "أحدث المدفوعات" },
   get_automation_status: { class: "read", schema: {}, desc: "حالة التسويق التلقائي" },
@@ -109,8 +112,13 @@ function bookingSchema(create, update) {
     chalet_id: { type: "string", maxLen: 64 },
     booking_date: { type: "date", required: !!create },
     period_id: { type: "string", maxLen: 64 },
-    guests: { type: "integer", min: 1, default: 1 },
-    total: { type: "number", min: 0 },
+    // NO default: a new booking's guest count must come from the owner (the
+    // planner asks; nothing is ever silently assumed to be 1).
+    guests: { type: "integer", min: 1, required: !!create },
+    // total 0 is allowed ONLY together with total_is_free (an explicit
+    // «الحجز مجاني») — the executor rejects unintended zero prices.
+    total: { type: "number", min: 0, required: !!create },
+    total_is_free: { type: "boolean" },
     notes: { type: "string", maxLen: 1000 },
   };
   // New bookings may use human names. The server resolves them against the

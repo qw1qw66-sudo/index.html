@@ -233,17 +233,88 @@ function makeDeps() {
         confirmation_token_hash: spec.tokenHash,
         confirmation_expires_at: new Date(spec.expiresAtMs as number).toISOString(),
         expected_workspace_revision: spec.expectedRevision ?? null,
+        thread_id: (spec.threadId as string | null) ?? null,
         status: "prepared",
       }).select("id").single();
       if (error || !data) throw { code: (error as { code?: string })?.code ?? "PREPARE_FAILED" };
       return { action_id: data.id };
     },
+    // The booking pipeline reads the authoritative document once per turn.
+    async getWorkspaceData(wsKey: string) {
+      const d = await workspaceDoc(wsKey);
+      return d ? { data: d.data, updated_at: d.updated_at } : null;
+    },
     async getConfirmationContext(wsKey: string, actionId: string) {
       const { data } = await supabase.from("assistant_actions")
-        .select("id, tool_name, action_type, normalized_payload_json, workspace_key, status")
+        .select("id, tool_name, action_type, normalized_payload_json, workspace_key, status, thread_id, payload_hash, confirmation_expires_at, expected_workspace_revision")
         .eq("id", actionId).eq("workspace_key", wsKey).maybeSingle();
       if (!data) return null;
-      return { action: data, tool_name: data.tool_name, action_type: data.action_type, normalized_payload: data.normalized_payload_json };
+      return {
+        action: data,
+        tool_name: data.tool_name,
+        action_type: data.action_type,
+        normalized_payload: data.normalized_payload_json,
+        thread_id: data.thread_id,
+        payload_hash: data.payload_hash,
+        confirmation_expires_at: data.confirmation_expires_at,
+        expected_workspace_revision: data.expected_workspace_revision,
+        status: data.status,
+      };
+    },
+    // Latest still-pending prepared action for refresh recovery (§ pending
+    // work must survive a reload WITHOUT tokens ever touching storage).
+    async getLatestPreparedAction(wsKey: string) {
+      const { data } = await supabase.from("assistant_actions")
+        .select("id, tool_name, action_type, normalized_payload_json, thread_id, confirmation_expires_at, expected_workspace_revision, status, confirmation_used_at")
+        .eq("workspace_key", wsKey).eq("status", "prepared").is("confirmation_used_at", null)
+        .order("created_at", { ascending: false }).limit(1).maybeSingle();
+      return data ?? null;
+    },
+    // Rotate the confirmation credentials of a still-prepared action in place
+    // (fresh token + expiry; same payload hash, same expected revision). The
+    // old token stops working because only the new hash is stored.
+    async rotateConfirmation(wsKey: string, actionId: string, patch: { tokenHash: string; expiresAtMs: number }) {
+      const { data, error } = await supabase.from("assistant_actions")
+        .update({ confirmation_token_hash: patch.tokenHash, confirmation_expires_at: new Date(patch.expiresAtMs).toISOString(), updated_at: new Date().toISOString() })
+        .eq("id", actionId).eq("workspace_key", wsKey).eq("status", "prepared").is("confirmation_used_at", null)
+        .select("id");
+      if (error || !data || data.length !== 1) return { ok: false, error: "ROTATE_FAILED" };
+      return { ok: true };
+    },
+    // ------- Booking Draft store (server-owned, thread-scoped; private jsonb
+    // carries ONLY the phone and is never selected into model/history paths).
+    async getActiveDraft(wsKey: string, threadId: string) {
+      const { data } = await supabase.from("assistant_booking_drafts")
+        .select("id, fields, status, linked_action_id, updated_at")
+        .eq("workspace_key", wsKey).eq("thread_id", threadId).eq("status", "active").maybeSingle();
+      return data ?? null;
+    },
+    async getDraftPrivate(wsKey: string, threadId: string) {
+      const { data } = await supabase.from("assistant_booking_drafts")
+        .select("private").eq("workspace_key", wsKey).eq("thread_id", threadId).eq("status", "active").maybeSingle();
+      return (data && (data.private as Record<string, unknown>)) || {};
+    },
+    async upsertDraft(wsKey: string, threadId: string, fields: Record<string, unknown>, privateFields: Record<string, unknown> | null, linkedActionId?: string | null) {
+      const existing = await this.getActiveDraft(wsKey, threadId);
+      if (existing) {
+        const patch: Record<string, unknown> = { fields, updated_at: new Date().toISOString() };
+        if (privateFields) patch.private = privateFields;
+        if (linkedActionId !== undefined) patch.linked_action_id = linkedActionId;
+        const { error } = await supabase.from("assistant_booking_drafts")
+          .update(patch).eq("id", (existing as { id: string }).id).eq("workspace_key", wsKey);
+        if (error) throw { code: "DRAFT_SAVE_FAILED" };
+        return { draft_id: (existing as { id: string }).id };
+      }
+      const { data, error } = await supabase.from("assistant_booking_drafts")
+        .insert({ workspace_key: wsKey, thread_id: threadId, fields, private: privateFields || {}, linked_action_id: linkedActionId ?? null, status: "active" })
+        .select("id").single();
+      if (error || !data) throw { code: "DRAFT_SAVE_FAILED" };
+      return { draft_id: data.id };
+    },
+    async closeDraft(wsKey: string, threadId: string, status: "completed" | "cancelled") {
+      await supabase.from("assistant_booking_drafts")
+        .update({ status, updated_at: new Date().toISOString() })
+        .eq("workspace_key", wsKey).eq("thread_id", threadId).eq("status", "active");
     },
     async consumeConfirmation(wsKey: string, actionId: string, tokenHash: string, payloadHash: string, currentRevision: string | null) {
       const { data } = await supabase.rpc("assistant_consume_confirmation", {
@@ -389,6 +460,39 @@ function readFromDoc(name: string, args: Record<string, unknown>, doc: { chalets
     }
     case "get_booking_details":
       return activeB.find((b) => b.id === args.booking_id) ?? { error: "NOT_FOUND" };
+    case "find_bookings": {
+      // Owner lookup by a name fragment or the LAST digits of a phone.
+      // Phones never leave masked: «05••••1234». Cap 5 rows, newest first.
+      const nameQ = String(args.customer_name || "").trim().toLowerCase();
+      const suffix = String(args.phone_suffix || "").replace(/\D/g, "");
+      if (!nameQ && !suffix) return { bookings: [], hint: "EMPTY_QUERY" };
+      const maskPhone = (p: unknown) => {
+        const d = String(p || "").replace(/\D/g, "");
+        return d.length >= 6 ? d.slice(0, 2) + "••••" + d.slice(-4) : d ? "•••" : "";
+      };
+      const hits = activeB
+        .filter((b) => {
+          const nm = String(b.customer_name || "").toLowerCase();
+          const ph = String(b.customer_phone || "").replace(/\D/g, "");
+          if (nameQ && !nm.includes(nameQ)) return false;
+          if (suffix && !(ph && ph.endsWith(suffix))) return false;
+          return true;
+        })
+        .sort((a, b) => String(b.booking_date).localeCompare(String(a.booking_date)))
+        .slice(0, 5)
+        .map((b) => ({
+          booking_id: b.id,
+          customer_name: b.customer_name,
+          phone_masked: maskPhone(b.customer_phone),
+          booking_date: b.booking_date,
+          chalet_id: b.chalet_id,
+          period_id: b.period_id,
+          status: b.status,
+          total: b.total,
+          paid: b.paid,
+        }));
+      return { bookings: hits, masked: true };
+    }
     case "get_chalet_details":
       return activeC.find((c) => c.id === args.chalet_id) ?? { error: "NOT_FOUND" };
     case "find_available_periods": {

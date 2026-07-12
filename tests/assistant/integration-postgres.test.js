@@ -166,7 +166,7 @@ d("REAL Postgres: confirmed assistant actions write real rows", () => {
   });
 
   it("confirmed booking create writes a real booking through save_shared_workspace_v2", async () => {
-    const p = await prep("prepare_booking_create", { customer_name: "عميل جديد", chalet_id: "c1", booking_date: "2099-12-25", period_id: "p1", total: 750 });
+    const p = await prep("prepare_booking_create", { customer_name: "عميل جديد", chalet_id: "c1", booking_date: "2099-12-25", period_id: "p1", guests: 2, total: 750 });
     const r = await conf("confirm_booking_create", p.action_id, p.confirmation_token);
     expect(r.ok).toBe(true);
     const rows = (await pool.query("select count(*)::int n from public.shared_workspaces w, jsonb_array_elements(w.data->'bookings') b where w.workspace_key='WSREAL' and b->>'customer_name'='عميل جديد'")).rows[0];

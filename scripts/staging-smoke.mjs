@@ -108,6 +108,12 @@ async function main() {
           id: "c2", name: "شاليه سكاي", capacity: 6, deleted_at: null,
           periods: [{ id: "s1", label: "صباحي", start: "07:00", end: "12:00", active: true, sort: 1, weekday_price: 300, weekend_price: 500 }],
         },
+        {
+          // Deliberately broken data: a period with NO end time. New bookings
+          // on it must FAIL CLOSED (availability cannot be proven).
+          id: "c3", name: "شاليه بلا وقت", capacity: 4, deleted_at: null,
+          periods: [{ id: "x1", label: "ناقصة", start: "10:00", end: "", active: true, sort: 1, weekday_price: 200, weekend_price: 300 }],
+        },
       ],
       bookings: [{
         id: "b1", customer_name: "عميل تجريبي", customer_phone: FAKE_PHONE,
@@ -239,6 +245,107 @@ async function main() {
     }
   } else {
     record("booking_cancelled", false, "NO_BOOKING_ID");
+  }
+
+  // 10b. BOOKING AGENT conversation (§ live acceptance A) — the deterministic
+  // draft pipeline collects fields ACROSS turns with ZERO model calls, never
+  // re-asks known data, and ends in a structured confirmation card.
+  let agentThread = null, agentAction = null, agentToken = null, agentBookingId = null;
+  {
+    const turn = async (msg) => {
+      const r = await assistant({ message: msg, ...(agentThread ? { thread_id: agentThread } : {}) });
+      const b = r.json || {};
+      if (b.thread_id) agentThread = b.thread_id;
+      return { r, b };
+    };
+    const t1 = await turn("احجز تولوم");
+    const t2 = await turn("بكرة بالليل");
+    const t3 = await turn("أربعة");
+    const t4 = await turn("500 ريال، العميل علي تجربة");
+    const prepared = (t4.b.tool_results || []).find((x) => x.kind === "prepared_action" && x.ok);
+    agentAction = prepared && prepared.action_id;
+    agentToken = prepared && prepared.confirmation_token;
+    const zeroModel = [t1, t2, t3, t4].every((t) => t.b.model_calls === 0);
+    const askedOnce = [t1, t2, t3].every((t) => t.r.status === 200 && t.b.ok === true && typeof t.b.reply_ar === "string" && t.b.reply_ar.length > 0);
+    const cardOk = Boolean(prepared && prepared.card && Array.isArray(prepared.card.rows) && prepared.card.rows.length >= 6);
+    // Never re-asks: the final turn must NOT ask about date/guests again.
+    const noReask = !/(أي يوم|كم عدد الضيوف)/.test(String(t4.b.reply_ar || ""));
+    record("agent_draft_conversation", zeroModel && askedOnce && cardOk && noReask && Boolean(agentToken), "card_rows=" + (prepared && prepared.card ? prepared.card.rows.length : 0));
+  }
+
+  // 10c. Typed «سجل» NEVER executes — it re-displays the card (rotated token).
+  if (agentThread && agentAction) {
+    const r = await assistant({ message: "سجل", thread_id: agentThread });
+    const b = r.json || {};
+    const again = (b.tool_results || []).find((x) => x.kind === "prepared_action");
+    const noExec = !(b.tool_results || []).some((x) => x.kind === "completed_action");
+    const listB = await assistant({ invoke_tool: { name: "list_bookings", arguments: { from: RIYADH_TOMORROW, to: RIYADH_TOMORROW, status: "confirmed" } } });
+    const n = listB.json && listB.json.result && Array.isArray(listB.json.result.bookings) ? listB.json.result.bookings.length : -1;
+    if (again && again.confirmation_token) agentToken = again.confirmation_token; // rotated
+    record("sajil_never_executes", r.status === 200 && b.model_calls === 0 && Boolean(again) && noExec && n === 0, "confirmed_tomorrow=" + n);
+  } else {
+    record("sajil_never_executes", false, "NO_PREPARED_CARD");
+  }
+
+  // 10d. Refresh recovery rotates the token: the OLD token dies, the NEW works.
+  if (agentAction) {
+    const oldToken = agentToken;
+    const rec = await assistant({ pending_action: "latest" });
+    const pending = rec.json && rec.json.pending;
+    const rotated = pending && pending.action_id === agentAction && pending.confirmation_token && pending.confirmation_token !== oldToken;
+    let oldDead = false;
+    if (rotated) {
+      const tryOld = await assistant({ invoke_tool: { name: "confirm_booking_create", arguments: { action_id: agentAction, confirmation_token: oldToken } } });
+      const ob = tryOld.json || {};
+      oldDead = ob.ok !== true && !(ob.kind === "completed_action" && ob.ok);
+      agentToken = pending.confirmation_token;
+    }
+    record("pending_recovery_rotates_token", Boolean(rotated) && oldDead, rotated ? "old_token_rejected=" + oldDead : "NO_PENDING");
+  }
+
+  // 10e. Confirm with the ROTATED token -> exactly one booking; then conflict
+  // on the SAME slot returns Arabic alternatives (numbered, max 3).
+  if (agentAction && agentToken) {
+    const conf = await assistant({ invoke_tool: { name: "confirm_booking_create", arguments: { action_id: agentAction, confirmation_token: agentToken } } });
+    const c = conf.json || {};
+    agentBookingId = c.result && c.result.booking_id;
+    const one = await assistant({ invoke_tool: { name: "list_bookings", arguments: { from: RIYADH_TOMORROW, to: RIYADH_TOMORROW, status: "confirmed" } } });
+    const n = one.json && one.json.result ? (one.json.result.bookings || []).length : -1;
+    record("agent_booking_confirmed_once", conf.status === 200 && c.ok === true && n === 1, "count=" + n);
+
+    const conflict = await assistant({ message: "احجز تولوم بكرة بالليل لشخصين بمئة ريال، العميل تجربة ثانية" });
+    const cb = conflict.json || {};
+    const noCard = !(cb.tool_results || []).some((x) => x.kind === "prepared_action");
+    const talksAlternatives = /محجوزة/.test(String(cb.reply_ar || "")) && /1\./.test(String(cb.reply_ar || ""));
+    const cleanText = !/BOOKING_CONFLICT|[0-9a-f]{8}-[0-9a-f]{4}/i.test(String(cb.reply_ar || ""));
+    record("conflict_returns_alternatives", conflict.status === 200 && cb.model_calls === 0 && noCard && talksAlternatives && cleanText, leaks(conflict.text) || "clean");
+  } else {
+    record("agent_booking_confirmed_once", false, "NO_TOKEN");
+    record("conflict_returns_alternatives", false, "NO_TOKEN");
+  }
+
+  // 10f. A period with incomplete times FAILS CLOSED with a safe Arabic reason.
+  {
+    const r = await assistant({ invoke_tool: { name: "prepare_booking_create", arguments: { customer_name: "تجربة وقت", chalet_name: "بلا وقت", period_label: "ناقصة", booking_date: RIYADH_TOMORROW, guests: 1, total: 100 } } });
+    const b = r.json || {};
+    const blocked = b.ok !== true;
+    const safeText = typeof b.reason_ar === "string" && b.reason_ar.length > 0 && !/[A-Z]{2,}_[A-Z]/.test(b.reason_ar);
+    record("timeless_period_fails_closed", blocked && safeText, String(b.public_code || b.error || r.status).slice(0, 40));
+  }
+
+  // 10g. Cleanup: cancel the agent's synthetic booking (nothing real remains).
+  if (agentBookingId) {
+    const prep = await assistant({ invoke_tool: { name: "prepare_booking_cancel", arguments: { booking_id: agentBookingId } } });
+    const p = prep.json || {};
+    let done = false;
+    if (prep.status === 200 && p.action_id) {
+      const conf = await assistant({ invoke_tool: { name: "confirm_booking_cancel", arguments: { action_id: p.action_id, confirmation_token: p.confirmation_token } } });
+      const c = conf.json || {};
+      done = conf.status === 200 && c.ok === true && c.result && c.result.action === "booking_cancelled";
+    }
+    record("agent_booking_cleanup", done, done ? "cancelled" : "CLEANUP_FAILED");
+  } else {
+    record("agent_booking_cleanup", false, "NO_BOOKING");
   }
 
   // 11. No automation rule exists/enabled on staging.
