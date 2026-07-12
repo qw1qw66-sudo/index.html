@@ -4847,6 +4847,22 @@
           assistantLastMessage = message; // remember for «إعادة المحاولة»
           if (forceText == null) input.value = "";
           assistantAppend("user", message);
+          // The assistant reads and writes the authoritative cloud document.
+          // Letting it answer while this phone has unuploaded edits gives it a
+          // stale chalet/period/booking catalog (the live symptom was asking
+          // «لأي شاليه؟» immediately after that chalet was added locally).
+          // Fail closed before ANY assistant request, not only at confirmation.
+          if (dirty) {
+            feedback(
+              "لديك تغييرات محلية غير مرفوعة — افتح الإعدادات واضغط رفع التعديلات أولاً.",
+              "bad",
+            );
+            assistantAppend(
+              "bot",
+              "لديك تغييرات محلية غير مرفوعة. افتح الإعدادات واضغط «رفع التعديلات»، ثم أعد طلبك حتى أقرأ أحدث بياناتك.",
+            );
+            return;
+          }
           // Typed confirmation words NEVER execute anything. When a card is
           // already on screen, just bring it back into view — the button is
           // the only way to run a sensitive action. (The server enforces the

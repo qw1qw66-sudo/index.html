@@ -1159,14 +1159,15 @@ function contextualCustomerNameAnswer(raw, today) {
 // Same contract for «لأي شاليه تريد الحجز؟» — a short bare reply IS the
 // chalet name («تولوم», «شالية تولوم» — live IMG_6703). The block-list drops
 // «شاليه» (it may legitimately open the answer) but keeps every other-field
-// word; digits are rejected so bare numerals keep answering guests/total.
+// word. Numbered chalet names are valid («تولوم 2»); only an all-numeric
+// answer is rejected so a bare guest/price numeral never becomes a chalet.
 const CHALET_ANSWER_BLOCK_RE =
   /(?:^|\s)(?:حجز|احجز|سجل|فترة|ضيف|ضيوف|شخص|عدد|سعر|المبلغ|جوال|هاتف|رقم|اليوم|بكرة|غدا|تاريخ|صباح|مساء|ليل|ظهر|عصر|من|الى|حتى)(?=\s|$)/;
 function contextualChaletAnswer(raw) {
   const s = String(raw || "").trim().replace(/[.!؟،,;؛:]+$/g, "").trim();
   if (!s || s.length > 60 || s.split(/\s+/).length > 5) return "";
-  if (/\d/.test(foldDigits(s))) return "";
-  if (!/^[\p{L}\s'’-]+$/u.test(s)) return "";
+  if (/^\d+$/.test(foldDigits(s))) return "";
+  if (!/^[\p{L}\p{N}\s'’-]+$/u.test(s)) return "";
   if (isBareConfirmPhrase(s) || CANCEL_DRAFT_RE.test(s) || CHALET_ANSWER_BLOCK_RE.test(s)) return "";
   return s;
 }
