@@ -21,6 +21,7 @@ import { executeConfirmedAction } from "../_shared/assistant/executors.mjs";
 import { corsWrap } from "../_shared/cors.mjs";
 import { riyadhToday, addDays, availablePeriodsOn, isSlotAvailable } from "../_shared/assistant/availability.mjs";
 import { chaletCatalog, resolveBookingCreateArgs as resolveBookingCreateSelection, resolveChaletReference } from "../_shared/assistant/booking-resolution.mjs";
+import { bookingRowsForList, nonDeletedBookingRows } from "../_shared/assistant/booking-reads.mjs";
 
 // deno-lint-ignore no-explicit-any
 declare const Deno: any;
@@ -442,12 +443,12 @@ function buildDraft(kind: string, facts: Record<string, unknown>) {
 function readFromDoc(name: string, args: Record<string, unknown>, doc: { chalets?: unknown[]; bookings?: unknown[] }, nowMs: number) {
   const bookings = (doc.bookings ?? []) as Array<Record<string, unknown>>;
   const chalets = (doc.chalets ?? []) as Array<Record<string, unknown>>;
-  const activeB = bookings.filter((b) => !b.deleted_at);
+  const persistedB = nonDeletedBookingRows(bookings) as Array<Record<string, unknown>>;
   const activeC = chalets.filter((c) => !c.deleted_at);
   const today = riyadhToday(nowMs);
   switch (name) {
     case "get_today_bookings":
-      return { date: today, bookings: activeB.filter((b) => b.booking_date === today) };
+      return { date: today, bookings: bookingRowsForList(bookings).filter((b) => b.booking_date === today) };
     case "list_chalets":
       return chaletCatalog(doc);
     case "list_bookings": {
@@ -455,14 +456,13 @@ function readFromDoc(name: string, args: Record<string, unknown>, doc: { chalets
       const to = String(args.to || "");
       const status = String(args.status || "");
       return {
-        bookings: activeB.filter((b) =>
+        bookings: bookingRowsForList(bookings, status).filter((b) =>
           (!from || String(b.booking_date) >= from) &&
-          (!to || String(b.booking_date) <= to) &&
-          (!status || b.status === status)),
+          (!to || String(b.booking_date) <= to)),
       };
     }
     case "get_booking_details":
-      return activeB.find((b) => b.id === args.booking_id) ?? { error: "NOT_FOUND" };
+      return persistedB.find((b) => b.id === args.booking_id) ?? { error: "NOT_FOUND" };
     case "find_bookings": {
       // Owner lookup by a name fragment or the LAST digits of a phone.
       // Phones never leave masked: «05••••1234». Cap 5 rows, newest first.
@@ -477,7 +477,7 @@ function readFromDoc(name: string, args: Record<string, unknown>, doc: { chalets
         if (d.length < 7) return "•".repeat(d.length);
         return d.slice(0, 2) + "••••" + d.slice(-4);
       };
-      const hits = activeB
+      const hits = persistedB
         .filter((b) => {
           const nm = String(b.customer_name || "").toLowerCase();
           const ph = String(b.customer_phone || "").replace(/\D/g, "");
