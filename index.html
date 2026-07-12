@@ -146,6 +146,10 @@
       .page {
         max-width: 1080px;
         margin: auto;
+        /* Reserve space for the FIXED bottom navigation so the last control
+           on any tab (e.g. the booking card's save button) can always scroll
+           fully above it — nothing is ever stuck underneath. */
+        padding-bottom: calc(84px + env(safe-area-inset-bottom));
       }
       .card,
       .item {
@@ -4563,8 +4567,14 @@
           // already on screen, just bring it back into view — the button is
           // the only way to run a sensitive action. (The server enforces the
           // same rule; this shortcut simply saves a round-trip.)
+          // Narrow to BOOKING cards: for other card types (or none) the word
+          // goes to the server, which answers with the right guidance.
           const liveCard = assistantLatestCard();
-          if (ASSISTANT_CONFIRM_WORDS.test(message) && liveCard) {
+          const liveCardIsBooking = Boolean(
+            liveCard &&
+              liveCard.querySelector('[data-confirm-tool="confirm_booking_create"]'),
+          );
+          if (ASSISTANT_CONFIRM_WORDS.test(message) && liveCardIsBooking) {
             liveCard.scrollIntoView({ block: "center" });
             liveCard.classList.remove("card-flash");
             void liveCard.offsetWidth; // restart the highlight animation
@@ -4715,6 +4725,10 @@
                 delete assistantTokens[actionId];
                 assistantAppend("bot", body.reply_ar || "تم الإلغاء، لم يُحفظ شيء.");
               } else {
+                // The old card's action is retired server-side — its save
+                // button must go with it; a fresh card arrives after the edit.
+                $("assistantActions").innerHTML = "";
+                delete assistantTokens[actionId];
                 assistantAppend("bot", body.reply_ar || "تمام — ماذا تريد تعديله؟ اكتب التغيير فقط.");
               }
             } else {

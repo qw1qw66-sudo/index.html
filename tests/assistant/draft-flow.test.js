@@ -287,6 +287,82 @@ describe("booking agent draft flow (deterministic, zero model calls)", () => {
     expect(deps._executed).toHaveLength(0);
   });
 
+  it("«نعم» accepts a pending suggested price (bare-confirm passes the message through)", async () => {
+    const deps = makeDeps();
+    await chat(deps, "احجز سكاي باسم فهد تجربة");
+    await chat(deps, "بكرة بالليل", "th-1");
+    const q = await chat(deps, "شخصين", "th-1");
+    expect(q.reply_ar).toContain("سعر النظام");
+    // «نعم» is a bare confirm word — it must ACCEPT the suggestion, not loop.
+    const done = await chat(deps, "نعم", "th-1");
+    const prep = (done.tool_results || []).find((r) => r.kind === "prepared_action");
+    expect(prep).toBeTruthy();
+    expect(done.reply_ar).not.toContain("سعر النظام"); // question not re-asked
+  });
+
+  it("«الحجز مجاني» flows end-to-end: prepared with total 0 + explicit free flag, executor accepts", async () => {
+    const deps = makeDeps();
+    const q = await chat(deps, "احجز تولوم بكرة بالليل لشخصين، العميل سعيد تجربة");
+    expect(q.reply_ar).toContain("سعر"); // total still missing -> asked
+    const done = await chat(deps, "الحجز مجاني", "th-1");
+    const prep = (done.tool_results || []).find((r) => r.kind === "prepared_action");
+    expect(prep).toBeTruthy();
+    const args = deps._actions.get(prep.action_id).args;
+    expect(args.total).toBe(0);
+    expect(args.total_is_free).toBe(true);
+    const okc = await post(deps, { invoke_tool: { name: "confirm_booking_create", arguments: { action_id: prep.action_id, confirmation_token: prep.confirmation_token } } });
+    expect(okc.ok).toBe(true);
+    expect(deps._doc.bookings[0].total).toBe(0);
+  });
+
+  it("an EXPIRED token at CONFIRM time returns a fresh card in the 409 (never a dead end)", async () => {
+    const deps = makeDeps();
+    const t = await chat(deps, "احجز تولوم بكرة بالليل لشخصين بمئة ريال، العميل تجربة");
+    const prep = (t.tool_results || []).find((x) => x.kind === "prepared_action");
+    const a = deps._actions.get(prep.action_id);
+    a.expiresAtMs = Date.now() - 1000;
+    // Make the mock enforce expiry like the SQL RPC does.
+    const origConsume = deps.consumeConfirmation;
+    deps.consumeConfirmation = async (k, id, tokenHash) => {
+      const row = deps._actions.get(id);
+      if (row && row.status === "prepared" && Date.now() > row.expiresAtMs) return { ok: false, error: "CONFIRMATION_EXPIRED" };
+      return origConsume(k, id, tokenHash);
+    };
+    const r = await post(deps, { invoke_tool: { name: "confirm_booking_create", arguments: { action_id: prep.action_id, confirmation_token: prep.confirmation_token } } });
+    expect(r.ok).toBe(false);
+    expect(r.fresh_action && r.fresh_action.action_id).toBeTruthy();
+    expect(r.fresh_action.action_id).not.toBe(prep.action_id);
+    expect(deps._actions.get(prep.action_id).status).toBe("expired");
+    expect(deps._executed).toHaveLength(0);
+  });
+
+  it("a later correction re-binds: new date recomputes the suggested price; a bare numeral answers guests (not a stale pick)", async () => {
+    const deps = makeDeps();
+    await chat(deps, "احجز تولوم بكرة بالليل", "th-1");
+    await chat(deps, "احجز تولوم بكرة بالليل"); // ensure thread th-1 opened
+    const f0 = deps._drafts.get("th-1").fields;
+    expect(f0.period_id).toBe("t-pm");
+    // Correction: push the date two days out — the draft must follow.
+    await chat(deps, "خله بعد بكرة", "th-1");
+    const f1 = deps._drafts.get("th-1").fields;
+    expect(f1.booking_date).toBe(addDays(TODAY, 2));
+    // A bare numeral now answers the guests question — it must NOT be
+    // swallowed as a conflict-alternative pick (none are pending).
+    await chat(deps, "٢", "th-1");
+    expect(deps._drafts.get("th-1").fields.guests).toBe(2);
+  });
+
+  it("Persian digits and DD-MM-YYYY answers parse through a real chat turn", async () => {
+    const deps = makeDeps();
+    await chat(deps, "احجز تولوم بالليل");
+    const target = addDays(TODAY, 20);
+    const ddmm = target.split("-").reverse().join("-"); // DD-MM-YYYY
+    await chat(deps, ddmm, "th-1");
+    expect(deps._drafts.get("th-1").fields.booking_date).toBe(target);
+    await chat(deps, "۴ اشخاص", "th-1"); // Persian four
+    expect(deps._drafts.get("th-1").fields.guests).toBe(4);
+  });
+
   it("drafts are thread-scoped: a new thread starts clean and general chat falls to the model", async () => {
     const deps = makeDeps({ modelSeq: [{ ok: true, reply: "أهلاً!", toolCalls: [] }] });
     await chat(deps, "احجز تولوم"); // creates draft on th-1

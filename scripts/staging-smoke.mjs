@@ -250,7 +250,8 @@ async function main() {
   // 10b. BOOKING AGENT conversation (§ live acceptance A) — the deterministic
   // draft pipeline collects fields ACROSS turns with ZERO model calls, never
   // re-asks known data, and ends in a structured confirmation card.
-  let agentThread = null, agentAction = null, agentToken = null, agentBookingId = null;
+  let agentThread = null, agentBookingId = null;
+  let agentAction, agentToken;
   {
     const turn = async (msg) => {
       const r = await assistant({ message: msg, ...(agentThread ? { thread_id: agentThread } : {}) });

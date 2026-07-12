@@ -262,12 +262,15 @@ function makeDeps() {
       };
     },
     // Latest still-pending prepared action for refresh recovery (§ pending
-    // work must survive a reload WITHOUT tokens ever touching storage).
-    async getLatestPreparedAction(wsKey: string) {
-      const { data } = await supabase.from("assistant_actions")
+    // work must survive a reload WITHOUT tokens ever touching storage). When a
+    // threadId is given (typed «سجل» inside a conversation), only THAT
+    // thread's pending action is considered — never another conversation's.
+    async getLatestPreparedAction(wsKey: string, threadId?: string | null) {
+      let q = supabase.from("assistant_actions")
         .select("id, tool_name, action_type, normalized_payload_json, thread_id, confirmation_expires_at, expected_workspace_revision, status, confirmation_used_at")
-        .eq("workspace_key", wsKey).eq("status", "prepared").is("confirmation_used_at", null)
-        .order("created_at", { ascending: false }).limit(1).maybeSingle();
+        .eq("workspace_key", wsKey).eq("status", "prepared").is("confirmation_used_at", null);
+      if (threadId) q = q.eq("thread_id", threadId);
+      const { data } = await q.order("created_at", { ascending: false }).limit(1).maybeSingle();
       return data ?? null;
     },
     // Rotate the confirmation credentials of a still-prepared action in place
@@ -467,8 +470,12 @@ function readFromDoc(name: string, args: Record<string, unknown>, doc: { chalets
       const suffix = String(args.phone_suffix || "").replace(/\D/g, "");
       if (!nameQ && !suffix) return { bookings: [], hint: "EMPTY_QUERY" };
       const maskPhone = (p: unknown) => {
+        // Same semantics as booking-planner.maskPhone: numbers shorter than 7
+        // digits are FULLY hidden (2+4 revealed digits would disclose them).
         const d = String(p || "").replace(/\D/g, "");
-        return d.length >= 6 ? d.slice(0, 2) + "••••" + d.slice(-4) : d ? "•••" : "";
+        if (!d) return "";
+        if (d.length < 7) return "•".repeat(d.length);
+        return d.slice(0, 2) + "••••" + d.slice(-4);
       };
       const hits = activeB
         .filter((b) => {

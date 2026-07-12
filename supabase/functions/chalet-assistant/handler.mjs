@@ -292,19 +292,22 @@ export async function handleAssistant(req, deps) {
     try {
       const bf = first.bookingFields;
       const row0 = await deps.getActiveDraft(wsKey, activeThreadId);
+      // Model output goes in as modelFields ONLY: the planner's merge keeps
+      // owner-typed (parsed) values authoritative and length-caps the rest.
       const modelIncoming = {
-        fields: {
+        fields: {},
+        modelFields: {
           ...(typeof bf.customer_name === "string" && bf.customer_name ? { customer_name: bf.customer_name } : {}),
           ...(Number.isInteger(bf.guests) && bf.guests >= 1 ? { guests: bf.guests } : {}),
-          ...(typeof bf.total === "number" && bf.total > 0 ? { total: bf.total, total_source: "model" } : {}),
+          ...(typeof bf.total === "number" && bf.total > 0 ? { total: bf.total } : {}),
           ...(typeof bf.notes === "string" && bf.notes ? { notes: bf.notes } : {}),
         },
         private: {},
       };
       let merged = mergeDraft(row0 ? row0.fields || {} : {}, modelIncoming);
-      if (!merged.chalet_id && typeof bf.chalet_text === "string" && bf.chalet_text) merged.chalet_text = bf.chalet_text;
-      if (!merged.period_id && typeof bf.period_text === "string" && bf.period_text) merged.period_text = merged.period_text || bf.period_text;
-      if ((row0 && row0.fields) || Object.keys(modelIncoming.fields).length || merged.chalet_text || merged.period_text) {
+      if (!merged.chalet_id && typeof bf.chalet_text === "string" && bf.chalet_text) merged.chalet_text = redactText(bf.chalet_text).slice(0, 120);
+      if (!merged.period_id && typeof bf.period_text === "string" && bf.period_text) merged.period_text = merged.period_text || redactText(bf.period_text).slice(0, 120);
+      if ((row0 && row0.fields) || Object.keys(modelIncoming.modelFields).length || merged.chalet_text || merged.period_text) {
         await deps.upsertDraft(wsKey, activeThreadId, merged, null);
       }
     } catch { /* extraction is best-effort; the chat turn continues */ }
@@ -575,6 +578,15 @@ async function executeTool(deps, { wsKey, pin, norm, activeMemories, secret, raw
         if (outcome.status === "failed") {
           return wrap(422, { ok: false, kind: "completed_action", error: outcome.error_code || "PREVIOUSLY_FAILED", done_ar: "لم يكتمل الإجراء سابقاً. لم يتغيّر شيء." });
         }
+        // A card whose action was retired by «تعديل» or «إلغاء» must explain
+        // itself — not masquerade as "already handled".
+        if (outcome.status === "rejected" || outcome.status === "expired") {
+          return wrap(409, {
+            ok: false,
+            error: outcome.error_code || "ACTION_NOT_PENDING",
+            reason_ar: "أُعيد فتح هذا الطلب للتعديل أو أُلغي، فبطاقته القديمة لم تعد صالحة. أكمل المحادثة وستظهر بطاقة جديدة.",
+          });
+        }
         // Crash recovery: an action left "running" (a crash between confirm and
         // finalize) is completed by RE-DISPATCHING the stored payload. Every
         // underlying contract is idempotent (action-scoped idempotency key,
@@ -636,6 +648,12 @@ async function runConfirmedExecution(deps, { wsKey, pin, actionId, ctx, raw, rec
     safe_result_json: exec.safe_result ?? {},
     error_code: exec.ok ? null : exec.error ?? "UNKNOWN",
   });
+  // The booking's draft is DONE the moment its create succeeds — otherwise the
+  // stale complete draft (with the customer's data) keeps hijacking later
+  // turns and re-prepares a conflict against the owner's own new booking.
+  if (exec.ok && name === "confirm_booking_create" && ctx.thread_id) {
+    try { await deps.closeDraft?.(wsKey, ctx.thread_id, "completed"); } catch { /* non-fatal */ }
+  }
   // Only report completion when the server contract actually succeeded.
   return wrap(exec.ok ? 200 : 422, {
     ok: exec.ok,
@@ -671,6 +689,9 @@ function buildSummaryAr(confirmTool, args) {
 
 function deterministicReadIntent(message, todayIso) {
   const text = String(message || "");
+  // Booking COMMANDS are never read intents — «ابي حجز تولوم» must reach the
+  // booking pipeline, not a lookup. This guard runs before everything.
+  if (BOOKING_INTENT_RE.test(text)) return null;
   const asksAvailability = /(فتر|موعد)/.test(text) && /(فاضي|فاضية|متاح|متاحة)/.test(text) && /(اليوم|لليوم|هذا اليوم)/.test(text);
   if (asksAvailability) return { name: "find_empty_dates", arguments: { days_ahead: 1 } };
   const asksCatalog = /(شاليه|شاليهات)/.test(text) && /(ما\s*هي|وش|ايش|اعرض|اظهر|قائمة|المسجل|عندي|لديك)/.test(text) && !/(احجز|حجز|جهز|سج[ّل]+\s+حجز)/.test(text);
@@ -707,9 +728,11 @@ function deterministicReadIntent(message, todayIso) {
   // Booking lookup by phone suffix: «رقمه ينتهي 1234».
   const suffix = text.match(/(?:رقمه|جواله|رقم جواله|الرقم)\s*(?:ينتهي|اخره|آخره)\s*(?:بـ|ب)?\s*(\d{3,6})/);
   if (suffix) return { name: "find_bookings", arguments: { phone_suffix: suffix[1] } };
-  // Booking lookup by customer name: «حجز علي», «ابحث عن حجز محمد».
-  const byName = text.match(/(?:حجز|حجوزات)\s+(?:العميل\s+)?([\p{L}][\p{L}\s]{1,30})$/u);
-  if (byName && !/(اليوم|بكرة|غدا|القادمة|الفاضية)/.test(byName[1])) {
+  // Booking lookup by customer name: «حجز علي», «ابحث عن حجز محمد». The word
+  // must stand alone («الحجز مجاني» is a free-price statement, not a lookup),
+  // and generic words are never treated as a customer name.
+  const byName = text.match(/(?:^|\s)(?:حجز|حجوزات)\s+(?:العميل\s+)?([\p{L}][\p{L}\s]{1,30})$/u);
+  if (byName && !/(اليوم|بكرة|غدا|القادمة|الفاضية|مجاني|مجانا|جديد|صفر)/.test(byName[1])) {
     return { name: "find_bookings", arguments: { customer_name: byName[1].trim() } };
   }
   return null;
@@ -795,9 +818,9 @@ async function reprepareAction(deps, ctx, confirmToolName, args) {
 
 // Latest pending prepared action, with ROTATED credentials (old token dies).
 // Expired rows are re-prepared from their stored payload instead.
-async function rotateLatestPending(deps, ctx) {
+async function rotateLatestPending(deps, ctx, opts = {}) {
   if (typeof deps.getLatestPreparedAction !== "function") return null;
-  const row = await deps.getLatestPreparedAction(ctx.wsKey);
+  const row = await deps.getLatestPreparedAction(ctx.wsKey, opts.threadId || undefined);
   if (!row) return null;
   const payload = row.normalized_payload_json || {};
   const confirmTool = String(payload.tool || "");
@@ -827,22 +850,30 @@ async function rotateLatestPending(deps, ctx) {
 
 // Typed «سجل/أكد/نعم…»: re-display the pending card (rotated token) or, with
 // a complete draft, prepare the card now. NEVER executes the side effect.
-async function bareConfirmReminder(deps, ctx, { threadId, today }) {
-  const pending = await rotateLatestPending(deps, ctx);
+async function bareConfirmReminder(deps, ctx, { threadId, message, today }) {
+  // Scoped to THIS conversation: «سجل» must never resurface another thread's
+  // (or another feature's) pending action with a working token.
+  const pending = await rotateLatestPending(deps, ctx, { threadId });
   if (pending) {
+    const isBooking = pending.confirm_tool === "confirm_booking_create";
     return {
       ok: true,
-      reply_ar: "الحجز جاهز. راجع البطاقة واضغط حفظ الحجز.",
+      reply_ar: isBooking
+        ? "الحجز جاهز. راجع البطاقة واضغط حفظ الحجز."
+        : "الطلب جاهز. راجع البطاقة ثم اضغط زر التأكيد بنفسك.",
       tool_results: [pending],
     };
   }
   if (threadId && typeof deps.getActiveDraft === "function") {
     const row = await deps.getActiveDraft(ctx.wsKey, threadId);
     if (row) {
+      // The REAL message flows through: «نعم/اعتمد/تمام» while a suggested
+      // price is pending is an ACCEPTANCE the planner must see — an empty
+      // message would re-ask the same question forever.
       const cont = await runBookingPipeline(deps, ctx, {
         threadId,
-        rawMessage: "",
-        message: "",
+        rawMessage: message || "",
+        message: message || "",
         privateFacts: {},
         today,
         forced: true,
@@ -922,9 +953,18 @@ async function runBookingPipeline(deps, ctx, { threadId, rawMessage, message, pr
   );
   if (row && !intent && !factSignal && !pick && !forced) return null;
 
+  // The authoritative document is needed both for corrections (chalet swap)
+  // and for binding/availability below — load it once per turn.
+  const snap0 = typeof deps.getWorkspaceData === "function" ? await deps.getWorkspaceData(ctx.wsKey) : null;
+  const doc0 = snap0 && snap0.data ? snap0.data : null;
+
   // ---- merge this turn's facts into the server draft ----
   let fields = mergeDraft(row ? row.fields || {} : {}, facts);
-  if (!fields.chalet_id && (intent || !row) && rawMessage) fields.chalet_text = rawMessage;
+  // The chalet hint the resolver sees is a REDACTED copy of the message —
+  // fields jsonb is model-visible by design and must never carry a raw phone.
+  const safeMessage = redactText(rawMessage || "").slice(0, 200);
+  if (!fields.chalet_id && (intent || !row) && safeMessage) fields.chalet_text = safeMessage;
+  const dateChanged = Boolean(facts.fields && facts.fields.booking_date);
   if (timeText) {
     fields.period_text = timeText;
     fields.canonical_start = facts.time.start;
@@ -936,11 +976,41 @@ async function runBookingPipeline(deps, ctx, { threadId, rawMessage, message, pr
     delete fields.period_label;
   } else if (periodWord && !fields.period_id) {
     fields.period_text = periodWord;
+  } else if (periodWord && fields.period_id) {
+    // A period CORRECTION by name («خلها الصباحية») unbinds and re-resolves —
+    // otherwise the old slot silently survives the edit.
+    fields.period_text = periodWord;
+    delete fields.period_id;
+    delete fields.period_label;
+  }
+  // A chalet correction by name rebinds too (and its periods with it).
+  if (fields.chalet_id && /شاليه/.test(message) && doc0) {
+    const swap = resolveChaletReference(doc0, { chalet_name: safeMessage });
+    if (swap.ok && String(swap.chalet.id) !== String(fields.chalet_id)) {
+      fields.chalet_id = String(swap.chalet.id);
+      fields.chalet_name = String(swap.chalet.name || "");
+      delete fields.period_id;
+      delete fields.period_label;
+      delete fields.alternatives;
+    }
   }
   if (pick) {
     fields = { ...fields, ...pick };
     delete fields.alternatives;
     delete fields.period_text;
+  } else if (fields.alternatives && (dateChanged || timeText || periodWord)) {
+    // The owner answered the conflict another way — the stale numbered list
+    // must not swallow a later bare numeral (e.g. a guests answer).
+    delete fields.alternatives;
+  }
+  // Any change to the slot invalidates a previously quoted "system price":
+  // the weekday/weekend suggestion belongs to ONE specific date + period.
+  if ((dateChanged || timeText || periodWord || pick) && fields.total_suggested) {
+    if (fields.total_source === "suggested" || fields.total_source === "accepted_suggestion") {
+      delete fields.total;
+      delete fields.total_source;
+    }
+    delete fields.total_suggested;
   }
 
   const priv = (typeof deps.getDraftPrivate === "function" ? await deps.getDraftPrivate(ctx.wsKey, threadId) : {}) || {};
@@ -967,8 +1037,7 @@ async function runBookingPipeline(deps, ctx, { threadId, rawMessage, message, pr
   }
 
   // ---- bind chalet / period / availability against the REAL document ----
-  const snap = typeof deps.getWorkspaceData === "function" ? await deps.getWorkspaceData(ctx.wsKey) : null;
-  const doc = snap && snap.data ? snap.data : null;
+  const doc = doc0;
 
   if (doc && !fields.chalet_id && fields.chalet_text) {
     const cres = resolveChaletReference(doc, { chalet_name: fields.chalet_text });
