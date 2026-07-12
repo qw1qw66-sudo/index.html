@@ -28,20 +28,39 @@ export function normalizeChaletLookup(value) {
   return normalizedTokens(value, CHALET_WORDS).join("");
 }
 
-export function normalizePeriodLookup(value) {
+// Morphology folding WITHIN one word family («مسائية»→«مساء», «بالليل»→«ليل»)
+// — never across families. This is the strict first matching pass, so a
+// chalet that has BOTH a «مسائي» and a «ليلي» period resolves «المسائية» to
+// the evening one and «بالليل» to the night one instead of "ambiguous".
+const FAMILY_CANON = {
+  صباح: "صباح", صباحي: "صباح", صباحية: "صباح", الصبح: "صباح", فجر: "صباح", فجري: "صباح",
+  مساء: "مساء", مسائي: "مساء", مسائية: "مساء", مسايي: "مساء", مسايية: "مساء",
+  ليل: "ليل", ليلي: "ليل", ليلية: "ليل", بالليل: "ليل", ليلا: "ليل", الليلة: "ليل",
+  عشاء: "عشاء", عشائية: "عشاء",
+  نهار: "نهار", نهاري: "نهار", نهارية: "نهار",
+  ظهر: "ظهر", ظهيرة: "ظهر", عصري: "عصر", عصر: "عصر", ضحى: "ضحى", الضحى: "ضحى",
+};
+// Owners say «بالليل/ليلاً/عشاء» for the evening-to-morning slot; real chalets
+// often label it «مسائي». Cross-family fallback used only when the strict
+// pass found nothing.
+const CROSS_FAMILY = { ليل: "مساء", عشاء: "مساء" };
+
+function periodLookupBase(value) {
   const joined = normalizedTokens(value, PERIOD_WORDS).join("");
-  const withoutArticle = joined.startsWith("ال") ? joined.slice(2) : joined;
-  const aliases = {
-    صباح: "صباح", صباحي: "صباح", صباحية: "صباح", الصبح: "صباح", فجر: "صباح", فجري: "صباح",
-    // Owners say «بالليل/ليلاً» for the evening-to-morning slot; real chalets
-    // label it «مسائي». Fold the whole night family onto the evening family so
-    // «بكرة بالليل» matches an evening period without the exact stored label.
-    مساء: "مساء", مسائي: "مساء", مسائية: "مساء", مسايي: "مساء", مسايية: "مساء",
-    ليل: "مساء", ليلي: "مساء", ليلية: "مساء", بالليل: "مساء", ليلا: "مساء", الليلة: "مساء", عشاء: "مساء", عشائية: "مساء",
-    نهار: "نهار", نهاري: "نهار", نهارية: "نهار",
-    ظهر: "ظهر", ظهيرة: "ظهر", عصري: "عصر", عصر: "عصر", ضحى: "ضحى", الضحى: "ضحى",
-  };
-  return aliases[withoutArticle] || withoutArticle;
+  return joined.startsWith("ال") ? joined.slice(2) : joined;
+}
+
+// Strict pass: same-family morphology only.
+export function normalizePeriodNative(value) {
+  const base = periodLookupBase(value);
+  return FAMILY_CANON[base] || base;
+}
+
+// Lenient pass (historical behavior): night/dinner wording folds onto the
+// evening family too.
+export function normalizePeriodLookup(value) {
+  const native = normalizePeriodNative(value);
+  return CROSS_FAMILY[native] || native;
 }
 
 function activeChalets(doc) {
@@ -195,8 +214,14 @@ function resolvePeriodReference(chalet, args = {}) {
         options,
       };
     }
-    // TIER 2/3 — alias + normalized label + cautious substring (existing).
-    const match = uniqueNameMatch(periods, byLabel, (p) => p.label, normalizePeriodLookup);
+    // TIER 2/3 — label matching in two passes: STRICT same-family first
+    // («المسائية» prefers the «مسائي» period, «بالليل» prefers «ليلي» when
+    // both exist), then the lenient cross-family alias (ليل→مساء) only when
+    // the strict pass found nothing.
+    const native = uniqueNameMatch(periods, byLabel, (p) => p.label, normalizePeriodNative);
+    const match = native.status === "ok" || native.status === "ambiguous"
+      ? native
+      : uniqueNameMatch(periods, byLabel, (p) => p.label, normalizePeriodLookup);
     if (match.status === "ok") return { ok: true, period: match.item };
     const labels = options.map((p) => p.period_label).filter(Boolean).join("، ");
     if (match.status === "ambiguous") {
