@@ -310,7 +310,9 @@ async function main() {
     // A COMPETING action on the same slot, prepared while it is still free —
     // its confirm (after the agent's booking lands) is the confirm-time
     // conflict probe of step 10e2.
-    const racePrep = await assistant({ invoke_tool: { name: "prepare_booking_create", arguments: { customer_name: "سباق تجريبي", chalet_name: "تولوم", booking_date: RIYADH_TOMORROW, period_label: "المسائية", total: 100, guests: 2 } } });
+    // Same slot the agent conversation binds: «بكرة بالليل» resolves to the
+    // native night period («ليلي») on the seeded chalet.
+    const racePrep = await assistant({ invoke_tool: { name: "prepare_booking_create", arguments: { customer_name: "سباق تجريبي", chalet_name: "تولوم", booking_date: RIYADH_TOMORROW, period_label: "ليلي", total: 100, guests: 2 } } });
     const race = racePrep.json || {};
 
     const conf = await assistant({ invoke_tool: { name: "confirm_booking_create", arguments: { action_id: agentAction, confirmation_token: agentToken } } });

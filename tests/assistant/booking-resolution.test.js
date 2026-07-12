@@ -120,5 +120,33 @@ describe("authoritative chalet/period name resolution", () => {
     expect(result.reason_ar).toContain("07:00");
     expect(result.reason_ar).toContain("17:00");
   });
+
+  // A chalet with BOTH an evening «مسائي» and a night «ليلي» period (the
+  // staging seed, and common live data): the STRICT same-family pass must
+  // bind each wording to its own family — never «PERIOD_AMBIGUOUS», never
+  // the wrong slot. The cross-family alias (بالليل→مسائي) still applies when
+  // the chalet has no native night period.
+  it("«المسائية» picks مسائي and «بالليل» picks ليلي when a chalet has both", () => {
+    const doc = workspaceDoc();
+    doc.chalets[1].periods.push({ id: "tulum-night", label: "ليلي", start: "23:00", end: "02:00", active: true });
+    const evening = resolveBookingCreateArgs(doc, {
+      customer_name: "عميل تجربة", chalet_name: "تولوم",
+      period_label: "المسائية", booking_date: "2099-07-11",
+    });
+    expect(evening).toMatchObject({ ok: true, args: { period_id: "tulum-pm", period_label: "مسائي" } });
+    const night = resolveBookingCreateArgs(doc, {
+      customer_name: "عميل تجربة", chalet_name: "تولوم",
+      period_label: "بالليل", booking_date: "2099-07-11",
+    });
+    expect(night).toMatchObject({ ok: true, args: { period_id: "tulum-night", period_label: "ليلي" } });
+  });
+
+  it("«بالليل» still falls back to the evening period when no night period exists", () => {
+    const result = resolveBookingCreateArgs(workspaceDoc(), {
+      customer_name: "عميل تجربة", chalet_name: "تولوم",
+      period_label: "بالليل", booking_date: "2099-07-11",
+    });
+    expect(result).toMatchObject({ ok: true, args: { period_id: "tulum-pm", period_label: "مسائي" } });
+  });
 });
 
