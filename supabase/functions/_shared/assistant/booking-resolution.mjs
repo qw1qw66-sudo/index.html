@@ -174,16 +174,20 @@ function timedListAr(list) {
     .join("، ");
 }
 
-function resolvePeriodReference(chalet, args = {}) {
-  const all = activePeriods(chalet);
-  // Bookable periods only: incomplete times FAIL CLOSED for new bookings.
-  const periods = all.filter((p) => isPeriodBookable(p).ok);
-  const options = periods.map((p) => ({
+function periodOptions(list) {
+  return list.map((p) => ({
     period_id: String(p.id || ""),
     period_label: String(p.label || ""),
     start: String(p.start || ""),
     end: String(p.end || ""),
   }));
+}
+
+function resolvePeriodReference(chalet, args = {}) {
+  const all = activePeriods(chalet);
+  // Bookable periods only: incomplete times FAIL CLOSED for new bookings.
+  const periods = all.filter((p) => isPeriodBookable(p).ok);
+  const options = periodOptions(periods);
   const byLabel = String(args.period_label || "");
   if (byLabel) {
     // TIER 1 — exact canonical TIME match: «من ٧ مساء إلى ٥ صباح», «19:00-05:00»,
@@ -196,14 +200,14 @@ function resolvePeriodReference(chalet, args = {}) {
       if (sameBoth.length) {
         const collapsed = collapseIdentical(sameBoth);
         if (collapsed) return { ok: true, period: collapsed };
-        return { ok: false, error: "PERIOD_AMBIGUOUS", reason_ar: `توجد عدة فترات بنفس هذا الوقت؛ حدد بالاسم: ${timedListAr(sameBoth)}.`, options };
+        return { ok: false, error: "PERIOD_AMBIGUOUS", reason_ar: `توجد عدة فترات بنفس هذا الوقت؛ حدد بالاسم: ${timedListAr(sameBoth)}.`, options: periodOptions(sameBoth) };
       }
       const sameStart = periods.filter((p) => normalizeTimeHHmm(p.start) === t.start);
       if (sameStart.length === 1) return { ok: true, period: sameStart[0] };
       if (sameStart.length > 1) {
         const collapsed = collapseIdentical(sameStart);
         if (collapsed) return { ok: true, period: collapsed };
-        return { ok: false, error: "PERIOD_AMBIGUOUS", reason_ar: `توجد عدة فترات تبدأ بهذا الوقت؛ حدد الفترة: ${timedListAr(sameStart)}.`, options };
+        return { ok: false, error: "PERIOD_AMBIGUOUS", reason_ar: `توجد عدة فترات تبدأ بهذا الوقت؛ حدد الفترة: ${timedListAr(sameStart)}.`, options: periodOptions(sameStart) };
       }
       return {
         ok: false,
@@ -227,7 +231,7 @@ function resolvePeriodReference(chalet, args = {}) {
     if (match.status === "ambiguous") {
       const collapsed = collapseIdentical(match.matches);
       if (collapsed) return { ok: true, period: collapsed };
-      return { ok: false, error: "PERIOD_AMBIGUOUS", reason_ar: `توجد عدة فترات مطابقة لهذا الاسم؛ حدد الفترة بوقتها: ${timedListAr(match.matches)}.`, options };
+      return { ok: false, error: "PERIOD_AMBIGUOUS", reason_ar: `توجد عدة فترات مطابقة لهذا الاسم؛ حدد الفترة بوقتها: ${timedListAr(match.matches)}.`, options: periodOptions(match.matches) };
     }
     // The wording may have matched an UNBOOKABLE (timeless) period — say so
     // precisely instead of a generic not-found.

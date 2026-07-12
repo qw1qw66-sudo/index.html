@@ -89,6 +89,8 @@ describe("supabase/migrations — single, ordered source of truth", () => {
       "20260711000005_payment_reads_volatile.sql",
       // Booking Agent: server-owned per-thread drafts (additive only).
       "20260712000006_assistant_booking_drafts.sql",
+      // Existing conflict pairs stay untouched; only NEW pairs block a save.
+      "20260712000007_grandfather_existing_booking_conflicts.sql",
     ]);
   });
 
@@ -102,13 +104,16 @@ describe("supabase/migrations — single, ordered source of truth", () => {
     const m1 = readFileSync("supabase/migrations/20260701000001_atomic_workspace_save.sql", "utf8");
     const m2 = readFileSync("supabase/migrations/20260701000002_payment_ledger.sql", "utf8");
     const m3 = readFileSync("supabase/migrations/20260711000003_chalet_assistant.sql", "utf8");
+    const m7 = readFileSync("supabase/migrations/20260712000007_grandfather_existing_booking_conflicts.sql", "utf8");
     expect(m1).toContain("create or replace function public.save_shared_workspace_v2");
     expect(m1).toContain("create or replace function public.create_shared_workspace");
     expect(m2).toContain("create or replace function public.record_manual_payment");
     expect(m2).toContain("payment_transactions");
     expect(m3).toContain("create or replace function public.assistant_consume_confirmation");
+    expect(m7).toContain("create or replace function public.workspace_doc_new_booking_conflict");
+    expect(m7).toContain("workspace_doc_new_booking_conflict(v_workspace.data, v_data)");
     // Rollback documentation preserved.
-    for (const m of [m1, m2, m3]) expect(m).toMatch(/ROLLBACK/);
+    for (const m of [m1, m2, m3, m7]) expect(m).toMatch(/ROLLBACK/);
   });
 
   it("no old database/migrations copies remain (references were updated)", () => {
@@ -146,6 +151,7 @@ describe("staging smoke script safety", () => {
       "setup_status_rejects_bad_auth", "synthetic_workspace_created", "setup_status_booleans",
       "deepseek_real_grounded_read", "assistant_thread_persisted", "booking_prepared",
       "booking_confirmed_created", "booking_exactly_one", "booking_cancelled",
+      "agent_reported_transcript_exact",
       "automation_rules_all_disabled", "payment_webhook_fails_closed", "autopilot_gated",
     ]) {
       expect(smoke, `step ${step}`).toContain(step);

@@ -557,10 +557,10 @@ describe("booking agent draft flow (deterministic, zero model calls)", () => {
     expect((r.tool_results || []).some((x) => x.kind === "prepared_action")).toBe(false); // NO card
   });
 
-  it("a pre-existing conflicting pair blocks BEFORE the card with the doc-integrity reason", async () => {
+  it("an unrelated pre-existing conflicting pair does not block a safe card", async () => {
     const doc = fixtureDoc();
-    // Two overlapping confirmed bookings on تولوم (07-12 vs an overlapping
-    // 11-13 period) — the SQL guard would reject EVERY save.
+    // Two overlapping legacy bookings on تولوم (07-12 vs 11-13). Migration
+    // 0007 leaves them untouched but no longer blocks a safe سكاي booking.
     doc.chalets[0].periods.push({ id: "t-mid", label: "ظهيرة", start: "11:00", end: "13:00", active: true, sort: 9 });
     doc.bookings.push(
       { id: "old1", customer_name: "قديم أول", chalet_id: "tulum", booking_date: "2099-03-01", period_id: "t-am", guests: 2, total: 100, paid: 0, status: "confirmed", deleted_at: null },
@@ -570,10 +570,8 @@ describe("booking agent draft flow (deterministic, zero model calls)", () => {
     // A COMPLETE booking on the other chalet — its own slot is free.
     const r = await chat(deps, "احجز سكاي بكرة بالليل لشخصين بمئة ريال، العميل تجربة");
     expect(r.model_calls).toBe(0);
-    expect((r.tool_results || []).some((x) => x.kind === "prepared_action")).toBe(false);
-    expect(r.reply_ar).toContain("تعارض قائم");
-    expect(r.reply_ar).toContain("قديم أول");
-    expect(r.reply_ar).toContain("تبويب الحجوزات");
+    expect((r.tool_results || []).some((x) => x.kind === "prepared_action")).toBe(true);
+    expect(r.reply_ar).not.toContain("تعارض قائم");
     expect(deps._executed).toHaveLength(0);
   });
 

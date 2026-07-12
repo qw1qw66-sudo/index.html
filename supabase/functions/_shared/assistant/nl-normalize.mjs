@@ -97,10 +97,42 @@ const RANGE_SEP_RE = /الى|حتى|(?<![a-z])to(?![a-z])|-/;
 // Lone ل separator («من 7 ل 5») — must be standalone so بالليل/ليل survive.
 const LAM_SEP_RE = /(?:^|\s)(ل)(?=\s|$)/;
 
+// Spoken Arabic hours are as common as digits on mobile (notably
+// «من ٧ إلى خمس الصباح»). Fold only standalone hour words; this parser still
+// requires a real range separator, so «عشرة ضيوف» can never become a time by
+// itself. Compound 11/12 forms are folded first.
+const TIME_HOUR_WORDS = {
+  واحد: 1, واحدة: 1, واحده: 1,
+  اثنين: 2, اثنان: 2, ثنين: 2,
+  ثلاثة: 3, ثلاثه: 3, ثلاث: 3,
+  اربعة: 4, اربعه: 4, اربع: 4,
+  خمسة: 5, خمسه: 5, خمس: 5,
+  ستة: 6, سته: 6, ست: 6,
+  سبعة: 7, سبعه: 7, سبع: 7,
+  ثمانية: 8, ثمانيه: 8, ثماني: 8, ثمان: 8,
+  تسعة: 9, تسعه: 9, تسع: 9,
+  عشرة: 10, عشره: 10, عشر: 10,
+};
+const TIME_HOUR_WORD_RE = new RegExp(
+  `(^|[^0-9a-zء-ي])(${Object.keys(TIME_HOUR_WORDS).sort((a, b) => b.length - a.length).join('|')})(?=$|[^0-9a-zء-ي])`,
+  'g',
+);
+function foldTimeHourWords(s) {
+  return s
+    .replace(/(?:^|\s)(?:احد|إحد|احدى|إحدى)\s+عشر(?:ة|ه)?(?=\s|$)/g, (m) => `${m.startsWith(' ') ? ' ' : ''}11`)
+    .replace(/(?:^|\s)(?:اثنا|اثنى|اثني)\s+عشر(?:ة|ه)?(?=\s|$)/g, (m) => `${m.startsWith(' ') ? ' ' : ''}12`)
+    .replace(TIME_HOUR_WORD_RE, (_m, lead, word) => `${lead}${TIME_HOUR_WORDS[word]}`);
+}
+
+// If a range endpoint is missing, later booking fields must not be borrowed
+// as that endpoint. This is the exact guard that keeps «عدد الضيوف ١٠» and
+// «السعر ٣٠٠» out of «من ٧ إلى ...».
+const TIME_FIELD_BREAK_RE = /(?:^|\s)(?:رقم|جوال|الجوال|هاتف|تلفون|موبايل|واتس|اسم|الاسم|العميل|باسم|شاليه|الشاليه|عدد|ضيف|ضيوف|شخص|اشخاص|سعر|السعر|المبلغ|الاجمالي)(?=\s|$)/;
+
 // Parse a TIME RANGE from free text. Range-only: a single lone time -> null.
 export function parseTimeExpression(text) {
   if (typeof text !== 'string' || !text.trim()) return null;
-  const t = normalizeText(text);
+  const t = foldTimeHourWords(normalizeText(text));
 
   // Collect hour tokens, skipping any that sit inside a date-looking span.
   const spans = [];
@@ -113,25 +145,44 @@ export function parseTimeExpression(text) {
     if (!inDate) tokens.push(m);
   }
   if (tokens.length < 2) return null;
-  const first = tokens[0];
-  const second = tokens[1];
 
-  // Locate the separator between the two tokens; «من X … Y» allows a bare gap.
-  const firstEnd = first.index + first[0].length;
-  const between = t.slice(firstEnd, second.index);
-  let sep = RANGE_SEP_RE.exec(between);
-  let sepStart = sep ? sep.index : -1;
-  let sepLen = sep ? sep[0].length : 0;
-  if (!sep) {
-    const lam = LAM_SEP_RE.exec(between);
-    if (lam) {
-      sepStart = lam.index + lam[0].indexOf('ل');
-      sepLen = 1;
-      sep = lam;
+  // Pick the first adjacent pair that is actually joined as a range. The old
+  // implementation blindly picked tokens[0]/tokens[1], which made a guest
+  // count the end hour whenever the owner wrote the end hour as a word.
+  let first = null;
+  let second = null;
+  let sep = null;
+  let sepStart = -1;
+  let sepLen = 0;
+  for (let i = 0; i < tokens.length - 1; i += 1) {
+    const a = tokens[i];
+    const b = tokens[i + 1];
+    const aEnd = a.index + a[0].length;
+    const gap = t.slice(aEnd, b.index);
+    if (TIME_FIELD_BREAK_RE.test(gap)) continue;
+    let found = RANGE_SEP_RE.exec(gap);
+    let foundStart = found ? found.index : -1;
+    let foundLen = found ? found[0].length : 0;
+    if (!found) {
+      const lam = LAM_SEP_RE.exec(gap);
+      if (lam) {
+        foundStart = lam.index + lam[0].indexOf('ل');
+        foundLen = 1;
+        found = lam;
+      }
     }
+    const hasMin = /(?:^|\s)من(?:\s|$)/.test(t.slice(0, a.index));
+    if (!found && !hasMin) continue;
+    first = a;
+    second = b;
+    sep = found;
+    sepStart = foundStart;
+    sepLen = foundLen;
+    break;
   }
-  const hasMin = /(?:^|\s)من(?:\s|$)/.test(t.slice(0, first.index));
-  if (!sep && !hasMin) return null;
+  if (!first || !second) return null;
+
+  const firstEnd = first.index + first[0].length;
 
   const cut = sep ? firstEnd + sepStart : second.index;
   const left = t.slice(0, cut);
@@ -399,6 +450,12 @@ export function extractAmount(text) {
   if (typeof text !== 'string' || !text.trim()) return null;
   // U+066B is the Arabic decimal separator.
   const t = normalizeText(text).replace(/٫/g, '.');
+
+  // An explicit money marker is sufficient even when the owner omits the
+  // currency word: «السعر ٣٠٠», «المبلغ: 500». The marker keeps phone, guest
+  // count and time digits from ever being mistaken for money.
+  const marked = t.match(/(?:^|\s)(?:السعر|سعر|بسعر|المبلغ|الاجمالي)\s*[:=]?\s*(\d+(?:\.\d+)?)(?!\d)/);
+  if (marked) return Number(marked[1]);
 
   // Digits + currency, attached or spaced («٥٠٠ ريال», "500ريال", "500 sar").
   const m = t.match(new RegExp(`(?<![\\d.])(\\d+(?:\\.\\d+)?)\\s*${CURRENCY_RE}`));

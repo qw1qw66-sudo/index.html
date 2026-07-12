@@ -45,9 +45,9 @@ const ERROR_MAP = {
     true,
     "لا يمكن التأكد من توفر هذه الفترة: يوجد حجز قديم بوقت فترة غير مكتمل لهذا الشاليه. أكمل وقت الفترة من «جودة البيانات» في الإعدادات ثم أعد المحاولة.",
   ),
-  // A PRE-EXISTING overlapping pair of confirmed bookings blocks EVERY save
-  // (the SQL guard validates the whole document). Rebooking another slot can
-  // never fix it — the owner must resolve the pair from the bookings tab.
+  // Defensive whole-document fallback when a newly returned conflict token
+  // cannot be tied to the booking currently being written. Migration 0007
+  // grandfathers untouched legacy pairs, so existing alone never triggers it.
   WORKSPACE_DATA_CONFLICT: e(
     "conflict",
     false,

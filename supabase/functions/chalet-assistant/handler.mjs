@@ -24,7 +24,7 @@ import { evaluatePolicy } from "../_shared/assistant/policy.mjs";
 import { normalizeToolCall, TOOL_REGISTRY, buildToolCatalogText } from "../_shared/assistant/tools.mjs";
 import { prepareConfirmation, reissueConfirmation, hashToken, hashPayload } from "../_shared/assistant/confirmation.mjs";
 import { redactText, redactObject } from "../_shared/assistant/redact.mjs";
-import { riyadhToday, availabilityCheck, availabilityFailureAr, findDocConflictPair, docConflictReasonAr } from "../_shared/assistant/availability.mjs";
+import { riyadhToday, availabilityCheck, availabilityFailureAr } from "../_shared/assistant/availability.mjs";
 import { isBareConfirmPhrase, formatDateDisplay, addDaysIso, classifyMeridiemWord, parseTimeExpression } from "../_shared/assistant/nl-normalize.mjs";
 import { resolveChaletReference } from "../_shared/assistant/booking-resolution.mjs";
 import { applySafeError } from "../_shared/assistant/safe-errors.mjs";
@@ -1027,6 +1027,21 @@ function extractPeriodText(message) {
 const CANCEL_DRAFT_RE =
   /^\s*(?:الغ|ألغ|الغي|ألغي|إلغاء|الغاء|كنسل|cancel)\s*(?:الحجز|الطلب|المسودة)?\s*[.!؟]*\s*$/;
 
+// A short answer to our own «باسم من؟» question is a customer name even when
+// the owner naturally replies with just «علي». Keep this contextual and
+// fail-closed: digits, commands, confirmations, dates, times and booking-field
+// wording are never accepted as a name.
+const BARE_NAME_BLOCK_RE =
+  /(?:^|\s)(?:حجز|احجز|سجل|شاليه|فترة|ضيف|ضيوف|شخص|عدد|سعر|المبلغ|جوال|هاتف|رقم|اليوم|بكرة|غدا|تاريخ|صباح|مساء|ليل|ظهر|عصر|من|الى|حتى)(?=\s|$)/;
+function contextualCustomerNameAnswer(raw, today) {
+  const s = String(raw || "").trim().replace(/[.!؟،,;؛:]+$/g, "").trim();
+  if (!s || s.length > 60 || s.split(/\s+/).length > 5) return "";
+  if (!/^[\p{L}\s'’-]+$/u.test(s)) return "";
+  if (isBareConfirmPhrase(s) || CANCEL_DRAFT_RE.test(s) || BARE_NAME_BLOCK_RE.test(s)) return "";
+  const named = extractFacts(`العميل ${s}`, today);
+  return String(named.fields && named.fields.customer_name || "").trim();
+}
+
 // pending_q kind for the FIRST missing field (missingFields returns them in
 // question-priority order already).
 const PENDING_KIND_BY_MISSING = {
@@ -1050,6 +1065,41 @@ function alternativesReplyAr(alts, head) {
       (a.price ? ` — ${a.price} ريال` : ""),
   );
   return h + "\nأقرب الخيارات المتاحة:\n" + lines.join("\n") + "\nاكتب رقم الخيار، أو عدّل التاريخ/الفترة.";
+}
+
+// Turn a resolver ambiguity into the same stored, one-tap selection contract
+// used by conflict recovery. Every option is a real, currently available
+// period from the authoritative document; no id is exposed in the chat.
+function periodChoiceAlternatives(doc, fields, options) {
+  if (!doc || !fields.booking_date || !fields.chalet_id || !Array.isArray(options)) return [];
+  const chalet = (doc.chalets || []).find((c) => String(c.id) === String(fields.chalet_id));
+  if (!chalet) return [];
+  const out = [];
+  for (const opt of options) {
+    const period = (chalet.periods || []).find((p) => String(p.id) === String(opt.period_id));
+    if (!period) continue;
+    const check = availabilityCheck(doc, fields.chalet_id, fields.booking_date, period);
+    if (!check.available) continue;
+    out.push({
+      chalet_id: String(chalet.id || ""),
+      chalet_name: String(chalet.name || ""),
+      date: String(fields.booking_date),
+      period_id: String(period.id || ""),
+      period_label: String(period.label || ""),
+      start: String(period.start || ""),
+      end: String(period.end || ""),
+      price: suggestedPrice(period, fields.booking_date),
+    });
+    if (out.length === 3) break;
+  }
+  return out;
+}
+
+function periodChoiceReplyAr(reason, alts) {
+  const lines = alts.map(
+    (a, i) => `${i + 1}. ${a.period_label || "فترة"} (${a.start}–${a.end})` + (a.price ? ` — ${a.price} ريال` : ""),
+  );
+  return `${reason || "حدد الفترة بالاسم أو بالوقت."}\n${lines.join("\n")}\nاضغط أحد الخيارات أو اكتب رقمه.`;
 }
 
 // The deterministic Booking Agent turn. Returns a full response body (without
@@ -1097,6 +1147,10 @@ async function runBookingPipeline(deps, ctx, { threadId, rawMessage, message, pr
         meridiemAnswered = true;
       }
     }
+  }
+  if (row && pendingQ && pendingQ.kind === "customer_name" && !facts.fields.customer_name) {
+    const contextualName = contextualCustomerNameAnswer(rawMessage, today);
+    if (contextualName) facts.fields.customer_name = contextualName;
   }
   const pick = row ? parseAlternativePick(message, row.fields || {}) : null;
   const timeText = facts.time ? `${facts.time.start}-${facts.time.end}` : "";
@@ -1273,6 +1327,21 @@ async function runBookingPipeline(deps, ctx, { threadId, rawMessage, message, pr
     } else if (pres && (pres.error === "BOOKING_CONFLICT" || pres.error === "AVAILABILITY_UNPROVABLE")) {
       return conflictWithAlternatives(deps, ctx, { fields, doc, today, ask, saveDraft, head: pres.reason_ar });
     } else if (pres && (pres.error === "PERIOD_AMBIGUOUS" || pres.error === "PERIOD_TIME_INCOMPLETE")) {
+      const choices = periodChoiceAlternatives(doc, fields, pres.options);
+      if (pres.error === "PERIOD_AMBIGUOUS" && choices.length) {
+        fields.alternatives = choices;
+        return ask(periodChoiceReplyAr(pres.reason_ar, choices), {
+          pending_q: { kind: "pick" },
+          next_actions: choices.map((a, i) => ({
+            pick: i + 1,
+            chalet_name: a.chalet_name,
+            date: a.date,
+            start: a.start,
+            end: a.end,
+            price: a.price ?? null,
+          })),
+        });
+      }
       return ask(pres.reason_ar || "حدد الفترة بالاسم أو بالوقت.", { pending_q: { kind: "period" } });
     } else if (pres && pres.error === "PERIOD_NOT_FOUND" && fields.period_text) {
       return ask(pres.reason_ar || "لم أجد هذه الفترة. اكتب اسمها أو وقتها كما هو مسجل.", { pending_q: { kind: "period" } });
@@ -1309,16 +1378,6 @@ async function runBookingPipeline(deps, ctx, { threadId, rawMessage, message, pr
     return ask(nextQuestionAr(fields, missing), {
       pending_q: { kind: PENDING_KIND_BY_MISSING[missing[0]] || "fix" },
     });
-  }
-
-  // A pre-existing conflicting pair anywhere in the document blocks EVERY
-  // save (the SQL guard validates the whole doc) — say so BEFORE building a
-  // card the owner cannot use, with both bookings named (live bug A).
-  if (doc) {
-    const pair = findDocConflictPair(doc);
-    if (pair) {
-      return ask(docConflictReasonAr(pair, { tail: "لم يتم تجهيز أي حجز." }));
-    }
   }
 
   // ---- complete: prepare the confirmation card (still nothing saved) ----
