@@ -334,4 +334,35 @@ describe("live transcript corpus (owner-reported conversations, zero model calls
     // The raw phone never appears in any reply (masked only on the card).
     for (const rep of replies) expect(String(rep || "")).not.toContain("0503666853");
   });
+
+  it("R5 (IMG_6703): the bot's own «لأي شاليه؟» question accepts «تولوم» — never «لم أفهم ردّك»", async () => {
+    const deps = makeDeps();
+    const t1 = await chat(deps, "احجز فترة اليوم مساء من ٧ الى ٥ عدد الضيوف ١٠ باسم علي تجربة");
+    expect(t1.model_calls).toBe(0);
+    expect(t1.reply_ar).toContain("لأي شاليه");
+    expect(deps._drafts.get("th-1").fields.pending_q.kind).toBe("chalet");
+    // Live failure: this exact answer got «لم أفهم ردّك» twice.
+    const t2 = await chat(deps, "تولوم", "th-1");
+    expect(t2.model_calls).toBe(0);
+    expect(t2.reply_ar).not.toContain("لم أفهم ردّك");
+    const f = deps._drafts.get("th-1").fields;
+    expect(f.chalet_id).toBe("tulum");
+    expect(f.period_id).toBe("t-pm"); // 19:00–05:00 answer binds the real slot
+    expect(f.guests).toBe(10);
+    expect(t2.reply_ar).toContain("سعر"); // the flow ADVANCES to the price
+    const t3 = await chat(deps, "اعتمد", "th-1");
+    expect((t3.tool_results || []).some((x) => x.kind === "prepared_action")).toBe(true);
+    expect(deps._modelCalls).toHaveLength(0);
+    expect(deps._executed).toHaveLength(0);
+  });
+
+  it("R5 (IMG_6703, 2nd attempt): «شالية تولوم» also answers the chalet question", async () => {
+    const deps = makeDeps();
+    await chat(deps, "احجز فترة اليوم مساء من ٧ الى ٥ عدد الضيوف ١٠ باسم علي تجربة");
+    const r = await chat(deps, "شالية تولوم", "th-1");
+    expect(r.model_calls).toBe(0);
+    expect(r.reply_ar).not.toContain("لم أفهم ردّك");
+    expect(deps._drafts.get("th-1").fields.chalet_id).toBe("tulum");
+    expect(deps._modelCalls).toHaveLength(0);
+  });
 });

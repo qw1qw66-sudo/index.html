@@ -222,6 +222,23 @@ describe("booking agent frontend (structured card + safe errors)", () => {
     const confirmRegion = jsRegion("async function assistantConfirm", "async function assistantDraftAction");
     expect(confirmRegion).toContain("renderNextActionChips(body.next_actions)");
   });
+
+  it("guarded cloud freshness exists: dirty-protected refresh at restore/confirm + a «تحديث» button", () => {
+    // The refresh function and its dirty guard (never clobbers local edits).
+    expect(html).toContain("async function refreshFromCloud");
+    const fn = jsRegion("async function refreshFromCloud", "async function pullWorkspace");
+    expect(fn).toContain("if (dirty)");
+    expect(fn).toContain("ارفعها أولًا ثم حدّث");
+    expect(fn).toContain("adoptServerDoc(r)");
+    // Manual button on the bookings tab.
+    expect(html).toContain('data-action="refresh-cloud"');
+    expect(html).toContain('id="refreshBookingsButton"');
+    // Called after a successful assistant confirm and a session restore.
+    const confirmRegion = jsRegion("async function assistantConfirm", "async function assistantDraftAction");
+    expect(confirmRegion).toContain("refreshFromCloud({ quiet: true })");
+    const restoreRegion = jsRegion("function restoreSessionFromStorage", "function readCredentials");
+    expect(restoreRegion).toContain("if (!restoredDirty) refreshFromCloud({ quiet: true })");
+  });
 });
 
 // ---- Pages artifact: simulate the workflow build (copy + sed) ----

@@ -1,5 +1,6 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { handleAssistant } from "../../supabase/functions/chalet-assistant/handler.mjs";
+import { handleAssistant, PENDING_ANSWER_KINDS } from "../../supabase/functions/chalet-assistant/handler.mjs";
 import { resolveBookingCreateArgs } from "../../supabase/functions/_shared/assistant/booking-resolution.mjs";
 import { riyadhToday, addDays, availabilityCheck, availabilityFailureAr } from "../../supabase/functions/_shared/assistant/availability.mjs";
 
@@ -594,5 +595,133 @@ describe("booking agent draft flow (deterministic, zero model calls)", () => {
     expect(deps._modelCalls).toHaveLength(0);
     expect(deps._drafts.get("th-1")).toBeTruthy();
     expect(deps._drafts.get("th-1").fields.chalet_id).toBe("tulum");
+  });
+});
+
+// R5 «كل سؤال له جواب»: every question the pipeline asks accepts the natural
+// bare answer (live IMG_6703: «تولوم» answered our own chalet question and
+// got «لم أفهم ردّك» — twice). Zero model calls throughout.
+describe("answer matrix: every pending question accepts its bare answer", () => {
+  const OPENER_NO_CHALET = "احجز بكرة بالليل لشخصين بمئة ريال باسم علي تجربة";
+
+  it("«تولوم» answers the chalet question — binds and goes straight to the card", async () => {
+    const deps = makeDeps();
+    const q = await chat(deps, OPENER_NO_CHALET);
+    expect(q.reply_ar).toContain("لأي شاليه");
+    expect(deps._drafts.get("th-1").fields.pending_q.kind).toBe("chalet");
+    const r = await chat(deps, "تولوم", "th-1");
+    expect(r.model_calls).toBe(0);
+    expect(deps._modelCalls).toHaveLength(0);
+    expect(r.reply_ar).not.toContain("لم أفهم ردّك");
+    const f = deps._drafts.get("th-1").fields;
+    expect(f.chalet_id).toBe("tulum");
+    expect(f.period_id).toBe("t-pm"); // stored «بالليل» resolves once bound
+    expect((r.tool_results || []).some((x) => x.kind === "prepared_action")).toBe(true);
+    expect(deps._executed).toHaveLength(0);
+  });
+
+  it("«شالية تولوم» (taa-marbuta) answers the chalet question too", async () => {
+    const deps = makeDeps();
+    await chat(deps, OPENER_NO_CHALET);
+    const r = await chat(deps, "شالية تولوم", "th-1");
+    expect(r.model_calls).toBe(0);
+    expect(r.reply_ar).not.toContain("لم أفهم ردّك");
+    expect(deps._drafts.get("th-1").fields.chalet_id).toBe("tulum");
+    expect((r.tool_results || []).some((x) => x.kind === "prepared_action")).toBe(true);
+  });
+
+  it("an unknown chalet ANSWER re-asks listing the REAL registered names, then recovers", async () => {
+    const deps = makeDeps();
+    await chat(deps, OPENER_NO_CHALET);
+    const miss = await chat(deps, "قصر غير موجود", "th-1");
+    expect(miss.model_calls).toBe(0);
+    expect(miss.reply_ar).not.toContain("لم أفهم ردّك");
+    expect(miss.reply_ar).toContain("الشاليهات المسجلة");
+    expect(miss.reply_ar).toContain("شاليه تولوم");
+    expect(miss.reply_ar).toContain("شاليه سكاي");
+    expect(deps._drafts.get("th-1").fields.pending_q.kind).toBe("chalet");
+    const r = await chat(deps, "تولوم", "th-1");
+    expect(deps._drafts.get("th-1").fields.chalet_id).toBe("tulum");
+    expect((r.tool_results || []).some((x) => x.kind === "prepared_action")).toBe(true);
+  });
+
+  it("a bare CUSTOM period label («دوام») answers the period question; unknown labels list the real ones", async () => {
+    const doc = fixtureDoc();
+    doc.chalets[0].periods.push({ id: "t-dawam", label: "دوام", start: "13:00", end: "17:00", active: true, sort: 3, weekday_price: 200, weekend_price: 250 });
+    const deps = makeDeps({ doc });
+    const q = await chat(deps, "احجز تولوم بكرة لشخصين بمئة ريال باسم علي تجربة");
+    expect(q.reply_ar).toContain("أي فترة");
+    expect(deps._drafts.get("th-1").fields.pending_q.kind).toBe("period");
+    // Unknown bare label: deterministic re-ask with the REAL active labels.
+    const miss = await chat(deps, "سهرة", "th-1");
+    expect(miss.model_calls).toBe(0);
+    expect(miss.reply_ar).not.toContain("لم أفهم ردّك");
+    expect(miss.reply_ar).toContain("الفترات المفعّلة");
+    expect(miss.reply_ar).toContain("دوام");
+    // The real custom label then binds.
+    const r = await chat(deps, "دوام", "th-1");
+    expect(r.model_calls).toBe(0);
+    const f = deps._drafts.get("th-1").fields;
+    expect(f.period_id).toBe("t-dawam");
+    expect((r.tool_results || []).some((x) => x.kind === "prepared_action")).toBe(true);
+  });
+
+  it("«٥٠» answers the TOTAL question as money — guests stay untouched (live: it was filed as guests)", async () => {
+    const deps = makeDeps();
+    const q = await chat(deps, "احجز تولوم بكرة بالليل لشخصين باسم علي تجربة");
+    expect(q.reply_ar).toContain("سعر النظام");
+    expect(deps._drafts.get("th-1").fields.pending_q.kind).toBe("total");
+    const r = await chat(deps, "٥٠", "th-1");
+    expect(r.model_calls).toBe(0);
+    const prep = (r.tool_results || []).find((x) => x.kind === "prepared_action");
+    expect(prep).toBeTruthy();
+    const args = deps._actions.get(prep.action_id).args;
+    expect(args.total).toBe(50);
+    expect(args.guests).toBe(2); // NOT overwritten by the numeral
+    expect(deps._drafts.get("th-1").fields.total_source).toBe("explicit");
+  });
+
+  it("«١٠» answers the GUESTS question (numeral routing never breaks the guests path)", async () => {
+    const deps = makeDeps();
+    const q = await chat(deps, "احجز تولوم بكرة بالليل بمئة ريال باسم علي تجربة");
+    expect(q.reply_ar).toContain("كم عدد الضيوف");
+    expect(deps._drafts.get("th-1").fields.pending_q.kind).toBe("guests");
+    const r = await chat(deps, "١٠", "th-1");
+    expect(r.model_calls).toBe(0);
+    const prep = (r.tool_results || []).find((x) => x.kind === "prepared_action");
+    expect(prep).toBeTruthy();
+    expect(deps._actions.get(prep.action_id).args.guests).toBe(10);
+    expect(deps._actions.get(prep.action_id).args.total).toBe(100);
+  });
+
+  it("a numeral while the CHALET question is pending keeps the guests status quo and re-asks the chalet", async () => {
+    const deps = makeDeps();
+    await chat(deps, "احجز بكرة بالليل بمئة ريال باسم علي تجربة"); // no chalet, no guests
+    expect(deps._drafts.get("th-1").fields.pending_q.kind).toBe("chalet");
+    const r = await chat(deps, "١٠", "th-1");
+    expect(r.model_calls).toBe(0);
+    const f = deps._drafts.get("th-1").fields;
+    expect(f.guests).toBe(10); // filed as guests (pinned status quo)
+    expect(f.chalet_id).toBeUndefined();
+    expect(r.reply_ar).toContain("شاليه"); // the chalet question comes back
+    expect((r.tool_results || []).some((x) => x.kind === "prepared_action")).toBe(false);
+  });
+
+  it("ENUMERATION GUARD: every pending_q kind the handler can emit has a registered answer path", () => {
+    const src = readFileSync(
+      new URL("../../supabase/functions/chalet-assistant/handler.mjs", import.meta.url),
+      "utf8",
+    );
+    const kinds = new Set();
+    // Literal ask() sites: pending_q: { kind: "…" }  and the ask() default
+    // assignment: fields.pending_q = { kind: "fix", … }.
+    for (const m of src.matchAll(/pending_q(?::| =)\s*\{\s*kind:\s*"([a-z_]+)"/g)) kinds.add(m[1]);
+    // The missing-field mapping emits kinds indirectly.
+    const map = src.match(/PENDING_KIND_BY_MISSING = \{([\s\S]*?)\};/);
+    expect(map).toBeTruthy();
+    for (const m of map[1].matchAll(/:\s*"([a-z_]+)"/g)) kinds.add(m[1]);
+    // The regexes really matched the source (guards against silent drift).
+    expect(kinds.size).toBeGreaterThanOrEqual(6);
+    for (const k of kinds) expect(PENDING_ANSWER_KINDS.has(k)).toBe(true);
   });
 });

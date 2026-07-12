@@ -411,6 +411,28 @@ async function main() {
     record("timeless_period_fails_closed", blocked && safeText, String(b.public_code || b.error || r.status).slice(0, 40));
   }
 
+  // 10f2. TAB-TRUTH INVARIANT (IMG_6705 «لا توجد حجوزات»): while the agent's
+  // booking exists, the SAME document read the app's «تحديث»/auto-refresh
+  // uses (get_shared_workspace) must already contain it, dated Riyadh-today.
+  // No leak scan here: the authenticated owner doc legitimately carries the
+  // synthetic phone; nothing from the body is printed.
+  if (agentBookingId) {
+    const r = await http("POST", "/rest/v1/rpc/get_shared_workspace", {
+      body: { p_workspace_key: WS_KEY, p_access_pin: PIN },
+    });
+    const b = r.json || {};
+    const bookings = b && b.data && Array.isArray(b.data.bookings) ? b.data.bookings : [];
+    const mine = bookings.find((x) => String(x.id) === String(agentBookingId));
+    const consistent = Boolean(mine) && mine.booking_date === RIYADH_TODAY && mine.status === "confirmed";
+    record(
+      "today_bookings_read_consistent",
+      r.status === 200 && b.ok === true && consistent && Boolean(b.updated_at),
+      "found=" + Boolean(mine) + ",date_ok=" + (mine ? String(mine.booking_date === RIYADH_TODAY) : "-"),
+    );
+  } else {
+    record("today_bookings_read_consistent", false, "NO_BOOKING");
+  }
+
   // 10g. Cleanup: cancel the agent's synthetic booking (nothing real remains).
   if (agentBookingId) {
     const prep = await assistant({ invoke_tool: { name: "prepare_booking_cancel", arguments: { booking_id: agentBookingId } } });
@@ -445,6 +467,27 @@ async function main() {
       r.status === 200 && b.ok === true && b.model_calls === 0 && (card || asksOne) && phoneHidden && !leaks(r.text),
       "model_calls=" + b.model_calls + ",card=" + card,
     );
+  }
+
+  // 10i. ANSWER MATRIX (IMG_6703): the bot's own «لأي شاليه تريد الحجز؟»
+  // question must accept the bare answer «تولوم» — the live reply was
+  // «لم أفهم ردّك» twice. Fresh thread; stops at the price question, so no
+  // booking and no cleanup.
+  {
+    const t1 = await assistant({ message: "احجز فترة اليوم مساء من ٧ الى ٥ عدد الضيوف ١٠ باسم علي تجربة" });
+    const b1 = t1.json || {};
+    const t1Thread = b1.thread_id || null;
+    const askedChalet = t1.status === 200 && b1.ok === true && b1.model_calls === 0 && /لأي شاليه/.test(String(b1.reply_ar || ""));
+    let advanced = false, detail = "NO_THREAD";
+    if (t1Thread) {
+      const t2 = await assistant({ message: "تولوم", thread_id: t1Thread });
+      const b2 = t2.json || {};
+      const notFallback = !/لم أفهم ردّك/.test(String(b2.reply_ar || ""));
+      const nextQuestion = /سعر|فترة|بطاقة/.test(String(b2.reply_ar || ""));
+      advanced = t2.status === 200 && b2.ok === true && b2.model_calls === 0 && notFallback && nextQuestion && !leaks(t2.text);
+      detail = "asked=" + askedChalet + ",advanced=" + advanced + ",model_calls=" + b2.model_calls;
+    }
+    record("chalet_answer_binds", askedChalet && advanced, detail);
   }
 
   // 11. No automation rule exists/enabled on staging.
