@@ -630,6 +630,21 @@ describe("answer matrix: every pending question accepts its bare answer", () => 
     expect((r.tool_results || []).some((x) => x.kind === "prepared_action")).toBe(true);
   });
 
+  it("a numbered chalet name answers the chalet question; a bare number still cannot", async () => {
+    const doc = fixtureDoc();
+    doc.chalets[0].name = "شاليه تولوم 91";
+    const deps = makeDeps({ doc });
+    await chat(deps, OPENER_NO_CHALET);
+    const numeral = await chat(deps, "10", "th-1");
+    expect(numeral.reply_ar).toContain("لأي شاليه");
+    expect(deps._drafts.get("th-1").fields.chalet_id).toBeUndefined();
+    const r = await chat(deps, "شاليه تولوم ٩١", "th-1");
+    expect(r.model_calls).toBe(0);
+    expect(r.reply_ar).not.toContain("لم أفهم ردّك");
+    expect(deps._drafts.get("th-1").fields.chalet_id).toBe("tulum");
+    expect((r.tool_results || []).some((x) => x.kind === "prepared_action")).toBe(true);
+  });
+
   it("an unknown chalet ANSWER re-asks listing the REAL registered names, then recovers", async () => {
     const deps = makeDeps();
     await chat(deps, OPENER_NO_CHALET);

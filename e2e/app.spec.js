@@ -1031,24 +1031,26 @@ test('assistant create is not called successful until its exact booking is visib
   expect(confirmCalls).toBe(1);
 });
 
-test('assistant booking confirm refuses split-brain execution while local changes are unsaved', async ({ page }) => {
+test('assistant refuses stale cloud answers while local changes are unsaved', async ({ page }) => {
   await mockRpc(page);
-  let confirmCalls = 0;
+  let assistantCalls = 0;
   await page.route('**/functions/v1/chalet-assistant', async (route) => {
-    const body = JSON.parse(route.request().postData() || '{}');
-    if (body.invoke_tool && String(body.invoke_tool.name).startsWith('confirm_')) confirmCalls++;
+    assistantCalls++;
     return route.fulfill({ contentType: 'application/json', body: JSON.stringify(BOOKING_CARD_BODY) });
   });
   await page.goto('/');
   await create(page);
   await createChaletWithSixPeriods(page); // local, dirty, not uploaded
   await page.locator('[data-tab="assistant"]').click();
+  // Opening the tab may perform its own connection probe; the owner's dirty
+  // request itself must add zero assistant calls.
+  const callsBeforeSend = assistantCalls;
   await page.locator('#assistantInput').fill('جهز حجز مهره');
   await page.locator('[data-action="assistant-send"]').click();
-  await page.locator('[data-action="assistant-confirm"]').click();
-  await expect(page.locator('#feedback')).toContainText('ارفع التغييرات المحلية');
-  await expect(page.locator('#assistantActions .action-card')).toHaveCount(1);
-  expect(confirmCalls).toBe(0);
+  await expect(page.locator('#assistantLog')).toContainText('تغييرات محلية غير مرفوعة');
+  await expect(page.locator('#feedback')).toContainText('رفع التعديلات');
+  await expect(page.locator('#assistantActions .action-card')).toHaveCount(0);
+  expect(assistantCalls).toBe(callsBeforeSend);
 });
 
 test('a new manual booking cannot be hidden as an old booking; historical edits remain possible', async ({ page }) => {
