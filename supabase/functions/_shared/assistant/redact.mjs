@@ -2,7 +2,23 @@
 // long-term store. The assistant must NEVER send customer phone numbers to
 // DeepSeek merely to draft wording, and must never persist them in memory.
 
-const PHONE_RE = /(?:\+?9665\d{8}|00966\d{9}|05\d{8}|\b5\d{8}\b)/g;
+// Arabic-Indic (٠-٩) / Persian (۰-۹) digits -> ASCII, 1:1 per character so
+// string indices are preserved. A phone typed on an Arabic keyboard
+// («٠٥٠١٢٣٤٥٦٧») otherwise slipped past a digits-only regex straight to the
+// model and into thread storage.
+function foldDigitsLocal(s) {
+  return String(s ?? "")
+    .replace(/[٠-٩]/g, (c) => String(c.charCodeAt(0) - 0x0660))
+    .replace(/[۰-۹]/g, (c) => String(c.charCodeAt(0) - 0x06f0));
+}
+
+// KSA mobile, tolerating a single space/dash between digit groups
+// («050 123 4567», «050-123-4567») and any optional +966/00966/966 prefix.
+// Matched against the digit-folded copy; over-matching a long digit run only
+// over-redacts, which is the safe direction for PII.
+const SEP = "[\\s\\-]?";
+const PHONE_SRC =
+  "(?<!\\d)(?:\\+?966|00966)?" + SEP + "0?" + SEP + "5(?:" + SEP + "\\d){8}(?!\\d)";
 // Built from fragments so this source itself contains no literal secret token
 // (keeps repo-wide secret scanners from flagging the redactor).
 const SECRETISH_RE = new RegExp(
@@ -13,14 +29,31 @@ const SECRETISH_RE = new RegExp(
   "g",
 );
 
+// Replace phones in `text`, splicing the ORIGINAL string at the folded-match
+// spans (fold is 1:1, so indices line up) — non-phone content, including any
+// Arabic-Indic digits elsewhere, is preserved verbatim.
+function replacePhones(text, replacement) {
+  const orig = String(text ?? "");
+  const folded = foldDigitsLocal(orig);
+  const re = new RegExp(PHONE_SRC, "g");
+  let out = "", last = 0, m;
+  while ((m = re.exec(folded)) !== null) {
+    if (m[0].length === 0) { re.lastIndex += 1; continue; }
+    out += orig.slice(last, m.index) + replacement;
+    last = m.index + m[0].length;
+  }
+  return out + orig.slice(last);
+}
+
 export function redactPhones(text) {
-  return String(text ?? "").replace(PHONE_RE, "[هاتف محجوب]");
+  return replacePhones(text, "[هاتف محجوب]");
 }
 
 export function redactText(text) {
-  return String(text ?? "")
-    .replace(SECRETISH_RE, "[سر محجوب]")
-    .replace(PHONE_RE, "[هاتف محجوب]");
+  return replacePhones(
+    String(text ?? "").replace(SECRETISH_RE, "[سر محجوب]"),
+    "[هاتف محجوب]",
+  );
 }
 
 // Deep-redact an object for logging/model context: drop known-sensitive keys,
@@ -51,10 +84,22 @@ export function redactObject(value, depth = 0) {
   return "[نوع]";
 }
 
+// Canonicalize a KSA number to one form BEFORE hashing so the same customer
+// reached via «0501234567» and «+966 50 123 4567» maps to ONE reference —
+// otherwise the autopilot's opt-out, cooldown and dedupe silently miss.
+function canonicalPhone(phone) {
+  let d = foldDigitsLocal(phone).replace(/\D/g, "");
+  if (d.startsWith("00966")) d = d.slice(5);
+  else if (d.startsWith("966")) d = d.slice(3);
+  if (d.startsWith("0")) d = d.slice(1);
+  if (/^5\d{8}$/.test(d)) return "966" + d;
+  return foldDigitsLocal(phone); // non-KSA: fold only, still deterministic
+}
+
 // Stable, non-reversible customer reference for internal use (no raw phone in
 // AI tables). Not cryptographically strong — just avoids storing the number.
 export function customerReference(workspaceKey, phone) {
-  const s = String(workspaceKey || "") + "|" + String(phone || "");
+  const s = String(workspaceKey || "") + "|" + canonicalPhone(phone);
   let h = 2166136261;
   for (let i = 0; i < s.length; i++) {
     h ^= s.charCodeAt(i);
@@ -64,5 +109,5 @@ export function customerReference(workspaceKey, phone) {
 }
 
 export function hasUnredactedPhone(text) {
-  return PHONE_RE.test(String(text ?? ""));
+  return new RegExp(PHONE_SRC).test(foldDigitsLocal(text));
 }

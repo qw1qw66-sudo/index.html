@@ -964,6 +964,10 @@
               <summary>الحجوزات القديمة (0)</summary>
               <div id="bookingPastList"></div>
             </details>
+            <details id="bookingsCancelledSection" class="section-details">
+              <summary>الحجوزات الملغاة (0)</summary>
+              <div id="bookingCancelledList"></div>
+            </details>
             <div id="bookingEditorParking" class="hidden"></div>
           </div>
           <div id="bookingEditor" class="card editor hidden">
@@ -2887,6 +2891,13 @@
           }
           try {
             backupBeforePush();
+            // Snapshot exactly what we are about to push. If the owner saves
+            // another change while this RPC is in flight (the upload button is
+            // re-enabled by setDirty, and the booking form stays live), the
+            // server echoes the PRE-edit document — adopting it would silently
+            // delete that mid-flight edit from memory, the session snapshot and
+            // the backup ring. We compare against this snapshot on success.
+            const pushedJson = JSON.stringify(state);
             let r = null;
             try {
               // Preferred: atomic compare-and-save (database/migrations/0001).
@@ -2945,13 +2956,25 @@
                 throw new Error("RPC_RESPONSE_NOT_OK");
               r = r1;
             }
-            loadedWorkspace = r;
-            state = normalizeData(r.data);
-            lastCloudCounts = counts(state);
             lastCloudUpdatedAt = String(r.updated_at || "");
-            setDirty(false, "uploaded");
-            renderAll();
-            feedback("تم رفع التعديلات", "good");
+            if (JSON.stringify(state) !== pushedJson) {
+              // A local edit landed mid-flight. The local document is newer
+              // than the server echo — KEEP it and stay dirty; only adopt the
+              // new revision stamp so the next upload's compare-and-save lines
+              // up. The just-saved edit is never lost.
+              loadedWorkspace = { ...r, data: state };
+              lastCloudCounts = counts(normalizeData(r.data));
+              setDirty(true, "upload kept a mid-flight edit");
+              renderAll();
+              feedback("تم رفع تعديلاتك، ولديك تعديل جديد غير مرفوع — اضغط رفع مرة أخرى.", "good");
+            } else {
+              loadedWorkspace = r;
+              state = normalizeData(r.data);
+              lastCloudCounts = counts(state);
+              setDirty(false, "uploaded");
+              renderAll();
+              feedback("تم رفع التعديلات", "good");
+            }
             log("Upload succeeded", { lastCloudUpdatedAt, lastCloudCounts });
           } catch (e) {
             {
@@ -3160,6 +3183,18 @@
             '<div class="empty">لا توجد حجوزات قديمة</div>';
           $("bookingsPastSection").querySelector("summary").textContent =
             "الحجوزات القديمة (" + past.length + ")";
+          // Cancelled bookings live in their OWN reachable section — otherwise
+          // a mistakenly-cancelled booking vanished from every list and could
+          // never be re-opened, re-confirmed, or deleted.
+          const cancelled = activeBookings()
+            .filter((b) => b.status === "cancelled")
+            .slice()
+            .sort((a, b) => b.booking_date.localeCompare(a.booking_date));
+          $("bookingCancelledList").innerHTML =
+            cancelled.map((b) => bookingCard(b, "past")).join("") ||
+            '<div class="empty">لا توجد حجوزات ملغاة</div>';
+          $("bookingsCancelledSection").querySelector("summary").textContent =
+            "الحجوزات الملغاة (" + cancelled.length + ")";
         }
         function parkBookingEditor() {
           const editor = $("bookingEditor");
@@ -4243,12 +4278,16 @@
                 arabicPaymentError(body && body.error),
                 "bad",
               );
+            // Refresh the ledger view FIRST (its first line clears the link
+            // field), THEN show the freshly created link — otherwise the
+            // un-awaited refresh erased the link the instant it appeared,
+            // leaving an unrecoverable ACTIVE_ORDER_EXISTS on retry.
+            await refreshPaymentPanel(currentPaymentBookingId);
             setPaymentLink(body.order && body.order.payment_url);
             feedback(
               "تم إنشاء رابط الدفع. ملاحظة: فتح الرابط لا يعني الدفع — الحالة تتحدث من السجل المالي فقط.",
               "good",
             );
-            refreshPaymentPanel(currentPaymentBookingId);
           } catch (e) {
             feedback("تعذر الاتصال بخدمة روابط الدفع.", "bad");
             log("create-payment-session failed", { message: e.message });
@@ -4447,7 +4486,7 @@
           if (a === "send-payment-link-whatsapp")
             return sendPaymentLinkWhatsApp();
           if (a === "assistant-send") return assistantSend();
-          if (a === "assistant-retry") return assistantSend();
+          if (a === "assistant-retry") return assistantSend(assistantLastMessage);
           if (a === "assistant-new") return assistantNew();
           if (a === "assistant-suggest" && sourceEl)
             return assistantSend(sourceEl.dataset.suggest || "");
@@ -4474,7 +4513,10 @@
         // clear Arabic disabled state and no action is possible.
         let assistantThreadId = null,
           assistantBackendMissing = false,
-          assistantBusy = false;
+          assistantBusy = false,
+          // The last message actually sent — so «إعادة المحاولة» can re-send it
+          // after a failure (the input was already cleared on the first try).
+          assistantLastMessage = "";
         // Self-healing connection probe: after a failure the badge re-checks
         // on backoff (30s→60s→…, 5 tries) and a tap re-checks immediately —
         // a transient outage never leaves a permanently red badge.
@@ -4769,6 +4811,7 @@
           const input = $("assistantInput");
           const message = String(forceText != null ? forceText : input.value || "").trim();
           if (!message) return;
+          assistantLastMessage = message; // remember for «إعادة المحاولة»
           if (forceText == null) input.value = "";
           assistantAppend("user", message);
           // Typed confirmation words NEVER execute anything. When a card is

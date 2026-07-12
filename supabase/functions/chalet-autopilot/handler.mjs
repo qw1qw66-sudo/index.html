@@ -41,10 +41,17 @@ export async function runAutopilot(deps) {
     duplicates_skipped: 0, capped: 0, details: [],
   };
 
+  // Customers already given a message THIS invocation (per workspace): the DB
+  // sent_at rows the cooldown reads do not yet include this run's queued
+  // messages, so without this the same customer is queued once PER vacancy.
+  const contactedByWs = new Map(); // wsKey -> Set<customer_reference>
+
   for (const rule of rules) {
     if (!rule.enabled) continue; // disabled by default; defensive
     summary.rules_processed++;
     const wsKey = rule.workspace_key;
+    let contactedSet = contactedByWs.get(wsKey);
+    if (!contactedSet) { contactedSet = new Set(); contactedByWs.set(wsKey, contactedSet); }
 
     // GLOBAL daily budget for THIS rule on the current Saudi day. cap 0 => zero.
     const dailyCap = Math.max(0, Number(rule.maximum_daily_messages) || 0);
@@ -89,6 +96,7 @@ export async function runAutopilot(deps) {
         nowMs: deps.nowMs,
         customerRefOf: (phone) => deps.customerRefOf(wsKey, phone),
         maxContacts: remainingCap,
+        alreadyContacted: contactedSet, // no repeat within this invocation
       });
 
       if (contacts.eligible.length === 0) {
@@ -112,7 +120,13 @@ export async function runAutopilot(deps) {
       // Official AUTOMATIC sending is intentionally kept DISABLED: even in
       // official mode we only QUEUE. A message is "sent" solely on a Cloud API
       // acknowledgement (a separate delivery path), never invented here.
-      const wantsAuto = rule.automatic_send_enabled === true && mode === "official_cloud_api";
+      // owner_approval_required (DB default TRUE) must gate automatic sending:
+      // a rule with automatic_send_enabled=true but approval still required
+      // must only QUEUE for approval, never auto-queue for send.
+      const wantsAuto =
+        rule.automatic_send_enabled === true &&
+        rule.owner_approval_required === false &&
+        mode === "official_cloud_api";
       let queued = 0, awaiting = 0;
       for (const c of contacts.eligible) {
         if (remainingCap <= 0) break;
@@ -130,6 +144,7 @@ export async function runAutopilot(deps) {
           destination_ref: c.customer_reference, // server resolves the real number later
           status,
         });
+        contactedSet.add(c.customer_reference); // suppress repeats across vacancies
         remainingCap--;
       }
       const emitted = queued + awaiting;

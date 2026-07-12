@@ -172,6 +172,78 @@ test('conflict and voucher use selected period exactly', async ({ page }) => {
   await expect(page.locator('#voucherBox')).toContainText('5:00 م');
 });
 
+test('a cancelled booking stays reachable in its own section and can be re-confirmed', async ({ page }) => {
+  await mockRpc(page);
+  await page.goto('/');
+  await create(page);
+  await createChaletWithSixPeriods(page);
+  await page.locator('[data-tab="bookings"]').click();
+  await page.locator('[data-action="new-booking"]').click();
+  await page.locator('#bookingCustomerName').fill('زبون ملغى');
+  await page.locator('#bookingCustomerPhone').fill('0509999999');
+  await page.locator('#bookingDate').fill(FUTURE_DATE);
+  await page.locator('#bookingTotal').fill('900');
+  await page.locator('[data-action="save-booking"]').click();
+  await expect(page.locator('#bookingList')).toContainText('زبون ملغى');
+
+  // Cancel it via the status dropdown.
+  await page.locator('#bookingList [data-action="edit-booking"]').first().click();
+  await page.selectOption('#bookingStatus', 'cancelled');
+  await page.locator('[data-action="save-booking"]').click();
+
+  // Gone from the main list, present in the dedicated cancelled section.
+  await expect(page.locator('#bookingList')).not.toContainText('زبون ملغى');
+  await expect(page.locator('#bookingsCancelledSection summary')).toContainText('الحجوزات الملغاة (1)');
+  const cancelledList = page.locator('#bookingCancelledList');
+  await expect(cancelledList).toContainText('زبون ملغى');
+
+  // It is re-openable and can be re-confirmed — no longer a dead record.
+  await page.locator('#bookingsCancelledSection summary').click(); // expand
+  await cancelledList.locator('[data-action="edit-booking"]').first().click();
+  await page.selectOption('#bookingStatus', 'confirmed');
+  await page.locator('[data-action="save-booking"]').click();
+  await expect(page.locator('#bookingList')).toContainText('زبون ملغى');
+  await expect(page.locator('#bookingsCancelledSection summary')).toContainText('الحجوزات الملغاة (0)');
+});
+
+test('a booking saved while an upload is in flight is never lost (mid-flight edit kept)', async ({ page }) => {
+  const box = await mockMutableCloud(page);
+  // Make the save RPC slow so we can edit during the in-flight window.
+  await page.route('**/rest/v1/rpc/save_shared_workspace**', async (route) => {
+    const body = JSON.parse(route.request().postData() || '{}');
+    box.exists = true;
+    box.cloud = { ok: true, workspace_key: 'TEST1', updated_at: '2026-01-01T05:00:00.000Z', data: body.p_data };
+    await new Promise((r) => setTimeout(r, 1500));
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify(box.cloud) });
+  });
+  await page.goto('/');
+  await create(page);
+  await createChaletWithSixPeriods(page);
+  await page.locator('[data-tab="bookings"]').click();
+  // Booking A saved locally.
+  await page.locator('[data-action="new-booking"]').click();
+  await page.locator('#bookingCustomerName').fill('حجز أ');
+  await page.locator('#bookingDate').fill(FUTURE_DATE);
+  await page.locator('#bookingTotal').fill('500');
+  await page.locator('[data-action="save-booking"]').click();
+  // Start the slow upload from the settings tab (do NOT await — it resolves
+  // in 1.5s), then immediately go back and save booking B mid-flight.
+  await page.locator('[data-tab="settings"]').click();
+  await page.locator('[data-action="upload"]').click();
+  await page.locator('[data-tab="bookings"]').click();
+  await page.locator('[data-action="new-booking"]').click();
+  await page.locator('#bookingCustomerName').fill('حجز ب');
+  // A different date so B does not conflict with A on the same slot.
+  await page.locator('#bookingDate').fill(new Date(Date.now() + 120 * 86400000).toISOString().slice(0, 10));
+  await page.locator('#bookingTotal').fill('600');
+  await page.locator('[data-action="save-booking"]').click();
+  // Upload resolves: B is kept, both bookings present, still dirty.
+  await expect(page.locator('#feedback')).toContainText('غير مرفوع', { timeout: 5000 });
+  await expect(page.locator('#bookingList')).toContainText('حجز ب');
+  await expect(page.locator('#bookingList')).toContainText('حجز أ');
+  await expect(page.locator('#dirtyBadge')).toContainText('تغييرات');
+});
+
 test('payment panel is safely disabled while the payments backend is missing', async ({ page }) => {
   await mockRpc(page);
   await page.goto('/');

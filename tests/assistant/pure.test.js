@@ -26,6 +26,22 @@ describe("redaction (privacy)", () => {
     expect(a).not.toContain("0501234567");
     expect(customerReference("WS", "0501234567")).not.toBe(customerReference("WS", "0501234568"));
   });
+  it("redacts phones written with spaces/dashes and Arabic-Indic digits", () => {
+    expect(redactText("جواله 050 123 4567 تمام")).not.toContain("4567");
+    expect(redactText("رقمه 050-123-4567")).not.toContain("4567");
+    expect(redactText("اتصل ٠٥٠١٢٣٤٥٦٧ اليوم")).not.toContain("٤٥٦٧");
+    expect(redactText("رقم +966 50 123 4567")).not.toContain("4567");
+    expect(hasUnredactedPhone("٠٥٠١٢٣٤٥٦٧")).toBe(true);
+    // Non-phone content survives verbatim (Arabic digits elsewhere preserved).
+    expect(redactText("عدد الضيوف ٣ بسعر ٥٠٠")).toBe("عدد الضيوف ٣ بسعر ٥٠٠");
+  });
+  it("customerReference canonicalizes KSA format variants to ONE reference", () => {
+    const ref = customerReference("WS", "0501234567");
+    expect(customerReference("WS", "+966 50 123 4567")).toBe(ref);
+    expect(customerReference("WS", "00966501234567")).toBe(ref);
+    expect(customerReference("WS", "٠٥٠١٢٣٤٥٦٧")).toBe(ref);
+    expect(customerReference("WS", "966501234567")).toBe(ref);
+  });
 });
 
 describe("policy engine (memory is context, not authority)", () => {
