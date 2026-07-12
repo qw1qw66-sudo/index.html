@@ -62,7 +62,8 @@ function json(status, body) {
 // the deterministic resolver/planner binds real workspace ids afterwards.
 const BOOKING_FIELDS_INSTRUCTION =
   'إذا كان المستخدم يرتب حجزاً، أضف حقلاً اختيارياً "booking_fields" في ردك JSON يحتوي فقط ما ذكره حرفياً: ' +
-  '{"customer_name"?, "chalet_text"? (اسم الشاليه كما قاله), "date_text"? (كلمة التاريخ كما قالها), "period_text"? (وصف الفترة/الوقت كما قاله), "guests"?, "total"?, "notes"?}. ' +
+  '{"customer_name"?, "chalet_text"? (اسم الشاليه كما قاله), "period_text"? (وصف الفترة/الوقت كما قاله), "notes"?}. ' +
+  "لا تضع تاريخاً أو عدد ضيوف أو مبلغاً أبداً — هذه يفهمها النظام من كلام المستخدم مباشرة. " +
   "لا تخترع قيماً ناقصة، ولا تضع معرفات قواعد بيانات أبداً.";
 
 // Transient model failures (timeout, unreachable, rate limit, 5xx, stochastic
@@ -292,14 +293,13 @@ export async function handleAssistant(req, deps) {
     try {
       const bf = first.bookingFields;
       const row0 = await deps.getActiveDraft(wsKey, activeThreadId);
-      // Model output goes in as modelFields ONLY: the planner's merge keeps
-      // owner-typed (parsed) values authoritative and length-caps the rest.
+      // Model output goes in as modelFields ONLY: the planner's merge accepts
+      // customer_name/notes at most (length-capped) — never guests, totals,
+      // dates or times, which the model must not invent (§5, live bug A).
       const modelIncoming = {
         fields: {},
         modelFields: {
           ...(typeof bf.customer_name === "string" && bf.customer_name ? { customer_name: bf.customer_name } : {}),
-          ...(Number.isInteger(bf.guests) && bf.guests >= 1 ? { guests: bf.guests } : {}),
-          ...(typeof bf.total === "number" && bf.total > 0 ? { total: bf.total } : {}),
           ...(typeof bf.notes === "string" && bf.notes ? { notes: bf.notes } : {}),
         },
         private: {},
@@ -579,11 +579,13 @@ async function executeTool(deps, { wsKey, pin, norm, activeMemories, secret, raw
           return wrap(422, { ok: false, kind: "completed_action", error: outcome.error_code || "PREVIOUSLY_FAILED", done_ar: "لم يكتمل الإجراء سابقاً. لم يتغيّر شيء." });
         }
         // A card whose action was retired by «تعديل» or «إلغاء» must explain
-        // itself — not masquerade as "already handled".
+        // itself — not masquerade as "already handled". action_retired tells
+        // the frontend the card is DEAD (remove it, don't re-arm حفظ).
         if (outcome.status === "rejected" || outcome.status === "expired") {
           return wrap(409, {
             ok: false,
             error: outcome.error_code || "ACTION_NOT_PENDING",
+            action_retired: true,
             reason_ar: "أُعيد فتح هذا الطلب للتعديل أو أُلغي، فبطاقته القديمة لم تعد صالحة. أكمل المحادثة وستظهر بطاقة جديدة.",
           });
         }
@@ -611,8 +613,19 @@ async function executeTool(deps, { wsKey, pin, norm, activeMemories, secret, raw
           return wrap(409, { ok: false, error: consumed.error, fresh_action: freshPrep.prepared });
         }
         // Re-validation failed (e.g. the slot got taken meanwhile): surface
-        // ITS precise safe reason instead of the stale/expired one.
-        if (freshPrep && freshPrep.failure) return wrap(409, freshPrep.failure);
+        // ITS precise safe reason instead of the stale/expired one. This is
+        // the OTHER confirm-time conflict path (a competing save bumps the
+        // revision first), so it gets the same alternatives + terminal
+        // card signal as an executor conflict (live bug C).
+        if (freshPrep && freshPrep.failure) {
+          const fb = String(freshPrep.failure.error || "").split(":", 1)[0];
+          const extra =
+            (fb === "BOOKING_CONFLICT" || fb === "AVAILABILITY_UNPROVABLE") &&
+            String(payload.tool || "") === "confirm_booking_create"
+              ? await confirmConflictRecovery(deps, wsKey, ctx, { reason_ar: freshPrep.failure.reason_ar })
+              : null;
+          return wrap(409, { ...freshPrep.failure, ...(extra || {}), action_retired: true });
+        }
       }
       return wrap(409, { ok: false, error: consumed.error });
     }
@@ -654,6 +667,16 @@ async function runConfirmedExecution(deps, { wsKey, pin, actionId, ctx, raw, rec
   if (exec.ok && name === "confirm_booking_create" && ctx.thread_id) {
     try { await deps.closeDraft?.(wsKey, ctx.thread_id, "completed"); } catch { /* non-fatal */ }
   }
+  // A confirm-time availability failure (the slot got taken between prepare
+  // and confirm, or a data-quality block) must NOT dead-end: attach the
+  // precise reason + numbered alternatives, and remember them on the still-
+  // active draft so «١» picks work on the very next turn (live bug C).
+  const failBase = String(exec.ok ? "" : exec.error || "").split(":", 1)[0];
+  const failExtra =
+    !exec.ok && name === "confirm_booking_create" &&
+    (failBase === "BOOKING_CONFLICT" || failBase === "AVAILABILITY_UNPROVABLE" || failBase === "PERIOD_TIME_INCOMPLETE")
+      ? await confirmConflictRecovery(deps, wsKey, ctx, exec)
+      : null;
   // Only report completion when the server contract actually succeeded.
   return wrap(exec.ok ? 200 : 422, {
     ok: exec.ok,
@@ -661,10 +684,62 @@ async function runConfirmedExecution(deps, { wsKey, pin, actionId, ctx, raw, rec
     result: exec.ok ? exec.safe_result ?? {} : undefined,
     error: exec.ok ? undefined : exec.error,
     ...(recovered ? { recovered: true } : {}),
+    // Executor-provided reason passes through; the recovery payload (reason +
+    // numbered alternatives) supersedes it when built.
+    ...(!exec.ok && !failExtra && typeof exec.reason_ar === "string" && exec.reason_ar ? { reason_ar: exec.reason_ar } : {}),
+    ...(failExtra || {}),
     done_ar: exec.ok
       ? (recovered ? "تم إكمال إجراء كان متوقفاً، وتأكيده من الخادم." : "تم تنفيذ الإجراء وتأكيده من الخادم.")
       : "لم يكتمل الإجراء. لم يتغيّر شيء بدون تأكيد الخادم.",
   });
+}
+
+// Build the recovery payload for a failed confirm_booking_create: numbered
+// REAL alternatives (reusing findAlternatives) + the stored-draft update that
+// makes a subsequent numeric pick resolvable. Never throws — a failed
+// recovery just leaves the plain safe error.
+async function confirmConflictRecovery(deps, wsKey, ctx, exec) {
+  try {
+    const payload = ctx.normalized_payload || {};
+    const args = payload.args || {};
+    if (!args.chalet_id || !args.booking_date) return null;
+    const snap = typeof deps.getWorkspaceData === "function" ? await deps.getWorkspaceData(wsKey) : null;
+    const doc = snap && snap.data ? snap.data : null;
+    if (!doc) return null;
+    const chalet = (doc.chalets || []).find((c) => String(c.id) === String(args.chalet_id));
+    const period =
+      (chalet ? (chalet.periods || []).find((p) => String(p.id) === String(args.period_id)) : null) ||
+      (args.period_start
+        ? { label: args.period_label || "", start: args.period_start, end: args.period_end }
+        : null);
+    let alts = [];
+    try {
+      alts = findAlternatives(doc, args.chalet_id, args.booking_date, period, { max: 3, todayIso: riyadhToday(Date.now()) }) || [];
+    } catch {
+      alts = [];
+    }
+    if (ctx.thread_id && typeof deps.getActiveDraft === "function" && typeof deps.upsertDraft === "function") {
+      try {
+        const row = await deps.getActiveDraft(wsKey, ctx.thread_id);
+        if (row) {
+          await deps.upsertDraft(wsKey, ctx.thread_id, { ...(row.fields || {}), alternatives: alts }, null);
+        }
+      } catch { /* the reply still lists the options */ }
+    }
+    return {
+      reason_ar: alternativesReplyAr(alts, typeof exec.reason_ar === "string" ? exec.reason_ar : ""),
+      next_actions: alts.map((a, i) => ({
+        pick: i + 1,
+        chalet_name: a.chalet_name,
+        date: a.date,
+        start: a.start,
+        end: a.end,
+        price: a.price ?? null,
+      })),
+    };
+  } catch {
+    return null;
+  }
 }
 
 function buildSummaryAr(confirmTool, args) {
@@ -771,6 +846,16 @@ function withPrivateBookingFacts(call, facts) {
 
 const BOOKING_INTENT_RE =
   /(احجز|أحجز|احجزلي|ابي حجز|أبي حجز|ابغى حجز|أبغى حجز|بغيت حجز|جهز حجز|جهّز حجز|جهزلي حجز|حجز جديد|سوي حجز|اعمل حجز|رتب حجز)/;
+
+// Wording that clearly TRIES to state a date (tomorrow-family words, weekday
+// names, «تاريخ», «يوم …»). Consulted ONLY when the deterministic parser
+// extracted nothing from an active-draft turn: instead of falling through to
+// the model (whose bogus tool call reads «لم أفهم هذا الطلب كأمر مدعوم» — live
+// bug B), the pipeline asks ONE precise date question.
+const DATEISH_RE =
+  /(?:^|[^ء-ي])(?:بكر[ةهىا]|بكر|باكرا?|غدا?|تاريخ|يوم|الجمع[ةه]|السبت|الاحد|الأحد|الاثنين|الإثنين|الثلاثاء|الاربعاء|الأربعاء|الخميس)(?![ء-ي])/;
+const DATE_CLARIFY_AR =
+  "لم أفهم التاريخ. اكتب مثل: بكرة، بعد بكرة، الجمعة، أو 15-08-2026.";
 
 // The structured card for a booking prepare — rendered verbatim by the
 // frontend. No ids, no tokens; phone only masked.
@@ -914,14 +999,17 @@ function extractPeriodText(message) {
 }
 
 const CONFLICT_HEAD_AR = "هذه الفترة محجوزة بالفعل. لم يتم حفظ الحجز.";
-function alternativesReplyAr(alts) {
-  if (!alts.length) return CONFLICT_HEAD_AR + " جرّب تاريخاً أو فترة أخرى.";
+// head: a richer first line when the caller has one (e.g. WHICH booking
+// blocks, from availabilityFailureAr) — falls back to the generic conflict.
+function alternativesReplyAr(alts, head) {
+  const h = typeof head === "string" && head.trim() ? head.trim() : CONFLICT_HEAD_AR;
+  if (!alts.length) return h + " جرّب تاريخاً أو فترة أخرى.";
   const lines = alts.map(
     (a, i) =>
       `${i + 1}. ${a.chalet_name} — ${formatDateDisplay(a.date)} — ${a.start}–${a.end}` +
       (a.price ? ` — ${a.price} ريال` : ""),
   );
-  return CONFLICT_HEAD_AR + "\nأقرب الخيارات المتاحة:\n" + lines.join("\n") + "\nاكتب رقم الخيار، أو عدّل التاريخ/الفترة.";
+  return h + "\nأقرب الخيارات المتاحة:\n" + lines.join("\n") + "\nاكتب رقم الخيار، أو عدّل التاريخ/الفترة.";
 }
 
 // The deterministic Booking Agent turn. Returns a full response body (without
@@ -951,7 +1039,14 @@ async function runBookingPipeline(deps, ctx, { threadId, rawMessage, message, pr
       (facts.private && facts.private.customer_phone) ||
       periodWord,
   );
-  if (row && !intent && !factSignal && !pick && !forced) return null;
+  if (row && !intent && !factSignal && !pick && !forced) {
+    // Mid-draft date wording the parser could not read never goes to the
+    // model — clarify deterministically (nothing merged, nothing saved).
+    if (DATEISH_RE.test(message)) {
+      return { ok: true, reply_ar: DATE_CLARIFY_AR, tool_results: [] };
+    }
+    return null;
+  }
 
   // The authoritative document is needed both for corrections (chalet swap)
   // and for binding/availability below — load it once per turn.
@@ -1067,8 +1162,8 @@ async function runBookingPipeline(deps, ctx, { threadId, rawMessage, message, pr
       if (pres.args.period_start) fields.canonical_start = String(pres.args.period_start);
       if (pres.args.period_end) fields.canonical_end = String(pres.args.period_end);
       delete fields.period_text;
-    } else if (pres && pres.error === "BOOKING_CONFLICT") {
-      return conflictWithAlternatives(deps, ctx, { fields, doc, today, ask, saveDraft });
+    } else if (pres && (pres.error === "BOOKING_CONFLICT" || pres.error === "AVAILABILITY_UNPROVABLE")) {
+      return conflictWithAlternatives(deps, ctx, { fields, doc, today, ask, saveDraft, head: pres.reason_ar });
     } else if (pres && (pres.error === "PERIOD_AMBIGUOUS" || pres.error === "PERIOD_TIME_INCOMPLETE")) {
       return ask(pres.reason_ar || "حدد الفترة بالاسم أو بالوقت.");
     } else if (pres && pres.error === "PERIOD_NOT_FOUND" && fields.period_text) {
@@ -1089,8 +1184,8 @@ async function runBookingPipeline(deps, ctx, { threadId, rawMessage, message, pr
       { chalet_id: fields.chalet_id, period_id: fields.period_id, booking_date: fields.booking_date },
       ctx.pin,
     );
-    if (recheck && recheck.error === "BOOKING_CONFLICT") {
-      return conflictWithAlternatives(deps, ctx, { fields, doc, today, ask, saveDraft });
+    if (recheck && (recheck.error === "BOOKING_CONFLICT" || recheck.error === "AVAILABILITY_UNPROVABLE")) {
+      return conflictWithAlternatives(deps, ctx, { fields, doc, today, ask, saveDraft, head: recheck.reason_ar });
     }
   }
 
@@ -1136,8 +1231,8 @@ async function runBookingPipeline(deps, ctx, { threadId, rawMessage, message, pr
       tool_results: [prepared],
     };
   }
-  if (prepared && prepared.error === "BOOKING_CONFLICT") {
-    return conflictWithAlternatives(deps, ctx, { fields, doc, today, ask, saveDraft });
+  if (prepared && (prepared.error === "BOOKING_CONFLICT" || prepared.error === "AVAILABILITY_UNPROVABLE")) {
+    return conflictWithAlternatives(deps, ctx, { fields, doc, today, ask, saveDraft, head: prepared.reason_ar });
   }
   // Any other prepare failure: keep the draft, surface the SAFE reason.
   const safe = applySafeError(prepared || { ok: false, error: "PREPARE_FAILED" });
@@ -1145,7 +1240,7 @@ async function runBookingPipeline(deps, ctx, { threadId, rawMessage, message, pr
 }
 
 // Conflict → up to three REAL alternatives, numbered, selectable by reply.
-async function conflictWithAlternatives(deps, ctx, { fields, doc, today, ask }) {
+async function conflictWithAlternatives(deps, ctx, { fields, doc, today, ask, head }) {
   let alts = [];
   if (doc && fields.chalet_id && fields.booking_date) {
     const chalet = (doc.chalets || []).find((c) => String(c.id) === String(fields.chalet_id));
@@ -1162,7 +1257,7 @@ async function conflictWithAlternatives(deps, ctx, { fields, doc, today, ask }) 
     }
   }
   fields.alternatives = alts;
-  return ask(alternativesReplyAr(alts), {
+  return ask(alternativesReplyAr(alts, head), {
     next_actions: alts.map((a, i) => ({
       pick: i + 1,
       chalet_name: a.chalet_name,

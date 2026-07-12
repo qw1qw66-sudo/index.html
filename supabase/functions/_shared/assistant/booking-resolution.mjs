@@ -3,7 +3,7 @@
 // real ids that already exist in this workspace, or fails closed with real
 // choices from the document.
 
-import { isSlotAvailable, isPeriodBookable, normalizeTimeHHmm } from "./availability.mjs";
+import { availabilityCheck, availabilityFailureAr, isPeriodBookable, normalizeTimeHHmm } from "./availability.mjs";
 import { parseTimeExpression } from "./nl-normalize.mjs";
 
 const ARABIC_MARKS = /[\u0610-\u061a\u064b-\u065f\u0670\u06d6-\u06ed\u0640]/g;
@@ -241,12 +241,14 @@ export function resolveBookingCreateArgs(doc, args = {}) {
     return { ...periodResult, chalet_name: String(chaletResult.chalet.name || "") };
   }
   const date = String(args.booking_date || "");
-  if (date && !isSlotAvailable(doc, chaletResult.chalet.id, date, periodResult.period)) {
-    return {
-      ok: false,
-      error: "BOOKING_CONFLICT",
-      reason_ar: `الفترة «${periodResult.period.label || "—"}» في «${chaletResult.chalet.name || "—"}» محجوزة بهذا التاريخ. لم يتم تجهيز أي حجز.`,
-    };
+  if (date) {
+    const check = availabilityCheck(doc, chaletResult.chalet.id, date, periodResult.period);
+    if (!check.available) {
+      // A real overlap and a legacy-data block get DIFFERENT codes + reasons
+      // (the owner can act on «who blocks» vs «fix the period times»).
+      const fail = availabilityFailureAr(check, { tail: "لم يتم تجهيز أي حجز." });
+      return { ok: false, error: fail.error, reason_ar: fail.reason_ar };
+    }
   }
   return {
     ok: true,

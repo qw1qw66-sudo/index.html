@@ -23,7 +23,7 @@
 
 import { riyalsNumberToHalalas } from "../ledger-core.mjs";
 import { resolveOutbound, detectMode } from "./whatsapp.mjs";
-import { isSlotAvailable, isPeriodBookable } from "./availability.mjs";
+import { availabilityCheck, availabilityFailureAr, isPeriodBookable } from "./availability.mjs";
 
 const ALLOWED = new Set([
   "confirm_booking_create",
@@ -175,8 +175,12 @@ async function bookingCreate(wsKey, pin, args, deps) {
   });
   if (!valid.ok) return valid;
   // Overlap-aware conflict check (mirrors the app's findConflict time rule).
-  if (!isSlotAvailable(doc, booking.chalet_id, booking.booking_date, period)) {
-    return { ok: false, error: "BOOKING_CONFLICT" };
+  // The detailed verdict tells the owner WHICH booking blocks — or that a
+  // legacy timeless booking makes availability unprovable (data quality).
+  const avail = availabilityCheck(doc, booking.chalet_id, booking.booking_date, period);
+  if (!avail.available) {
+    const fail = availabilityFailureAr(avail);
+    return { ok: false, error: fail.error, reason_ar: fail.reason_ar };
   }
 
   const nextDoc = { ...doc, bookings: [...(doc.bookings || []), booking] };
@@ -224,8 +228,12 @@ async function bookingUpdate(wsKey, pin, args, deps) {
   if (!valid.ok) return valid;
   const chalet = findChalet(doc, String(resulting.chalet_id));
   const period = findPeriod(chalet, String(resulting.period_id));
-  if (resulting.status === "confirmed" && !isSlotAvailable(doc, resulting.chalet_id, resulting.booking_date, period, { excludeBookingId: bookingId })) {
-    return { ok: false, error: "BOOKING_CONFLICT" };
+  if (resulting.status === "confirmed") {
+    const avail = availabilityCheck(doc, resulting.chalet_id, resulting.booking_date, period, { excludeBookingId: bookingId });
+    if (!avail.available) {
+      const fail = availabilityFailureAr(avail);
+      return { ok: false, error: fail.error, reason_ar: fail.reason_ar };
+    }
   }
 
   const bookings = (doc.bookings || []).map((b) => (b.id === bookingId ? resulting : b));

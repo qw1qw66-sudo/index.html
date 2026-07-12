@@ -242,8 +242,11 @@ const WEEKDAYS = {
   thursday: 4, friday: 5, saturday: 6,
 };
 const TODAY_WORDS = new Set(['اليوم', 'الليلة', 'الليله']);
-const TOMORROW_WORDS = new Set(['بكرة', 'بكره', 'باكر', 'غدا']);
-const AFTER_WORDS = new Set(['بكرة', 'بكره', 'غد', 'غدا', 'باكر']);
+// The alif-ending spellings (بكرا/باكرا — live bug B) are as common on
+// phone keyboards as the taa-marbuta ones; matching is exact-token, so every
+// accepted spelling must be listed explicitly.
+const TOMORROW_WORDS = new Set(['بكرة', 'بكره', 'بكرا', 'باكر', 'باكرا', 'غدا']);
+const AFTER_WORDS = new Set(['بكرة', 'بكره', 'بكرا', 'غد', 'غدا', 'باكر', 'باكرا']);
 
 // Resolve a natural-language date reference against the caller's todayIso.
 export function parseDateExpression(text, todayIso) {

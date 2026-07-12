@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { handleAssistant } from "../../supabase/functions/chalet-assistant/handler.mjs";
 import { executeConfirmedAction } from "../../supabase/functions/_shared/assistant/executors.mjs";
+import { availabilityCheck, availabilityFailureAr, isSlotAvailable } from "../../supabase/functions/_shared/assistant/availability.mjs";
 
 // Drives the REAL handler + REAL executeConfirmedAction dispatcher against a
 // faithful in-memory contract layer (revision-atomic save, workspace-scoped
@@ -158,7 +159,24 @@ describe("confirmed booking executors (real dispatcher)", () => {
     const { body } = await confirm(deps, "WSA", "123456", "confirm_booking_create", prep.action_id, prep.confirmation_token);
     expect(body.ok).toBe(false);
     expect(String(body.error)).toContain("BOOKING_CONFLICT");
+    // The reason names WHICH booking blocks (owner's own data, no ids).
+    expect(body.reason_ar).toContain("سابق");
+    expect(body.reason_ar).not.toMatch(/[A-Z]{2,}_[A-Z]|[0-9a-f]{8}-[0-9a-f]{4}/i);
     expect(ws.WSA.doc.bookings).toHaveLength(1); // only the pre-existing one
+  });
+
+  it("2b. a legacy TIMELESS booking blocks as a DATA-QUALITY problem, not a fake conflict", async () => {
+    const doc = docWith([{ id: "b-legacy", customer_name: "قديم", chalet_id: "c1", booking_date: "2099-06-01", period_id: "p-old", total: 0, paid: 0, status: "confirmed", deleted_at: null }]);
+    doc.chalets[0].periods.push({ id: "p-old", label: "قديمة", start: "", end: "", active: false, sort: 9 });
+    const { deps, ws } = makeHarness({ workspaces: { WSA: { pin: "123456", doc, revision: 1 } } });
+    const prep = await prepare(deps, "WSA", "123456", "prepare_booking_create", { customer_name: "علي", chalet_id: "c1", booking_date: "2099-06-01", period_id: "p1", guests: 2, total: 900 });
+    const { body } = await confirm(deps, "WSA", "123456", "confirm_booking_create", prep.action_id, prep.confirmation_token);
+    expect(body.ok).toBe(false);
+    expect(body.error).toBe("AVAILABILITY_UNPROVABLE");
+    expect(body.public_code).toBe("conflict");
+    expect(body.reason_ar).toContain("جودة البيانات");
+    expect(body.reason_ar).not.toMatch(/AVAILABILITY_UNPROVABLE/);
+    expect(ws.WSA.doc.bookings).toHaveLength(1); // nothing saved
   });
 
   it("3. stale revision fails the create safely", async () => {
@@ -320,5 +338,64 @@ describe("cross-cutting safety (real dispatcher)", () => {
   it("UNKNOWN_TOOL from the dispatcher itself is inert", async () => {
     const r = await executeConfirmedAction({ wsKey: "WSA", pin: "x", toolName: "confirm_delete_all", payload: { args: {} }, actionId: "a" }, {});
     expect(r).toEqual({ ok: false, error: "UNKNOWN_TOOL" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// availabilityCheck — same fail-closed boolean as isSlotAvailable, but the
+// CAUSE (real overlap vs legacy data-quality vs bad candidate) is explicit,
+// and availabilityFailureAr words each cause for the owner (no codes/ids).
+// ---------------------------------------------------------------------------
+describe("availabilityCheck causes", () => {
+  const P1 = { id: "p1", label: "صباحي", start: "07:00", end: "17:00", active: true };
+  const TIMELESS = { id: "p9", label: "قديمة", start: "", end: "" };
+  function doc(bookings) {
+    return { chalets: [{ id: "c1", name: "ش", deleted_at: null, periods: [P1, TIMELESS] }], bookings };
+  }
+
+  it("overlap: reports WHICH booking blocks; boolean parity with isSlotAvailable", () => {
+    const d = doc([{ id: "b1", customer_name: "سابق", chalet_id: "c1", booking_date: "2099-06-01", period_id: "p1", status: "confirmed", deleted_at: null }]);
+    const check = availabilityCheck(d, "c1", "2099-06-01", P1);
+    expect(check).toMatchObject({ available: false, cause: "overlap" });
+    expect(check.conflict).toMatchObject({ customer_name: "سابق", booking_date: "2099-06-01", start: "07:00", end: "17:00" });
+    expect(isSlotAvailable(d, "c1", "2099-06-01", P1)).toBe(false);
+    const fail = availabilityFailureAr(check);
+    expect(fail.error).toBe("BOOKING_CONFLICT");
+    expect(fail.reason_ar).toContain("سابق");
+    expect(fail.reason_ar).toContain("01-06-2099");
+    expect(fail.reason_ar).not.toMatch(/[A-Z]{2,}_[A-Z]/);
+  });
+
+  it("unknown_interval: a timeless legacy booking fails closed with the data-quality cause", () => {
+    const d = doc([{ id: "b2", customer_name: "قديم", chalet_id: "c1", booking_date: "2099-06-05", period_id: "p9", status: "confirmed", deleted_at: null }]);
+    const check = availabilityCheck(d, "c1", "2099-06-01", P1);
+    expect(check).toMatchObject({ available: false, cause: "unknown_interval" });
+    expect(isSlotAvailable(d, "c1", "2099-06-01", P1)).toBe(false); // unchanged fail-closed boolean
+    const fail = availabilityFailureAr(check);
+    expect(fail.error).toBe("AVAILABILITY_UNPROVABLE");
+    expect(fail.reason_ar).toContain("جودة البيانات");
+    expect(fail.reason_ar).toContain("قديم");
+  });
+
+  it("a REAL overlap outranks an unknown interval as the reported cause", () => {
+    const d = doc([
+      { id: "b2", customer_name: "قديم", chalet_id: "c1", booking_date: "2099-06-05", period_id: "p9", status: "confirmed", deleted_at: null },
+      { id: "b1", customer_name: "سابق", chalet_id: "c1", booking_date: "2099-06-01", period_id: "p1", status: "confirmed", deleted_at: null },
+    ]);
+    const check = availabilityCheck(d, "c1", "2099-06-01", P1);
+    expect(check.cause).toBe("overlap");
+    expect(check.conflict.customer_name).toBe("سابق");
+  });
+
+  it("bad_candidate: a timeless CANDIDATE is never available", () => {
+    const check = availabilityCheck(doc([]), "c1", "2099-06-01", TIMELESS);
+    expect(check).toMatchObject({ available: false, cause: "bad_candidate" });
+    expect(availabilityFailureAr(check).error).toBe("PERIOD_TIME_INCOMPLETE");
+  });
+
+  it("excludeBookingId still lifts the booking's own block (update flow)", () => {
+    const d = doc([{ id: "b1", customer_name: "سابق", chalet_id: "c1", booking_date: "2099-06-01", period_id: "p1", status: "confirmed", deleted_at: null }]);
+    expect(availabilityCheck(d, "c1", "2099-06-01", P1, { excludeBookingId: "b1" }).available).toBe(true);
+    expect(availabilityFailureAr({ available: true })).toBeNull();
   });
 });

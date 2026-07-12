@@ -134,6 +134,14 @@ describe('parseDateExpression', () => {
     expect(parseDateExpression('بعد غد', TODAY)).toEqual({ date: '2026-07-14', confidence: 'high' });
   });
 
+  it('accepts the alif-ending spellings (live bug B: «بعد بكرا»)', () => {
+    expect(parseDateExpression('بكرا', TODAY)).toEqual({ date: '2026-07-13', confidence: 'high' });
+    expect(parseDateExpression('باكرا', TODAY)).toEqual({ date: '2026-07-13', confidence: 'high' });
+    expect(parseDateExpression('بعد بكرا', TODAY)).toEqual({ date: '2026-07-14', confidence: 'high' });
+    expect(parseDateExpression('التاريخ بعد بكرا', TODAY)).toEqual({ date: '2026-07-14', confidence: 'high' });
+    expect(parseDateExpression('بعد باكرا', TODAY)).toEqual({ date: '2026-07-14', confidence: 'high' });
+  });
+
   it('weekdays resolve to the next occurrence, counting today', () => {
     expect(parseDateExpression('الجمعة', TODAY)).toEqual({ date: '2026-07-17', confidence: 'high' });
     expect(parseDateExpression('احجز يوم الخميس', TODAY)).toEqual({ date: '2026-07-16', confidence: 'high' });
