@@ -258,8 +258,10 @@ const TRACKED_FIELDS = new Set([
 // period resolution, guests/total from the owner's own words (or an accepted
 // system price). An LLM-guessed «10 ضيوف / 300 ريال» must never reach a card.
 const MODEL_FILLABLE = new Set(["customer_name", "notes"]);
-// Keys that must never enter the draft through a merge.
-const MERGE_BLOCKLIST = new Set(["customer_phone", "sources", "warnings", "phone_warning"]);
+// Keys that must never enter the draft through a merge: private data, merge
+// bookkeeping, and SERVER-owned dialogue state (pending_q, alternatives are
+// written only by the pipeline, never by a parsed/model turn).
+const MERGE_BLOCKLIST = new Set(["customer_phone", "sources", "warnings", "phone_warning", "pending_q", "alternatives"]);
 
 // Fail-closed validation of LLM-extracted values (never trusted blindly).
 function sanitizeModelValue(key, value) {

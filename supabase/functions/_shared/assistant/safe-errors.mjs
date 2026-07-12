@@ -45,6 +45,14 @@ const ERROR_MAP = {
     true,
     "لا يمكن التأكد من توفر هذه الفترة: يوجد حجز قديم بوقت فترة غير مكتمل لهذا الشاليه. أكمل وقت الفترة من «جودة البيانات» في الإعدادات ثم أعد المحاولة.",
   ),
+  // A PRE-EXISTING overlapping pair of confirmed bookings blocks EVERY save
+  // (the SQL guard validates the whole document). Rebooking another slot can
+  // never fix it — the owner must resolve the pair from the bookings tab.
+  WORKSPACE_DATA_CONFLICT: e(
+    "conflict",
+    false,
+    "لا يمكن حفظ أي حجز الآن: يوجد تعارض قائم بين حجزين مؤكّدين في بياناتك. أصلح التعارض من تبويب الحجوزات (عدّل أو ألغِ أحدهما) ثم أعد المحاولة.",
+  ),
 
   // --- stale ------------------------------------------------------------
   STALE_REVISION: e("stale", true, "تغيّرت بيانات الحجوزات بعد تجهيز الطلب. تحققت منها من جديد."),

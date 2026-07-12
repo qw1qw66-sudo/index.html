@@ -329,6 +329,31 @@ async function main() {
     const cleanText = !/BOOKING_CONFLICT|[0-9a-f]{8}-[0-9a-f]{4}/i.test(String(cb.reply_ar || ""));
     record("conflict_returns_alternatives", conflict.status === 200 && cb.model_calls === 0 && noCard && talksAlternatives && cleanText, leaks(conflict.text) || "clean");
 
+    // 10e1a. CLOSED GUIDED MODE (§ never a model turn mid-draft): nonsense on
+    // the conflict thread gets the pending question back, zero model calls.
+    if (cb.thread_id) {
+      const g = await assistant({ message: "كلام غير مفهوم تماماً", thread_id: cb.thread_id });
+      const gb = g.json || {};
+      const guided = /لم أفهم ردّك/.test(String(gb.reply_ar || "")) && /الغِ الحجز/.test(String(gb.reply_ar || ""));
+      const gNoCard = !(gb.tool_results || []).some((x) => x.kind === "prepared_action");
+      record("guided_reprompt_zero_model", g.status === 200 && gb.model_calls === 0 && guided && gNoCard, "model_calls=" + gb.model_calls);
+
+      // 10e1b. Pasting the option line the bot itself printed SELECTS it.
+      const optionLine = String(cb.reply_ar || "").split("\n").find((l) => l.startsWith("1. "));
+      if (optionLine) {
+        const p = await assistant({ message: optionLine.slice(3), thread_id: cb.thread_id });
+        const pb = p.json || {};
+        const gotCard = (pb.tool_results || []).some((x) => x.kind === "prepared_action");
+        const noAmbig = !/الوقت غير واضح|لم أفهم/.test(String(pb.reply_ar || ""));
+        record("paste_option_line_selects", p.status === 200 && pb.model_calls === 0 && gotCard && noAmbig, "model_calls=" + pb.model_calls);
+      } else {
+        record("paste_option_line_selects", false, "NO_OPTION_LINE");
+      }
+    } else {
+      record("guided_reprompt_zero_model", false, "NO_THREAD");
+      record("paste_option_line_selects", false, "NO_THREAD");
+    }
+
     // 10e2. CONFIRM-TIME conflict is not a dead end (§12/§13 at confirm): the
     // competing card's confirm fails closed with a terminal card signal +
     // numbered alternatives — never a bare «محجوزة» with a re-armed button.
@@ -353,6 +378,8 @@ async function main() {
   } else {
     record("agent_booking_confirmed_once", false, "NO_TOKEN");
     record("conflict_returns_alternatives", false, "NO_TOKEN");
+    record("guided_reprompt_zero_model", false, "NO_TOKEN");
+    record("paste_option_line_selects", false, "NO_TOKEN");
     record("confirm_conflict_recovers", false, "NO_TOKEN");
   }
 

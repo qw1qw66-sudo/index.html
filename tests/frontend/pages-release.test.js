@@ -197,6 +197,19 @@ describe("booking agent frontend (structured card + safe errors)", () => {
   it("switching tabs never emits visible debug text (the «فتح تبويب» bubble)", () => {
     expect(html).not.toContain("فتح تبويب");
   });
+
+  it("conflict alternatives render as one-tap chips in BOTH reply paths", () => {
+    expect(html).toContain("function renderNextActionChips");
+    // Chips reuse the auto-send suggestion delegation (tap sends «١»).
+    const fn = jsRegion("function renderNextActionChips", "function setAssistantConn");
+    expect(fn).toContain('data-action="assistant-suggest"');
+    expect(fn).toContain("chat-options");
+    // Called after a normal bot reply AND after a terminal confirm failure.
+    const sendRegion = jsRegion("async function assistantSend", "async function assistantConfirm");
+    expect(sendRegion).toContain("renderNextActionChips(body.next_actions)");
+    const confirmRegion = jsRegion("async function assistantConfirm", "async function assistantDraftAction");
+    expect(confirmRegion).toContain("renderNextActionChips(body.next_actions)");
+  });
 });
 
 // ---- Pages artifact: simulate the workflow build (copy + sed) ----

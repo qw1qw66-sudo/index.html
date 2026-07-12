@@ -499,7 +499,7 @@ test('a confirm-time conflict removes the dead card and shows numbered alternati
           recoverable: true,
           reason_ar:
             'هذه الفترة محجوزة بالفعل — تتعارض مع حجز «منافس تجريبي» بتاريخ 13-07-2026 (19:00–05:00). لم يتم حفظ أي تغيير.\nأقرب الخيارات المتاحة:\n1. شاليه تولوم — 13-07-2026 — 07:00–12:00 — 300 ريال\nاكتب رقم الخيار، أو عدّل التاريخ/الفترة.',
-          next_actions: [{ pick: 1 }],
+          next_actions: [{ pick: 1, chalet_name: 'شاليه تولوم', date: '2026-07-13', start: '07:00', end: '12:00', price: 300 }],
           done_ar: 'لم يكتمل الإجراء. لم يتغيّر شيء بدون تأكيد الخادم.',
         }),
       });
@@ -524,6 +524,15 @@ test('a confirm-time conflict removes the dead card and shows numbered alternati
   const log = await page.locator('#assistantLog').innerText();
   expect(log).not.toMatch(/BOOKING_CONFLICT|completed_action|[A-Z]{2,}_[A-Z]/);
   expect(log).not.toContain('تم إنشاء الحجز');
+  // The alternatives are ONE-TAP chips: tapping sends «١» and a fresh card
+  // arrives — the owner never copies option text by hand.
+  const chip = page.locator('#assistantLog .chat-options button').first();
+  await expect(chip).toBeVisible();
+  await expect(chip).toContainText('١');
+  await expect(chip).toContainText('شاليه تولوم');
+  await chip.click();
+  await expect(page.locator('#assistantLog .chat-msg.chat-user').last()).toHaveText('١');
+  await expect(page.locator('#assistantActions .action-card')).toHaveCount(1);
 });
 
 test('تعديل keeps the draft fields; إلغاء cancels safely (server-driven)', async ({ page }) => {

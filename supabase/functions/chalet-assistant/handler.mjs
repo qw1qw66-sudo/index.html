@@ -24,8 +24,8 @@ import { evaluatePolicy } from "../_shared/assistant/policy.mjs";
 import { normalizeToolCall, TOOL_REGISTRY, buildToolCatalogText } from "../_shared/assistant/tools.mjs";
 import { prepareConfirmation, reissueConfirmation, hashToken, hashPayload } from "../_shared/assistant/confirmation.mjs";
 import { redactText, redactObject } from "../_shared/assistant/redact.mjs";
-import { riyadhToday } from "../_shared/assistant/availability.mjs";
-import { isBareConfirmPhrase, formatDateDisplay, addDaysIso } from "../_shared/assistant/nl-normalize.mjs";
+import { riyadhToday, availabilityCheck, availabilityFailureAr, findDocConflictPair, docConflictReasonAr } from "../_shared/assistant/availability.mjs";
+import { isBareConfirmPhrase, formatDateDisplay, addDaysIso, classifyMeridiemWord, parseTimeExpression } from "../_shared/assistant/nl-normalize.mjs";
 import { resolveChaletReference } from "../_shared/assistant/booking-resolution.mjs";
 import { applySafeError } from "../_shared/assistant/safe-errors.mjs";
 import {
@@ -969,15 +969,36 @@ async function bareConfirmReminder(deps, ctx, { threadId, message, today }) {
   return { ok: true, reply_ar: "لا يوجد إجراء بانتظار التأكيد حالياً.", tool_results: [] };
 }
 
-// «١ / الأول …» picks one of the stored conflict alternatives.
+// «١ / الأول …» picks one of the stored conflict alternatives — and so does
+// PASTING the option's own line back («شاليه تولوم — 2026-07-12 — 07:00–12:00
+// — 300 ريال»): owners answer with the text they can copy, not an index.
+const ARABIC_DIGIT_MAP = { "٠": "0", "١": "1", "٢": "2", "٣": "3", "٤": "4", "٥": "5", "٦": "6", "٧": "7", "٨": "8", "٩": "9" };
+function foldDigitsAndDashes(s) {
+  return String(s || "")
+    .replace(/[٠-٩]/g, (d) => ARABIC_DIGIT_MAP[d] || d)
+    .replace(/[–—‒−]/g, "-");
+}
 function parseAlternativePick(message, fields) {
   const alts = fields && Array.isArray(fields.alternatives) ? fields.alternatives : [];
   if (!alts.length) return null;
   const t = String(message || "").trim();
   const m = t.match(/^[\s.)-]*(?:رقم\s*)?(١|1|الاول|الأول|٢|2|الثاني|٣|3|الثالث)[\s.!؟)-]*$/);
-  if (!m) return null;
-  const idx = { "١": 0, 1: 0, الاول: 0, الأول: 0, "٢": 1, 2: 1, الثاني: 1, "٣": 2, 3: 2, الثالث: 2 }[m[1]];
-  const alt = alts[idx];
+  let alt = null;
+  if (m) {
+    const idx = { "١": 0, 1: 0, الاول: 0, الأول: 0, "٢": 1, 2: 1, الثاني: 1, "٣": 2, 3: 2, الثالث: 2 }[m[1]];
+    alt = alts[idx] || null;
+  } else if (t.length >= 8) {
+    // Text match against the stored options: the option's OWN time pair, or
+    // its date together with its chalet name. UNIQUE hit only — never guess.
+    const fold = foldDigitsAndDashes(t);
+    const hits = alts.filter((a) => {
+      const times = a.start && a.end && fold.includes(String(a.start)) && fold.includes(String(a.end));
+      const dateHit = a.date && (fold.includes(String(a.date)) || fold.includes(formatDateDisplay(String(a.date))));
+      const nameHit = a.chalet_name && t.includes(String(a.chalet_name));
+      return times || (dateHit && nameHit);
+    });
+    if (hits.length === 1) alt = hits[0];
+  }
   if (!alt) return null;
   return {
     chalet_id: String(alt.chalet_id || ""),
@@ -991,12 +1012,31 @@ function parseAlternativePick(message, fields) {
 }
 
 // Short period wording (اسم فترة أو وصفها) worth handing to the resolver.
+// The bare «مساء» forms are listed explicitly: the «مسائي» stem uses ئ
+// (U+0626) while «مساء» ends in the standalone hamza ء (U+0621) — without
+// them a PM answer never registered and fell to the model (live bug).
 function extractPeriodText(message) {
   const m = String(message || "").match(
-    /(الفترة\s+\S+|فترة\s+\S+|(?:ال)?(?:صباحي?ة?|مسائي?ة?|ليلي?ة?|نهاري?ة?)|بالليل|ليلاً|ليلا|الليلة|ظهراً|ظهرا|الظهر|عصراً|عصرا|العصر|الضحى|ضحى|الفجر|فجر)/u,
+    /(الفترة\s+\S+|فترة\s+\S+|(?:ال)?(?:صباحي?ة?|مسائي?ة?|ليلي?ة?|نهاري?ة?)|مساءً|مساءا|المساء|مساء|عشاء|بالليل|ليلاً|ليلا|الليلة|ظهراً|ظهرا|الظهر|عصراً|عصرا|العصر|الضحى|ضحى|الفجر|فجر)/u,
   );
   return m ? m[0] : "";
 }
+
+// Typed draft cancellation — the guided fallback advertises «الغِ الحجز», so
+// it must always work (diacritics stripped before matching).
+const CANCEL_DRAFT_RE =
+  /^\s*(?:الغ|ألغ|الغي|ألغي|إلغاء|الغاء|كنسل|cancel)\s*(?:الحجز|الطلب|المسودة)?\s*[.!؟]*\s*$/;
+
+// pending_q kind for the FIRST missing field (missingFields returns them in
+// question-priority order already).
+const PENDING_KIND_BY_MISSING = {
+  chalet: "chalet",
+  booking_date: "date",
+  period: "period",
+  guests: "guests",
+  total: "total",
+  customer_name: "customer_name",
+};
 
 const CONFLICT_HEAD_AR = "هذه الفترة محجوزة بالفعل. لم يتم حفظ الحجز.";
 // head: a richer first line when the caller has one (e.g. WHICH booking
@@ -1022,10 +1062,47 @@ async function runBookingPipeline(deps, ctx, { threadId, rawMessage, message, pr
   const intent = BOOKING_INTENT_RE.test(message);
   if (!row && !intent) return null;
 
+  // The question the server asked LAST turn (server-owned dialogue state).
+  const pendingQ = row && row.fields && row.fields.pending_q ? row.fields.pending_q : null;
+
+  // Typed cancellation always works mid-draft (the guided fallback offers it).
+  if (row && CANCEL_DRAFT_RE.test(String(message || "").replace(/[\u064b-\u065f\u0670]/g, ""))) {
+    try { await deps.closeDraft?.(ctx.wsKey, threadId, "cancelled"); } catch { /* non-fatal */ }
+    if (row.linked_action_id) {
+      try {
+        const actx = await deps.getConfirmationContext?.(ctx.wsKey, String(row.linked_action_id));
+        if (actx && actx.status === "prepared") {
+          await deps.finalizeAction?.(ctx.wsKey, String(row.linked_action_id), { status: "rejected", error_code: "CANCELLED_BY_OWNER" });
+        }
+      } catch { /* non-fatal */ }
+    }
+    return { ok: true, draft_cancelled: true, reply_ar: "تم الإلغاء، لم يُحفظ شيء. اطلب «جهّز حجز جديد» متى ما احتجت.", tool_results: [] };
+  }
+
   const facts = extractFacts(rawMessage || "", today);
+  // A bare «مساء/صباح» is the ANSWER to our own AM/PM clarify question —
+  // resolve the stored ambiguous candidate into a concrete range.
+  let meridiemAnswered = false;
+  if (
+    row && pendingQ && pendingQ.kind === "time_ampm" && !facts.time &&
+    pendingQ.data && pendingQ.data.start && pendingQ.data.end
+  ) {
+    const mer = classifyMeridiemWord(message);
+    if (mer) {
+      const resolved = parseTimeExpression(
+        `من ${pendingQ.data.start} ${mer === "PM" ? "مساء" : "صباحا"} الى ${pendingQ.data.end}`,
+      );
+      if (resolved) {
+        facts.time = resolved;
+        meridiemAnswered = true;
+      }
+    }
+  }
   const pick = row ? parseAlternativePick(message, row.fields || {}) : null;
   const timeText = facts.time ? `${facts.time.start}-${facts.time.end}` : "";
-  const periodWord = extractPeriodText(message);
+  // The meridiem word answered the time question — it must not double as a
+  // period-name correction this turn.
+  const periodWord = meridiemAnswered ? "" : extractPeriodText(message);
   const factSignal = Boolean(
     (facts.fields &&
       (facts.fields.booking_date ||
@@ -1040,12 +1117,25 @@ async function runBookingPipeline(deps, ctx, { threadId, rawMessage, message, pr
       periodWord,
   );
   if (row && !intent && !factSignal && !pick && !forced) {
-    // Mid-draft date wording the parser could not read never goes to the
-    // model — clarify deterministically (nothing merged, nothing saved).
+    // CLOSED GUIDED MODE: an active-draft turn NEVER falls through to the
+    // model (that path produced «لم أفهم هذا الطلب كأمر مدعوم» and invented
+    // requirements mid-booking). Date-ish wording gets the date clarify;
+    // anything else re-asks the PENDING question. Nothing is merged or
+    // saved, so the stored pending_q survives for the next turn.
     if (DATEISH_RE.test(message)) {
       return { ok: true, reply_ar: DATE_CLARIFY_AR, tool_results: [] };
     }
-    return null;
+    const missing0 = missingFields(row.fields || {});
+    const pendingText =
+      (pendingQ && pendingQ.q) ||
+      (missing0.length ? nextQuestionAr(row.fields || {}, missing0) : "");
+    return {
+      ok: true,
+      reply_ar: pendingText
+        ? `لم أفهم ردّك، وما زلت أنتظر إجابة السؤال الحالي:\n${pendingText}\nاكتب «الغِ الحجز» لإلغاء هذا الحجز.`
+        : "بيانات الحجز مكتملة — اكتب «سجل» لعرض بطاقة الحفظ، أو «الغِ الحجز» للإلغاء.",
+      tool_results: [],
+    };
   }
 
   // The authoritative document is needed both for corrections (chalet swap)
@@ -1055,6 +1145,9 @@ async function runBookingPipeline(deps, ctx, { threadId, rawMessage, message, pr
 
   // ---- merge this turn's facts into the server draft ----
   let fields = mergeDraft(row ? row.fields || {} : {}, facts);
+  // The stored pending question was for LAST turn; whichever branch asks
+  // something this turn re-records its own via ask().
+  delete fields.pending_q;
   // The chalet hint the resolver sees is a REDACTED copy of the message —
   // fields jsonb is model-visible by design and must never carry a raw phone.
   const safeMessage = redactText(rawMessage || "").slice(0, 200);
@@ -1093,6 +1186,12 @@ async function runBookingPipeline(deps, ctx, { threadId, rawMessage, message, pr
     fields = { ...fields, ...pick };
     delete fields.alternatives;
     delete fields.period_text;
+    // A pasted option line may itself parse as a LOW-confidence bare time —
+    // the explicit pick overrides that ambiguity completely.
+    delete fields.time_low_confidence;
+    fields.wraps_next_day = Boolean(
+      pick.canonical_start && pick.canonical_end && pick.canonical_end <= pick.canonical_start,
+    );
   } else if (fields.alternatives && (dateChanged || timeText || periodWord)) {
     // The owner answered the conflict another way — the stale numbered list
     // must not swallow a later bare numeral (e.g. a guests answer).
@@ -1116,19 +1215,28 @@ async function runBookingPipeline(deps, ctx, { threadId, rawMessage, message, pr
     await deps.upsertDraft(ctx.wsKey, threadId, fields, privMerged, linkedActionId);
   };
   const ask = async (question, extra) => {
+    // Server-owned dialogue state: record WHICH question is now pending so
+    // the next turn can answer it and the guided fallback can repeat it.
+    // Callers pass a specific pending_q kind; everything else records 'fix'.
+    const { pending_q: pq, ...rest } = extra || {};
+    fields.pending_q = { kind: "fix", ...(pq || {}), q: String(question).slice(0, 220) };
     await saveDraft();
-    return { ok: true, reply_ar: question, tool_results: [], ...(extra || {}) };
+    return { ok: true, reply_ar: question, tool_results: [], ...rest };
   };
 
   // ---- hard input problems first ----
   if (fields.date_error) {
     const q = fields.date_error.reason_ar || "التاريخ غير صحيح. اكتب التاريخ مثل: بكرة أو 15-08-2026.";
     delete fields.date_error;
-    return ask(q);
+    return ask(q, { pending_q: { kind: "date" } });
   }
   if (fields.time_low_confidence) {
     delete fields.time_low_confidence;
-    return ask("الوقت غير واضح: صباحاً أم مساءً؟ اكتب مثلاً «من ٧ مساءً إلى ٥ صباحاً».");
+    // The naive-AM candidate stays on the draft; a bare «مساء/صباح» next turn
+    // resolves it via pending_q.data (see the meridiem branch above).
+    return ask("الوقت غير واضح: صباحاً أم مساءً؟ اكتب مثلاً «من ٧ مساءً إلى ٥ صباحاً».", {
+      pending_q: { kind: "time_ampm", data: { start: fields.canonical_start, end: fields.canonical_end } },
+    });
   }
 
   // ---- bind chalet / period / availability against the REAL document ----
@@ -1141,7 +1249,7 @@ async function runBookingPipeline(deps, ctx, { threadId, rawMessage, message, pr
       fields.chalet_name = String(cres.chalet.name || "");
       delete fields.chalet_text;
     } else if (cres.error === "CHALET_AMBIGUOUS") {
-      return ask(cres.reason_ar);
+      return ask(cres.reason_ar, { pending_q: { kind: "chalet" } });
     }
     // NOT_FOUND on a generic sentence just means "chalet still unknown".
   }
@@ -1165,27 +1273,22 @@ async function runBookingPipeline(deps, ctx, { threadId, rawMessage, message, pr
     } else if (pres && (pres.error === "BOOKING_CONFLICT" || pres.error === "AVAILABILITY_UNPROVABLE")) {
       return conflictWithAlternatives(deps, ctx, { fields, doc, today, ask, saveDraft, head: pres.reason_ar });
     } else if (pres && (pres.error === "PERIOD_AMBIGUOUS" || pres.error === "PERIOD_TIME_INCOMPLETE")) {
-      return ask(pres.reason_ar || "حدد الفترة بالاسم أو بالوقت.");
+      return ask(pres.reason_ar || "حدد الفترة بالاسم أو بالوقت.", { pending_q: { kind: "period" } });
     } else if (pres && pres.error === "PERIOD_NOT_FOUND" && fields.period_text) {
-      return ask(pres.reason_ar || "لم أجد هذه الفترة. اكتب اسمها أو وقتها كما هو مسجل.");
+      return ask(pres.reason_ar || "لم أجد هذه الفترة. اكتب اسمها أو وقتها كما هو مسجل.", { pending_q: { kind: "period" } });
     }
     // PERIOD_REQUIRED with no period text => stays missing; the planner asks.
-  } else if (
-    doc &&
-    fields.chalet_id &&
-    fields.period_id &&
-    fields.booking_date &&
-    typeof deps.resolveBookingCreateArgs === "function" &&
-    (facts.fields.booking_date || pick)
-  ) {
-    // Date or slot changed: re-check availability for the bound slot.
-    const recheck = await deps.resolveBookingCreateArgs(
-      ctx.wsKey,
-      { chalet_id: fields.chalet_id, period_id: fields.period_id, booking_date: fields.booking_date },
-      ctx.pin,
-    );
-    if (recheck && (recheck.error === "BOOKING_CONFLICT" || recheck.error === "AVAILABILITY_UNPROVABLE")) {
-      return conflictWithAlternatives(deps, ctx, { fields, doc, today, ask, saveDraft, head: recheck.reason_ar });
+  } else if (doc && fields.chalet_id && fields.period_id && fields.booking_date) {
+    // The slot can go stale on ANY turn (a competing booking from another
+    // device, a guests-only answer minutes later) — re-verify in memory on
+    // EVERY bound turn so conflicts surface at the earliest answer, never
+    // first at the card or at حفظ (live bug A).
+    const chalet = (doc.chalets || []).find((c) => String(c.id) === String(fields.chalet_id));
+    const period = chalet ? (chalet.periods || []).find((p) => String(p.id) === String(fields.period_id)) : null;
+    const check = availabilityCheck(doc, fields.chalet_id, fields.booking_date, period);
+    if (!check.available) {
+      const fail = availabilityFailureAr(check, { tail: "لم يتم تجهيز أي حجز." });
+      return conflictWithAlternatives(deps, ctx, { fields, doc, today, ask, saveDraft, head: fail.reason_ar });
     }
   }
 
@@ -1203,7 +1306,19 @@ async function runBookingPipeline(deps, ctx, { threadId, rawMessage, message, pr
   // ---- missing fields: ONE question, never re-asking what is known ----
   const missing = missingFields(fields);
   if (missing.length) {
-    return ask(nextQuestionAr(fields, missing));
+    return ask(nextQuestionAr(fields, missing), {
+      pending_q: { kind: PENDING_KIND_BY_MISSING[missing[0]] || "fix" },
+    });
+  }
+
+  // A pre-existing conflicting pair anywhere in the document blocks EVERY
+  // save (the SQL guard validates the whole doc) — say so BEFORE building a
+  // card the owner cannot use, with both bookings named (live bug A).
+  if (doc) {
+    const pair = findDocConflictPair(doc);
+    if (pair) {
+      return ask(docConflictReasonAr(pair, { tail: "لم يتم تجهيز أي حجز." }));
+    }
   }
 
   // ---- complete: prepare the confirmation card (still nothing saved) ----
@@ -1224,6 +1339,7 @@ async function runBookingPipeline(deps, ctx, { threadId, rawMessage, message, pr
   }
   const prepared = await executeTool(deps, { ...ctx, norm, raw: true, threadId });
   if (prepared && prepared.ok && prepared.kind === "prepared_action") {
+    delete fields.pending_q; // no open question — the card is the next step
     await saveDraft(prepared.action_id);
     return {
       ok: true,
@@ -1258,6 +1374,7 @@ async function conflictWithAlternatives(deps, ctx, { fields, doc, today, ask, he
   }
   fields.alternatives = alts;
   return ask(alternativesReplyAr(alts, head), {
+    pending_q: { kind: "pick" },
     next_actions: alts.map((a, i) => ({
       pick: i + 1,
       chalet_name: a.chalet_name,

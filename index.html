@@ -4397,6 +4397,41 @@
             if (live) live.textContent = String(text || "");
           }
         }
+        // Numbered conflict alternatives as ONE-TAP chips under the reply —
+        // tapping sends the numeral («١») exactly like typing it, so the
+        // owner never has to copy the option text back by hand. One latest
+        // row only: every new bot turn clears the previous options.
+        const ASSISTANT_PICK_DIGITS = ["١", "٢", "٣"];
+        function renderNextActionChips(list) {
+          const log = $("assistantLog");
+          if (!log) return;
+          log.querySelectorAll(".chat-options").forEach((el) => el.remove());
+          const items = Array.isArray(list) ? list.slice(0, 3) : [];
+          if (!items.length) return;
+          const row = document.createElement("div");
+          row.className = "chat-suggest chat-options";
+          row.setAttribute("role", "group");
+          row.setAttribute("aria-label", "خيارات مقترحة");
+          row.innerHTML = items
+            .map((a, i) => {
+              const digit = ASSISTANT_PICK_DIGITS[i] || String(i + 1);
+              const when =
+                '<span class="ltr">' + esc(formatDateDisplay(String(a.date || "")) || String(a.date || "")) + "</span>";
+              const times = '<span class="ltr">' + esc(String(a.start || "؟") + "–" + String(a.end || "؟")) + "</span>";
+              const price = a.price ? ' — <span class="ltr">' + esc(String(a.price)) + "</span> ريال" : "";
+              return (
+                '<button class="tiny" type="button" data-action="assistant-suggest" data-suggest="' +
+                esc(digit) +
+                '">' +
+                esc(digit + " — " + String(a.chalet_name || "")) +
+                " — " + when + " — " + times + price +
+                "</button>"
+              );
+            })
+            .join("");
+          log.appendChild(row);
+          log.scrollTop = log.scrollHeight;
+        }
         function setAssistantConn(text, cls) {
           const el = $("assistantConn");
           if (el) {
@@ -4602,6 +4637,9 @@
               // whole conversation stays on ONE real, workspace-scoped thread.
               if (body.thread_id) assistantThreadId = body.thread_id;
               if (body.reply_ar) assistantAppend("bot", body.reply_ar);
+              // Conflict alternatives arrive as ONE-TAP chips; an empty list
+              // just clears the previous row.
+              renderNextActionChips(body.next_actions);
               renderToolResults(body.tool_results);
             } else {
               // Defensive mapper: never a raw code, UUID, or body.error.
@@ -4698,11 +4736,13 @@
               // Terminal server-side (executed-and-failed, or the action was
               // retired/expired/rejected): a dead card must not stay armed —
               // pressing حفظ again only replays confusing errors. The reason
-              // carries numbered alternatives when the slot is taken; the
-              // conversation continues by picking one or rewording.
+              // carries numbered alternatives when the slot is taken; they
+              // also render as one-tap chips so the conversation continues
+              // with a single tap.
               delete assistantTokens[actionId];
               if (card) card.remove();
               assistantAppend("bot", assistantSafeError(body));
+              renderNextActionChips(body.next_actions);
             } else {
               // Never show "تم" — the underlying contract did not succeed, and
               // never show a raw code either.

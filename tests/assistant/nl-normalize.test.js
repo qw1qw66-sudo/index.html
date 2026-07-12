@@ -13,6 +13,7 @@ import {
   isExplicitFree,
   CONFIRM_PHRASES,
   isBareConfirmPhrase,
+  classifyMeridiemWord,
 } from '../../supabase/functions/_shared/assistant/nl-normalize.mjs';
 
 const TODAY = '2026-07-12'; // a Sunday
@@ -132,6 +133,18 @@ describe('parseDateExpression', () => {
     expect(parseDateExpression('بكرة بالليل', TODAY)).toEqual({ date: '2026-07-13', confidence: 'high' });
     expect(parseDateExpression('بعد بكرة', TODAY)).toEqual({ date: '2026-07-14', confidence: 'high' });
     expect(parseDateExpression('بعد غد', TODAY)).toEqual({ date: '2026-07-14', confidence: 'high' });
+  });
+
+  it('explicit minutes on both sides are unambiguous — high confidence, literal reading', () => {
+    // The pasted option line case: «07:00–12:00» must never trigger
+    // «صباحاً أم مساءً؟» (en-dash folds to '-').
+    expect(parseTimeExpression('07:00–12:00')).toEqual({ start: '07:00', end: '12:00', wraps_next_day: false, confidence: 'high' });
+    expect(parseTimeExpression('شاليه تولوم — 2026-07-12 — 07:00–12:00 — 300 ريال')).toEqual({ start: '07:00', end: '12:00', wraps_next_day: false, confidence: 'high' });
+    expect(parseTimeExpression('٠٧:٠٠-١٢:٠٠')).toEqual({ start: '07:00', end: '12:00', wraps_next_day: false, confidence: 'high' });
+    // Bare pairs stay ambiguous; descending with minutes stays the classic
+    // medium overnight reading (regressions pinned).
+    expect(parseTimeExpression('من 7 الى 12').confidence).toBe('low');
+    expect(parseTimeExpression('7:00-5:00')).toEqual({ start: '19:00', end: '05:00', wraps_next_day: true, confidence: 'medium' });
   });
 
   it('accepts the alif-ending spellings (live bug B: «بعد بكرا»)', () => {
@@ -279,5 +292,24 @@ describe('isBareConfirmPhrase', () => {
     expect(Array.isArray(CONFIRM_PHRASES)).toBe(true);
     expect(CONFIRM_PHRASES).toContain('سجل');
     expect(CONFIRM_PHRASES).toContain('نعم');
+  });
+});
+
+describe('classifyMeridiemWord (AM/PM clarify answers)', () => {
+  it('classifies pure meridiem answers', () => {
+    expect(classifyMeridiemWord('مساء')).toBe('PM');
+    expect(classifyMeridiemWord('مساءً')).toBe('PM');
+    expect(classifyMeridiemWord('المساء')).toBe('PM');
+    expect(classifyMeridiemWord('بالليل')).toBe('PM');
+    expect(classifyMeridiemWord('عشاء')).toBe('PM');
+    expect(classifyMeridiemWord('صباح')).toBe('AM');
+    expect(classifyMeridiemWord('صباحاً')).toBe('AM');
+    expect(classifyMeridiemWord('الصبح')).toBe('AM');
+  });
+  it('refuses digits, contradictions and unrelated text', () => {
+    expect(classifyMeridiemWord('من 7 مساء')).toBeNull(); // real time re-parses
+    expect(classifyMeridiemWord('صباح مساء')).toBeNull();
+    expect(classifyMeridiemWord('تمام')).toBeNull();
+    expect(classifyMeridiemWord('')).toBeNull();
   });
 });
