@@ -707,6 +707,49 @@ describe("answer matrix: every pending question accepts its bare answer", () => 
     expect((r.tool_results || []).some((x) => x.kind === "prepared_action")).toBe(false);
   });
 
+  it("a bare-digit conflict pick does NOT overwrite the stated guest count", async () => {
+    const doc = fixtureDoc();
+    doc.bookings.push({ id: "b-x", customer_name: "سابق", chalet_id: "tulum", booking_date: TOMORROW, period_id: "t-pm", guests: 2, total: 400, paid: 0, status: "confirmed", deleted_at: null });
+    const deps = makeDeps({ doc });
+    // Four guests explicitly; the slot is taken -> numbered alternatives.
+    const r = await chat(deps, "احجز تولوم بكرة بالليل لأربعة أشخاص بمئة ريال، العميل تجربة");
+    expect(r.reply_ar).toContain("1.");
+    expect(deps._drafts.get("th-1").fields.guests).toBe(4);
+    // Pick option 1 with a bare «١» — guests must STAY 4, not become 1.
+    const pick = await chat(deps, "١", "th-1");
+    expect(pick.model_calls).toBe(0);
+    const f = deps._drafts.get("th-1").fields;
+    expect(f.guests).toBe(4);
+  });
+
+  it("a typed correction retires the previous prepared card (no stale double-book)", async () => {
+    const deps = makeDeps();
+    const t = await chat(deps, "احجز تولوم بكرة بالليل لشخصين بمئة ريال، العميل تجربة");
+    const first = (t.tool_results || []).find((x) => x.kind === "prepared_action");
+    expect(first).toBeTruthy();
+    expect(deps._actions.get(first.action_id).status).toBe("prepared");
+    // Correct the date: a NEW card is prepared and the OLD one is retired.
+    const t2 = await chat(deps, "خلها بعد بكرة", "th-1");
+    const second = (t2.tool_results || []).find((x) => x.kind === "prepared_action");
+    expect(second).toBeTruthy();
+    expect(second.action_id).not.toBe(first.action_id);
+    expect(deps._actions.get(first.action_id).status).toBe("rejected");
+    expect(deps._actions.get(second.action_id).status).toBe("prepared");
+  });
+
+  it("«نعم» never reverts an explicit total to a stale price suggestion", async () => {
+    const deps = makeDeps();
+    await chat(deps, "احجز سكاي باسم فهد تجربة");
+    await chat(deps, "بكرة بالليل", "th-1"); // draft gets total_suggested + asks guests/price
+    await chat(deps, "شخصين", "th-1"); // -> price question (system price pending)
+    await chat(deps, "٨٠٠ ريال", "th-1"); // explicit total 800
+    expect(deps._drafts.get("th-1").fields.total).toBe(800);
+    const done = await chat(deps, "نعم", "th-1"); // bare confirm — must NOT revert to 350
+    const prep = (done.tool_results || []).find((x) => x.kind === "prepared_action");
+    expect(prep).toBeTruthy();
+    expect(deps._actions.get(prep.action_id).args.total).toBe(800);
+  });
+
   it("ENUMERATION GUARD: every pending_q kind the handler can emit has a registered answer path", () => {
     const src = readFileSync(
       new URL("../../supabase/functions/chalet-assistant/handler.mjs", import.meta.url),

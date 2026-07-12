@@ -120,7 +120,6 @@ function extractCustomerName(folded) {
 // Saudi mobile extraction (same shape as extractBookingPhone in the handler)
 // ---------------------------------------------------------------------------
 
-const SAUDI_MOBILE_RE = /(?:\+?966|00966)?0?5\d{8}/;
 // Numeric shapes that are DATES, never phones (mirrors nl-normalize's spans).
 const DATE_SHAPE_RE =
   /(?<!\d)(?:\d{4}-\d{1,2}-\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]\d{2,4}|\d{1,2}\/\d{1,2})(?!\d)/g;
@@ -137,8 +136,12 @@ function normalizeSaudiMobileDigits(run) {
 }
 
 function extractSaudiMobile(folded) {
-  const compact = folded.replace(/[\s()-]/g, "");
-  const m = compact.match(SAUDI_MOBILE_RE);
+  // Remove date shapes BEFORE compacting: «... بتاريخ 15-08-2026 500 ريال»
+  // otherwise glues into 15082026500 and the unanchored regex forges the
+  // ghost phone 0508202650 from the date+price digits. Anchoring with digit
+  // boundaries also rejects a too-long typo instead of silently truncating.
+  const compact = folded.replace(DATE_SHAPE_RE, " ").replace(/[\s()-]/g, "");
+  const m = compact.match(/(?<!\d)(?:\+?966|00966)?0?5\d{8}(?!\d)/);
   if (!m) return "";
   return normalizeSaudiMobileDigits(m[0].replace(/\D/g, ""));
 }
@@ -341,9 +344,14 @@ export function mergeDraft(existing, incoming) {
     sources.total = "parsed";
   }
 
-  // Accepting the pending suggestion — only when one actually exists, and an
-  // explicit amount/free in the SAME message always wins over the acceptance.
-  if (inc.accept_suggestion === true && inc.free !== true && parsed.total === undefined) {
+  // Accepting the pending suggestion — only when one is actually PENDING
+  // (total_source still "suggested"). A bare «نعم» after the owner already
+  // set an explicit price or «مجاني» must never revert the total to a stale
+  // suggestion that lingered on the draft.
+  if (
+    inc.accept_suggestion === true && inc.free !== true && parsed.total === undefined &&
+    draft.total_source === "suggested"
+  ) {
     const s = Number(draft.total_suggested);
     if (Number.isFinite(s) && s > 0) {
       draft.total = s;

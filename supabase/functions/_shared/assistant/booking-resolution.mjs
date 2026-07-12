@@ -4,7 +4,7 @@
 // choices from the document.
 
 import { availabilityCheck, availabilityFailureAr, isPeriodBookable, normalizeTimeHHmm } from "./availability.mjs";
-import { parseTimeExpression } from "./nl-normalize.mjs";
+import { foldDigits, parseTimeExpression } from "./nl-normalize.mjs";
 
 const ARABIC_MARKS = /[\u0610-\u061a\u064b-\u065f\u0670\u06d6-\u06ed\u0640]/g;
 // «شالية» (taa-marbuta) is how owners actually type it on phones — it must
@@ -13,7 +13,10 @@ const CHALET_WORDS = new Set(["شاليه", "الشاليه", "شالية", "ا�
 const PERIOD_WORDS = new Set(["فترة", "الفترة", "فترات", "الفترات", "period", "periods"]);
 
 function normalizedTokens(value, ignored) {
-  return String(value ?? "")
+  // Fold Arabic-Indic/Persian digits to ASCII first — NFKC does NOT, so
+  // «تولوم ٢» (phone keyboard) would otherwise never match the stored
+  // «شاليه تولوم 2» and the substring fallback picks the wrong sibling.
+  return foldDigits(String(value ?? ""))
     .normalize("NFKC")
     .toLowerCase()
     .replace(ARABIC_MARKS, "")

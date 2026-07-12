@@ -127,7 +127,10 @@ function foldTimeHourWords(s) {
 // If a range endpoint is missing, later booking fields must not be borrowed
 // as that endpoint. This is the exact guard that keeps «عدد الضيوف ١٠» and
 // «السعر ٣٠٠» out of «من ٧ إلى ...».
-const TIME_FIELD_BREAK_RE = /(?:^|\s)(?:رقم|جوال|الجوال|هاتف|تلفون|موبايل|واتس|اسم|الاسم|العميل|باسم|شاليه|الشاليه|عدد|ضيف|ضيوف|شخص|اشخاص|سعر|السعر|المبلغ|الاجمالي)(?=\s|$)/;
+// Attached و/ف/ل conjunction prefixes are common on phones («وعدد الضيوف»,
+// «لعدد ٣») — without tolerating them the field word did not break the range
+// and the following guest/price digit became a fabricated end hour.
+const TIME_FIELD_BREAK_RE = /(?:^|\s)(?:و|ف|ل)?(?:رقم|الرقم|جوال|الجوال|هاتف|تلفون|موبايل|واتس|اسم|الاسم|العميل|باسم|شاليه|الشاليه|عدد|العدد|ضيف|الضيف|ضيوف|الضيوف|شخص|اشخاص|سعر|السعر|بسعر|المبلغ|الاجمالي)(?=\s|$)/;
 
 // Parse a TIME RANGE from free text. Range-only: a single lone time -> null.
 export function parseTimeExpression(text) {
@@ -448,8 +451,11 @@ const CURRENCY_RE = '(?:ريالات|ريالا|ريال|ر\\.س|sar(?![a-z])|sr
 // whole message is just the number. «أربعة» alone is a guest word, not money.
 export function extractAmount(text) {
   if (typeof text !== 'string' || !text.trim()) return null;
-  // U+066B is the Arabic decimal separator.
-  const t = normalizeText(text).replace(/٫/g, '.');
+  // U+066B is the Arabic decimal separator; strip thousands separators (ASCII
+  // comma and U+066C Arabic thousands separator) BETWEEN digit groups first,
+  // otherwise the currency lookbehind starts the match after the separator and
+  // «1,500 ريال» records a third of the price (500).
+  const t = normalizeText(text).replace(/٫/g, '.').replace(/(?<=\d)[,٬](?=\d)/g, '');
 
   // An explicit money marker is sufficient even when the owner omits the
   // currency word: «السعر ٣٠٠», «المبلغ: 500». The marker keeps phone, guest
@@ -463,13 +469,35 @@ export function extractAmount(text) {
 
   // Hundred-words with optional و/ب prefixes («بمئة ريال» -> 100, «بخمسمئة» -> 500).
   const words = scrubPunct(t).split(/\s+/).filter(Boolean);
-  for (const raw of words) {
+  for (let wi = 0; wi < words.length; wi += 1) {
+    const raw = words[wi];
     const candidates = [raw];
     if (raw.startsWith('وب')) candidates.push(raw.slice(2));
     if (raw.startsWith('و')) candidates.push(raw.slice(1));
     if (raw.startsWith('ب')) candidates.push(raw.slice(1));
     for (const w of candidates) {
-      if (Object.prototype.hasOwnProperty.call(MONEY_WORDS, w)) return MONEY_WORDS[w];
+      if (Object.prototype.hasOwnProperty.call(MONEY_WORDS, w)) {
+        // A compound amount («الف وخمسمئة» = 1500, «مئتين وخمسين» = 250): the
+        // owner spoke more than this leading word. Recording only 1000/200
+        // silently understates the price — return null so the assistant
+        // re-asks the total instead of banking a truncated amount.
+        const next = words[wi + 1];
+        if (next && next.startsWith('و')) {
+          const rest = next.replace(/^وب?/, '');
+          // Units, tens (…ين), hundreds, thousand, or bare digits after «و» all
+          // mean the spoken amount continues beyond this leading word.
+          if (
+            Object.prototype.hasOwnProperty.call(MONEY_WORDS, rest) ||
+            Object.prototype.hasOwnProperty.call(NUM_WORDS, rest) ||
+            /^(?:ثلاث|اربع|خمس|ست|سبع|ثمان|تسع)?(?:مئة|مائة|مية)$/.test(rest) ||
+            /^(?:عشر|عشرين|ثلاثين|اربعين|خمسين|ستين|سبعين|ثمانين|تسعين|مئتين|مايتين|الف|الاف|آلاف)$/.test(rest) ||
+            /^\d+$/.test(rest)
+          ) {
+            return null;
+          }
+        }
+        return MONEY_WORDS[w];
+      }
     }
   }
   // Two-token form «خمس مئة» -> 500.

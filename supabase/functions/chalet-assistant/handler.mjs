@@ -1203,6 +1203,18 @@ async function runBookingPipeline(deps, ctx, { threadId, rawMessage, message, pr
     }
   }
   const pick = row ? parseAlternativePick(message, row.fields || {}) : null;
+  // A bare digit that SELECTS a conflict option («١»/«٢»/«٣») must not ALSO
+  // be filed as the guest count: extractFacts' whole-message rule read «١» as
+  // guests=1 and would silently overwrite the owner's stated headcount. When
+  // we are picking (or the pending question is the pick list and the message
+  // is a bare 1-3-digit numeral), drop the numeral's guests/total reading.
+  if (pick || (pendingQ && pendingQ.kind === "pick")) {
+    const folded = foldDigits(String(rawMessage || "")).trim();
+    if (/^\d{1,3}$/.test(folded)) {
+      delete facts.fields.guests;
+      delete facts.fields.total;
+    }
+  }
   // A bare reply while WE asked for the chalet is the chalet name.
   const chaletAnswer =
     row && pendingQ && pendingQ.kind === "chalet" ? contextualChaletAnswer(rawMessage) : "";
@@ -1464,6 +1476,19 @@ async function runBookingPipeline(deps, ctx, { threadId, rawMessage, message, pr
   }
   const prepared = await executeTool(deps, { ...ctx, norm, raw: true, threadId });
   if (prepared && prepared.ok && prepared.kind === "prepared_action") {
+    // Retire the PREVIOUS card for this draft: a typed correction just
+    // produced a new one, and leaving the old action still 'prepared' would
+    // let a stale tap (or a bare «نعم/سجل» recovering the latest pending)
+    // save the pre-correction slot — a silent double-book against the new card.
+    const prevActionId = row && row.linked_action_id ? String(row.linked_action_id) : "";
+    if (prevActionId && prevActionId !== String(prepared.action_id)) {
+      try {
+        const prevCtx = await deps.getConfirmationContext?.(ctx.wsKey, prevActionId);
+        if (prevCtx && prevCtx.status === "prepared") {
+          await deps.finalizeAction?.(ctx.wsKey, prevActionId, { status: "rejected", error_code: "SUPERSEDED_BY_CORRECTION" });
+        }
+      } catch { /* non-fatal: at worst the old card lingers, as before */ }
+    }
     delete fields.pending_q; // no open question — the card is the next step
     await saveDraft(prepared.action_id);
     return {

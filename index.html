@@ -964,6 +964,10 @@
               <summary>الحجوزات القديمة (0)</summary>
               <div id="bookingPastList"></div>
             </details>
+            <details id="bookingsCancelledSection" class="section-details">
+              <summary>الحجوزات الملغاة (0)</summary>
+              <div id="bookingCancelledList"></div>
+            </details>
             <div id="bookingEditorParking" class="hidden"></div>
           </div>
           <div id="bookingEditor" class="card editor hidden">
@@ -2527,13 +2531,36 @@
             feedback("تم نسخ تذكير المتبقي.", "good");
           else feedback("تعذر نسخ تذكير المتبقي.", "bad");
         }
+        // Mirrors availability.mjs periodInterval 1:1 (wrap + night anchor):
+        // «الفترة التي تبدأ قبل ٦ صباحًا تُحسب على ليلة التاريخ المحدد».
+        // Times are zero-padded ("7:00" → "07:00": an unpadded hour used to
+        // parse as Invalid Date and silently DISABLE conflict detection) and
+        // parsed as UTC so a browser timezone/DST quirk can never bend the
+        // math — intervals are only ever compared with each other.
+        const NIGHT_ANCHOR_HOUR = 6;
+        function padTimeHHmm(t) {
+          const m = /^(\d{1,2}):(\d{2})$/.exec(String(t || "").trim());
+          if (!m) return null;
+          const h = Number(m[1]);
+          if (h > 23 || Number(m[2]) > 59) return null;
+          return String(h).padStart(2, "0") + ":" + m[2];
+        }
         function intervalFor(b) {
           const ch = getChalet(b.chalet_id),
             p = getPeriodAny(ch, b.period_id);
-          if (!ch || !p || !b.booking_date || !p.start || !p.end) return null;
-          const s = new Date(b.booking_date + "T" + p.start + ":00").getTime();
-          let e = new Date(b.booking_date + "T" + p.end + ":00").getTime();
-          if (e <= s) e += 86400000;
+          if (!ch || !p || !b.booking_date) return null;
+          const startT = padTimeHHmm(p.start),
+            endT = padTimeHHmm(p.end);
+          if (!startT || !endT) return null;
+          let s = new Date(b.booking_date + "T" + startT + ":00Z").getTime();
+          let e = new Date(b.booking_date + "T" + endT + ":00Z").getTime();
+          if (!isFinite(s) || !isFinite(e)) return null;
+          if (e <= s) {
+            e += 86400000; // wraps past midnight
+          } else if (Number(startT.slice(0, 2)) < NIGHT_ANCHOR_HOUR) {
+            s += 86400000; // post-midnight slot: the night of this date
+            e += 86400000;
+          }
           return { start: s, end: e };
         }
         // ========================= JS: conflict detection =========================
@@ -2864,6 +2891,13 @@
           }
           try {
             backupBeforePush();
+            // Snapshot exactly what we are about to push. If the owner saves
+            // another change while this RPC is in flight (the upload button is
+            // re-enabled by setDirty, and the booking form stays live), the
+            // server echoes the PRE-edit document — adopting it would silently
+            // delete that mid-flight edit from memory, the session snapshot and
+            // the backup ring. We compare against this snapshot on success.
+            const pushedJson = JSON.stringify(state);
             let r = null;
             try {
               // Preferred: atomic compare-and-save (database/migrations/0001).
@@ -2886,7 +2920,7 @@
                   );
                 if (code.indexOf("BOOKING_CONFLICT") === 0)
                   throw new Error(
-                    "تم إيقاف الرفع: يوجد تعارض بين حجوزات مؤكدة في نفس الشاليه والفترة. راجع الحجوزات ثم أعد المحاولة.",
+                    "تم إيقاف الرفع: يوجد حجزان مؤكدان يتعارضان زمنيًا في نفس الشاليه (ولو اختلفت الفترتان). راجع الحجوزات ثم أعد المحاولة.",
                   );
                 if (code === "EMPTY_OVERWRITE_BLOCKED")
                   throw new Error(
@@ -2922,13 +2956,25 @@
                 throw new Error("RPC_RESPONSE_NOT_OK");
               r = r1;
             }
-            loadedWorkspace = r;
-            state = normalizeData(r.data);
-            lastCloudCounts = counts(state);
             lastCloudUpdatedAt = String(r.updated_at || "");
-            setDirty(false, "uploaded");
-            renderAll();
-            feedback("تم رفع التعديلات", "good");
+            if (JSON.stringify(state) !== pushedJson) {
+              // A local edit landed mid-flight. The local document is newer
+              // than the server echo — KEEP it and stay dirty; only adopt the
+              // new revision stamp so the next upload's compare-and-save lines
+              // up. The just-saved edit is never lost.
+              loadedWorkspace = { ...r, data: state };
+              lastCloudCounts = counts(normalizeData(r.data));
+              setDirty(true, "upload kept a mid-flight edit");
+              renderAll();
+              feedback("تم رفع تعديلاتك، ولديك تعديل جديد غير مرفوع — اضغط رفع مرة أخرى.", "good");
+            } else {
+              loadedWorkspace = r;
+              state = normalizeData(r.data);
+              lastCloudCounts = counts(state);
+              setDirty(false, "uploaded");
+              renderAll();
+              feedback("تم رفع التعديلات", "good");
+            }
             log("Upload succeeded", { lastCloudUpdatedAt, lastCloudCounts });
           } catch (e) {
             {
@@ -3137,6 +3183,18 @@
             '<div class="empty">لا توجد حجوزات قديمة</div>';
           $("bookingsPastSection").querySelector("summary").textContent =
             "الحجوزات القديمة (" + past.length + ")";
+          // Cancelled bookings live in their OWN reachable section — otherwise
+          // a mistakenly-cancelled booking vanished from every list and could
+          // never be re-opened, re-confirmed, or deleted.
+          const cancelled = activeBookings()
+            .filter((b) => b.status === "cancelled")
+            .slice()
+            .sort((a, b) => b.booking_date.localeCompare(a.booking_date));
+          $("bookingCancelledList").innerHTML =
+            cancelled.map((b) => bookingCard(b, "past")).join("") ||
+            '<div class="empty">لا توجد حجوزات ملغاة</div>';
+          $("bookingsCancelledSection").querySelector("summary").textContent =
+            "الحجوزات الملغاة (" + cancelled.length + ")";
         }
         function parkBookingEditor() {
           const editor = $("bookingEditor");
@@ -3379,7 +3437,37 @@
           $("chaletEditor").classList.add("hidden");
           setDirty(true, "save chalet and six periods");
           renderAll();
-          feedback("تم تحديث بيانات الشاليه.", "good");
+          // Editing period TIMES can silently make two already-saved bookings
+          // overlap (bookings store only period ids — times are read live).
+          // The server grandfathers old pairs, so surface it HERE, loudly but
+          // without blocking the save.
+          const clash = (() => {
+            const mine = activeBookings().filter(
+              (b) => b.chalet_id === id && b.status === "confirmed",
+            );
+            for (let i = 0; i < mine.length; i += 1) {
+              const oi = intervalFor(mine[i]);
+              if (!oi) continue;
+              for (let j = i + 1; j < mine.length; j += 1) {
+                const oj = intervalFor(mine[j]);
+                if (oj && oi.start < oj.end && oi.end > oj.start)
+                  return [mine[i], mine[j]];
+              }
+            }
+            return null;
+          })();
+          if (clash) {
+            feedback(
+              "تنبيه: بعد تعديل أوقات الفترات أصبح حجزا «" +
+                (clash[0].customer_name || "بدون اسم") +
+                "» و«" +
+                (clash[1].customer_name || "بدون اسم") +
+                "» متداخلين زمنيًا في هذا الشاليه. راجع تبويب الحجوزات.",
+              "bad",
+            );
+          } else {
+            feedback("تم تحديث بيانات الشاليه.", "good");
+          }
           log("[OK] Chalet updated", { id });
           log("[OK] Periods updated", { periods: c.periods.map((p) => p.id) });
         }
@@ -3650,7 +3738,7 @@
                 ")."
               : "";
             return feedback(
-              "يوجد حجز مؤكد متعارض في نفس الشاليه والفترة." + detail,
+              "يوجد حجز مؤكد يتعارض زمنيًا مع هذا الحجز في نفس الشاليه." + detail,
               "bad",
             );
           }
@@ -4190,12 +4278,16 @@
                 arabicPaymentError(body && body.error),
                 "bad",
               );
+            // Refresh the ledger view FIRST (its first line clears the link
+            // field), THEN show the freshly created link — otherwise the
+            // un-awaited refresh erased the link the instant it appeared,
+            // leaving an unrecoverable ACTIVE_ORDER_EXISTS on retry.
+            await refreshPaymentPanel(currentPaymentBookingId);
             setPaymentLink(body.order && body.order.payment_url);
             feedback(
               "تم إنشاء رابط الدفع. ملاحظة: فتح الرابط لا يعني الدفع — الحالة تتحدث من السجل المالي فقط.",
               "good",
             );
-            refreshPaymentPanel(currentPaymentBookingId);
           } catch (e) {
             feedback("تعذر الاتصال بخدمة روابط الدفع.", "bad");
             log("create-payment-session failed", { message: e.message });
@@ -4394,7 +4486,7 @@
           if (a === "send-payment-link-whatsapp")
             return sendPaymentLinkWhatsApp();
           if (a === "assistant-send") return assistantSend();
-          if (a === "assistant-retry") return assistantSend();
+          if (a === "assistant-retry") return assistantSend(assistantLastMessage);
           if (a === "assistant-new") return assistantNew();
           if (a === "assistant-suggest" && sourceEl)
             return assistantSend(sourceEl.dataset.suggest || "");
@@ -4421,7 +4513,10 @@
         // clear Arabic disabled state and no action is possible.
         let assistantThreadId = null,
           assistantBackendMissing = false,
-          assistantBusy = false;
+          assistantBusy = false,
+          // The last message actually sent — so «إعادة المحاولة» can re-send it
+          // after a failure (the input was already cleared on the first try).
+          assistantLastMessage = "";
         // Self-healing connection probe: after a failure the badge re-checks
         // on backoff (30s→60s→…, 5 tries) and a tap re-checks immediately —
         // a transient outage never leaves a permanently red badge.
@@ -4716,6 +4811,7 @@
           const input = $("assistantInput");
           const message = String(forceText != null ? forceText : input.value || "").trim();
           if (!message) return;
+          assistantLastMessage = message; // remember for «إعادة المحاولة»
           if (forceText == null) input.value = "";
           assistantAppend("user", message);
           // Typed confirmation words NEVER execute anything. When a card is

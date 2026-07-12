@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { handleAssistant } from "../../supabase/functions/chalet-assistant/handler.mjs";
 import { executeConfirmedAction } from "../../supabase/functions/_shared/assistant/executors.mjs";
-import { toolCatalogForModel, buildToolCatalogText, TOOL_REGISTRY } from "../../supabase/functions/_shared/assistant/tools.mjs";
+import { toolCatalogForModel, buildToolCatalogText, TOOL_REGISTRY, normalizeToolCall } from "../../supabase/functions/_shared/assistant/tools.mjs";
 import { corsWrap } from "../../supabase/functions/_shared/cors.mjs";
 
 // Covers the FINAL PRE-MERGE hardening: mandatory confirm secret, real tool
@@ -110,6 +110,34 @@ describe("model tool catalog (Stage 2)", () => {
     expect(text).toContain("prepare_payment_link");
     expect(text).not.toContain("confirm_payment_link");
     expect(text).not.toContain("confirm_manual_payment");
+  });
+});
+
+describe("boolean arg validation (strict parse)", () => {
+  it("the string \"false\" parses to false (a PAID booking), never coerced to true/«مجاني»", () => {
+    const norm = normalizeToolCall({
+      name: "prepare_booking_create",
+      arguments: { customer_name: "علي", chalet_name: "شاليه", booking_date: "2099-06-01", period_label: "صباحي", guests: 2, total: 500, total_is_free: "false" },
+    });
+    // The old Boolean("false") === true forged «مجاني» on a 500-riyal booking.
+    expect(norm.ok).toBe(true);
+    expect(norm.args.total_is_free).toBe(false);
+  });
+  it("a non-boolean garbage string is rejected, not silently coerced", () => {
+    const norm = normalizeToolCall({
+      name: "prepare_booking_create",
+      arguments: { customer_name: "علي", chalet_name: "شاليه", booking_date: "2099-06-01", period_label: "صباحي", guests: 2, total: 0, total_is_free: "نعم" },
+    });
+    expect(norm.ok).toBe(false);
+    expect(String(norm.detail)).toContain("TYPE:total_is_free");
+  });
+  it("real booleans and the exact strings true/false parse correctly", () => {
+    const t = normalizeToolCall({ name: "prepare_booking_create", arguments: { customer_name: "علي", chalet_name: "ش", booking_date: "2099-06-01", period_label: "صباحي", guests: 2, total: 0, total_is_free: true } });
+    expect(t.ok).toBe(true);
+    expect(t.args.total_is_free).toBe(true);
+    const s = normalizeToolCall({ name: "prepare_booking_create", arguments: { customer_name: "علي", chalet_name: "ش", booking_date: "2099-06-01", period_label: "صباحي", guests: 2, total: 0, total_is_free: "true" } });
+    expect(s.ok).toBe(true);
+    expect(s.args.total_is_free).toBe(true);
   });
 });
 

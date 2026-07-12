@@ -85,6 +85,14 @@ describe('parseTimeExpression', () => {
     expect(parseTimeExpression('احجز من ٧ الى اسم الشاليه تولوم عدد الضيوف ١٠')).toBeNull();
   });
 
+  it('a conjunction-prefixed field word («وعدد الضيوف ٣») breaks the range, not becomes the end hour', () => {
+    // Only a 7 PM START was given — the «٣» guests must never be the end hour.
+    expect(parseTimeExpression('سجل حجز اليوم من ٧ مساء وعدد الضيوف ٣')).toBeNull();
+    expect(parseTimeExpression('من ٧ مساء لعدد ٣ اشخاص')).toBeNull();
+    // The genuine range still parses when a real end hour follows.
+    expect(parseTimeExpression('من ٧ مساء الى ٥ صباحا وعدد الضيوف ٣')).toEqual({ ...overnight, confidence: 'high' });
+  });
+
   it('24h pair 19:00 إلى 05:00 is high and wraps', () => {
     expect(parseTimeExpression('19:00 إلى 05:00')).toEqual({
       ...overnight,
@@ -262,6 +270,19 @@ describe('extractAmount', () => {
     expect(extractAmount('التأمين 500')).toBeNull(); // no currency, not bare
     expect(extractAmount('أربعة')).toBeNull(); // guest word, not money
     expect(extractAmount('')).toBeNull();
+  });
+  it('reads a thousands-separated amount in full, not just the trailing group', () => {
+    expect(extractAmount('1,500 ريال')).toBe(1500);
+    expect(extractAmount('١٬٥٠٠ ريال')).toBe(1500);
+    expect(extractAmount('السعر 15,000')).toBe(15000);
+    expect(extractAmount('2,500,000 ريال')).toBe(2500000);
+  });
+  it('re-asks (returns null) for a truncatable compound spoken amount', () => {
+    // «الف وخمسمئة» = 1500; recording only 1000 silently understates it.
+    expect(extractAmount('الف وخمسمئة ريال')).toBeNull();
+    expect(extractAmount('مئة وخمسين ريال')).toBeNull();
+    // A plain hundred-word with no continuation is still fine.
+    expect(extractAmount('بخمسمئة ريال')).toBe(500);
   });
 });
 

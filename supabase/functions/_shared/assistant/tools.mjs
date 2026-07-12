@@ -28,7 +28,12 @@ export function validateArgs(schema, args) {
       if (!Number.isInteger(v)) { errors.push(`TYPE:${field}`); continue; }
       if (rule.min !== undefined && v < rule.min) errors.push(`MIN:${field}`);
     } else if (rule.type === "boolean") {
-      v = Boolean(v);
+      // Strict parse: Boolean("false") is TRUE, which would forge
+      // total_is_free from the string "false" and show «مجاني» for a priced
+      // booking. Accept only real booleans and the exact strings true/false.
+      if (typeof v === "boolean") { /* keep */ }
+      else if (v === "true" || v === "false") { v = v === "true"; }
+      else { errors.push(`TYPE:${field}`); continue; }
     } else if (rule.type === "string") {
       v = String(v);
       if (rule.maxLen && v.length > rule.maxLen) v = v.slice(0, rule.maxLen);

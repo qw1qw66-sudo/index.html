@@ -5,7 +5,12 @@
 //
 // The overlap rule is copied 1:1 from index.html (intervalFor + findConflict):
 //   two CONFIRMED bookings on the SAME chalet conflict when their time
-//   intervals overlap; a period whose end <= start wraps past midnight (+1 day).
+//   intervals overlap; a period whose end <= start wraps past midnight (+1 day);
+//   a NON-wrapping period that starts before 06:00 belongs to the NIGHT of the
+//   chosen date (both ends shift +1 day) — «الفترة التي تبدأ قبل ٦ صباحًا
+//   تُحسب على ليلة التاريخ المحدد». Without that anchor, a 00:00–05:00 slot on
+//   date D lands in D's PAST early morning and never collides with a D-dated
+//   19:00–05:00 booking — the live «١٢ ساعة تحتوي ٥ ساعات» hole (IMG_6706).
 // A candidate (chalet, date, period) is therefore UNAVAILABLE when any
 // confirmed, non-deleted booking of that chalet has an overlapping interval.
 
@@ -50,6 +55,25 @@ export function isPeriodBookable(period) {
   return validatePeriodTimes(period);
 }
 
+// Night-anchor convention: a non-wrapping period that STARTS before this hour
+// is the tail of the chosen date's NIGHT, not its past early morning.
+export const NIGHT_ANCHOR_HOUR = 6;
+
+// Shared date→interval anchoring (the ONLY place slot semantics live):
+// wrapped periods extend into the next day; fully post-midnight periods shift
+// whole into the next day so «ليلة التاريخ المحدد» always means one physical
+// night. Mirrored 1:1 in index.html intervalFor and SQL migration 0008.
+export function applyNightAnchor(start, end, startHour) {
+  let s = start, e = end;
+  if (e <= s) {
+    e += 86400000; // wraps past midnight
+  } else if (startHour < NIGHT_ANCHOR_HOUR) {
+    s += 86400000; // post-midnight slot: belongs to the night of the date
+    e += 86400000;
+  }
+  return { start: s, end: e };
+}
+
 // Epoch-ms interval for a booking's period on a specific date. null when the
 // period's times are missing/malformed — callers must FAIL CLOSED on null
 // (unknown time can never prove availability).
@@ -58,10 +82,9 @@ export function periodInterval(period, dateIso) {
   const t = validatePeriodTimes(period);
   if (!t.ok) return null;
   const s = new Date(`${dateIso}T${t.start}:00Z`).getTime();
-  let e = new Date(`${dateIso}T${t.end}:00Z`).getTime();
+  const e = new Date(`${dateIso}T${t.end}:00Z`).getTime();
   if (!isFinite(s) || !isFinite(e)) return null;
-  if (e <= s) e += 86400000; // wraps past midnight
-  return { start: s, end: e };
+  return applyNightAnchor(s, e, Number(t.start.slice(0, 2)));
 }
 
 export function intervalsOverlap(a, b) {
@@ -207,9 +230,13 @@ export function findDocConflictPairs(doc) {
     if (sh > 23 || smin > 59 || eh > 23 || emin > 59) continue; // SQL would error; treat as unparseable
     const base = new Date(`${date}T00:00:00Z`).getTime();
     if (!isFinite(base)) continue;
-    let start = base + (sh * 60 + smin) * 60000;
-    let end = base + (eh * 60 + emin) * 60000;
-    if (end <= start) end += 86400000;
+    const anchored = applyNightAnchor(
+      base + (sh * 60 + smin) * 60000,
+      base + (eh * 60 + emin) * 60000,
+      sh,
+    );
+    const start = anchored.start;
+    const end = anchored.end;
     rows.push({
       start, end,
       chalet_id: String(b.chalet_id ?? ""),

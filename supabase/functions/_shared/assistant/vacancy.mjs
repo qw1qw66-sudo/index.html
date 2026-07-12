@@ -80,9 +80,9 @@ export function isVacancyStillEmpty(doc, { chalet_id, date, period_id }) {
   const chalet = activeChalets(doc).find((c) => c.id === chalet_id);
   const period = chalet ? (chalet.periods || []).find((p) => p.id === period_id) : null;
   if (chalet && period) return isSlotAvailable(doc, chalet_id, date, period);
-  return !activeBookings(doc).some(
-    (b) => b.status === "confirmed" && b.chalet_id === chalet_id && b.booking_date === date && b.period_id === period_id,
-  );
+  // Unresolvable chalet/period (deleted, repointed): emptiness cannot be
+  // PROVEN — fail closed, never market a slot we can't verify.
+  return false;
 }
 
 const KSA_PHONE = /^(?:\+?9665\d{8}|00966\d{9}|05\d{8}|5\d{8})$/;
@@ -96,14 +96,16 @@ const KSA_PHONE = /^(?:\+?9665\d{8}|00966\d{9}|05\d{8}|5\d{8})$/;
  * optedOut: Set of customerRef
  * customerRefOf(phone): (phone) => stable non-PII reference
  */
-export function selectEligibleContacts({ doc, rule, priorContacts = new Map(), optedOut = new Set(), nowMs, customerRefOf, maxContacts }) {
+export function selectEligibleContacts({ doc, rule, priorContacts = new Map(), optedOut = new Set(), nowMs, customerRefOf, maxContacts, alreadyContacted = new Set() }) {
   // The effective cap is the SMALLER of the rule's per-day maximum and the
   // caller-supplied remaining global daily budget (so cross-run daily totals are
   // respected). maxContacts === 0 => nothing is eligible.
   const ruleCap = Math.max(0, Number(rule.maximum_daily_messages) || 0);
   const cap = maxContacts === undefined ? ruleCap : Math.max(0, Math.min(ruleCap, Number(maxContacts) || 0));
   const cooldownMs = (Number(rule.contact_cooldown_hours) || 0) * 3600_000;
-  const seen = new Set();
+  // Refs already contacted earlier THIS invocation are pre-seeded as "seen" so
+  // they are skipped as duplicates regardless of the cooldown value.
+  const seen = new Set(alreadyContacted);
   const eligible = [];
   const skipped = { invalid_phone: 0, opted_out: 0, cooldown: 0, duplicate: 0 };
 

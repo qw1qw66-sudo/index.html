@@ -170,7 +170,36 @@ describe("autopilot: safety and determinism", () => {
     // sent_messages stays 0 until a Cloud API webhook confirms delivery.
     expect(deps.queued.every((m) => m.status === "queued")).toBe(true);
     expect(deps.runs.every((r) => r.sent_messages === 0)).toBe(true);
-    expect(deps.runs.every((r) => r.status === "queued")).toBe(true);
+    // A run either queued messages or completed empty (its customers were
+    // already contacted earlier this invocation) — never "sending"/"sent".
+    expect(deps.runs.every((r) => r.status === "queued" || r.status === "completed")).toBe(true);
+    expect(deps.runs.some((r) => r.status === "queued")).toBe(true);
+  });
+
+  it("owner_approval_required gates auto-send: enabled+approval-required only QUEUES for approval", async () => {
+    // The DB default owner_approval_required=true must win even with
+    // automatic_send_enabled=true and a healthy official channel.
+    const deps = baseDeps({
+      listEnabledRules: async () => [rule({ automatic_send_enabled: true, owner_approval_required: true })],
+      whatsappMode: async () => "official_cloud_api",
+    });
+    const s = await runAutopilot(deps);
+    expect(s.queued).toBe(0);
+    expect(deps.queued.length).toBeGreaterThan(0);
+    expect(deps.queued.every((m) => m.status === "awaiting_approval")).toBe(true);
+  });
+
+  it("no repeated spam: a customer is contacted at most once per invocation across vacancies", async () => {
+    // scan_days_ahead=3 -> multiple empty vacancies; the two previous
+    // customers must each be queued ONCE, not once per vacancy.
+    const deps = baseDeps({
+      listEnabledRules: async () => [rule({ automatic_send_enabled: true, owner_approval_required: false })],
+      whatsappMode: async () => "official_cloud_api",
+    });
+    await runAutopilot(deps);
+    const refs = deps.queued.map((m) => m.customer_reference);
+    expect(new Set(refs).size).toBe(refs.length); // no duplicate customer_reference
+    expect(refs.length).toBe(2); // exactly the two distinct previous customers
   });
 
   it("no revenue is invented (attributed_revenue starts at 0)", async () => {

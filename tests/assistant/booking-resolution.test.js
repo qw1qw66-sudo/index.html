@@ -156,4 +156,21 @@ describe("authoritative chalet/period name resolution", () => {
     });
     expect(result).toMatchObject({ ok: true, args: { chalet_id: "tulum-real-id" } });
   });
+
+  it("an Arabic-Indic digit in a numbered chalet name matches the ASCII-digit stored name", () => {
+    const doc = workspaceDoc();
+    // Two sibling chalets distinguished only by a trailing number (stored ASCII).
+    doc.chalets[0].name = "شاليه تولوم";
+    doc.chalets.push({
+      id: "tulum2-real-id", name: "شاليه تولوم 2", capacity: 8, deleted_at: null,
+      periods: [{ id: "t2-am", label: "صباحي", start: "07:00", end: "12:00", active: true }],
+    });
+    // The owner types «تولوم ٢» on an Arabic keyboard — it must bind the «2»
+    // sibling, not silently fall back to the first «تولوم».
+    const two = resolveBookingCreateArgs(doc, {
+      customer_name: "عميل", chalet_name: "تولوم ٢",
+      period_label: "صباحي", booking_date: "2099-07-11",
+    });
+    expect(two).toMatchObject({ ok: true, args: { chalet_id: "tulum2-real-id" } });
+  });
 });
