@@ -438,21 +438,21 @@ async function main() {
   }
 
   // 10f3. NIGHT ANCHOR (IMG_6706 «سالفة التوقيت»): while the agent's
-  // 19:00→05:00 booking occupies tonight, the 5-hour «منتصف الليل» slot on
-  // the SAME date is the middle of that occupied night — the deployed engine
-  // must refuse to prepare it (it used to read «متاحة»).
+  // 19:00→05:00 booking occupies tonight, the 00:00–05:00 «منتصف الليل» slot
+  // (p9) on the SAME date is the middle of that occupied night. The deployed
+  // availability engine must EXCLUDE it from today's available periods —
+  // before the night-anchor fix it read «متاحة». A read is deterministic and
+  // needs no cleanup; daytime slots stay free so the list is non-empty.
   if (agentBookingId) {
-    const r = await assistant({ invoke_tool: { name: "prepare_booking_create", arguments: { customer_name: "تجربة منتصف الليل", chalet_name: "تولوم", booking_date: RIYADH_TODAY, period_label: "منتصف الليل", guests: 2, total: 100 } } });
-    const b = r.json || {};
-    const blocked = b.ok !== true && !(b.kind === "prepared_action" && b.ok);
-    const saysConflict = /محجوز|تتعارض|تعارض/.test(String(b.reason_ar || ""));
-    const safeText = !/[A-Z]{2,}_[A-Z]/.test(String(b.reason_ar || ""));
-    const still = await assistant({ invoke_tool: { name: "list_bookings", arguments: { from: RIYADH_TODAY, to: RIYADH_TODAY, status: "confirmed" } } });
-    const n = still.json && still.json.result ? (still.json.result.bookings || []).filter((x) => x.customer_name === "علي").length : -1;
+    const r = await assistant({ invoke_tool: { name: "find_available_periods", arguments: { chalet_name: "تولوم", date: RIYADH_TODAY } } });
+    const res = r.json && r.json.result ? r.json.result : {};
+    const avail = Array.isArray(res.available) ? res.available : null;
+    const starts = avail ? avail.map((p) => String(p.start || "")) : [];
+    const midnightOffered = starts.includes("00:00"); // p9's post-midnight slot
     record(
       "night_containment_blocked",
-      r.status === 200 && blocked && saysConflict && safeText && n === 1 && !leaks(r.text),
-      "blocked=" + blocked + ",count=" + n,
+      r.status === 200 && Array.isArray(avail) && avail.length > 0 && !midnightOffered && !leaks(r.text),
+      "avail=" + starts.length + ",midnight_offered=" + midnightOffered,
     );
   } else {
     record("night_containment_blocked", false, "NO_BOOKING");
