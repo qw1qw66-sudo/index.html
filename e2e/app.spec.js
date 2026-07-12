@@ -71,10 +71,12 @@ async function createChaletWithSixPeriods(page) {
   await page.locator('[data-action="new-chalet"]').click();
   await page.locator('#chaletName').fill('Tulum');
   await expect(page.locator('.period-card')).toHaveCount(6);
+  const starts = ['07:00', '17:00', '18:00', '19:00', '20:00', '21:00'];
+  const ends = ['17:00', '18:00', '19:00', '20:00', '21:00', '22:00'];
   for (let i = 0; i < 6; i++) {
     await page.locator('[data-period-field="label"]').nth(i).fill(i === 0 ? 'Morning' : 'Period ' + (i + 1));
-    await page.locator('[data-period-field="start"]').nth(i).fill(String(7 + i).padStart(2, '0') + ':00');
-    await page.locator('[data-period-field="end"]').nth(i).fill(String(8 + i).padStart(2, '0') + ':00');
+    await page.locator('[data-period-field="start"]').nth(i).fill(starts[i]);
+    await page.locator('[data-period-field="end"]').nth(i).fill(ends[i]);
     await page.locator('[data-period-field="active"]').nth(i).check();
   }
   await page.locator('[data-action="save-chalet"]').click();
@@ -522,7 +524,7 @@ test('booking card: structured rows, LTR values, three buttons, dark theme, abov
 });
 
 test('typed «سجل» flashes the card and never fires a request; double-tap confirms once', async ({ page }) => {
-  await mockRpc(page);
+  const box = await mockMutableCloud(page);
   let assistantCalls = 0;
   let confirmCalls = 0;
   await page.route('**/functions/v1/chalet-assistant', async (route) => {
@@ -532,7 +534,25 @@ test('typed «سجل» flashes the card and never fires a request; double-tap co
       confirmCalls++;
       // Slow response so a double-tap window exists.
       await new Promise((r) => setTimeout(r, 400));
-      return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true, kind: 'completed_action', tool: body.invoke_tool.name, result: { action: 'booking_created', booking_id: 'bk-1' } }) });
+      box.cloud = {
+        ...box.cloud,
+        updated_at: '2026-01-01T03:30:00.000Z',
+        data: freshnessDoc([freshnessBooking('bk-1', 'علي تجربة')]),
+      };
+      return route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ok: true,
+          kind: 'completed_action',
+          tool: body.invoke_tool.name,
+          result: {
+            action: 'booking_created',
+            booking_id: 'bk-1',
+            updated_at: box.cloud.updated_at,
+            booking: freshnessBooking('bk-1', 'علي تجربة'),
+          },
+        }),
+      });
     }
     return route.fulfill({ contentType: 'application/json', body: JSON.stringify(BOOKING_CARD_BODY) });
   });
