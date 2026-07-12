@@ -25,7 +25,7 @@ import { normalizeToolCall, TOOL_REGISTRY, buildToolCatalogText } from "../_shar
 import { prepareConfirmation, reissueConfirmation, hashToken, hashPayload } from "../_shared/assistant/confirmation.mjs";
 import { redactText, redactObject } from "../_shared/assistant/redact.mjs";
 import { riyadhToday, availabilityCheck, availabilityFailureAr } from "../_shared/assistant/availability.mjs";
-import { isBareConfirmPhrase, formatDateDisplay, addDaysIso, classifyMeridiemWord, parseTimeExpression } from "../_shared/assistant/nl-normalize.mjs";
+import { isBareConfirmPhrase, formatDateDisplay, addDaysIso, classifyMeridiemWord, parseTimeExpression, foldDigits } from "../_shared/assistant/nl-normalize.mjs";
 import { resolveChaletReference } from "../_shared/assistant/booking-resolution.mjs";
 import { applySafeError } from "../_shared/assistant/safe-errors.mjs";
 import {
@@ -1045,6 +1045,39 @@ function contextualCustomerNameAnswer(raw, today) {
   return String(named.fields && named.fields.customer_name || "").trim();
 }
 
+// Same contract for «لأي شاليه تريد الحجز؟» — a short bare reply IS the
+// chalet name («تولوم», «شالية تولوم» — live IMG_6703). The block-list drops
+// «شاليه» (it may legitimately open the answer) but keeps every other-field
+// word; digits are rejected so bare numerals keep answering guests/total.
+const CHALET_ANSWER_BLOCK_RE =
+  /(?:^|\s)(?:حجز|احجز|سجل|فترة|ضيف|ضيوف|شخص|عدد|سعر|المبلغ|جوال|هاتف|رقم|اليوم|بكرة|غدا|تاريخ|صباح|مساء|ليل|ظهر|عصر|من|الى|حتى)(?=\s|$)/;
+function contextualChaletAnswer(raw) {
+  const s = String(raw || "").trim().replace(/[.!؟،,;؛:]+$/g, "").trim();
+  if (!s || s.length > 60 || s.split(/\s+/).length > 5) return "";
+  if (/\d/.test(foldDigits(s))) return "";
+  if (!/^[\p{L}\s'’-]+$/u.test(s)) return "";
+  if (isBareConfirmPhrase(s) || CANCEL_DRAFT_RE.test(s) || CHALET_ANSWER_BLOCK_RE.test(s)) return "";
+  return s;
+}
+
+// And for «أي فترة تريد؟»: a short bare label («دوام») rides the resolver's
+// period_text tiers («فترة 3» is already caught by extractPeriodText).
+function contextualPeriodAnswer(raw) {
+  const s = String(raw || "").trim().replace(/[.!؟،,;؛:]+$/g, "").trim();
+  if (!s || s.length > 30 || s.split(/\s+/).length > 3) return "";
+  if (!/^[\p{L}\s'’-]+$/u.test(s)) return "";
+  if (isBareConfirmPhrase(s) || CANCEL_DRAFT_RE.test(s)) return "";
+  return s;
+}
+
+// EVERY question kind the pipeline can ask MUST have an answer path in
+// runBookingPipeline («fix» and «date» ride extractFacts + the DATEISH
+// clarify; the rest have explicit branches). The enumeration test pins this:
+// a new ask() kind without a registered parser fails CI by construction.
+export const PENDING_ANSWER_KINDS = new Set([
+  "fix", "date", "time_ampm", "chalet", "pick", "period", "guests", "total", "customer_name",
+]);
+
 // pending_q kind for the FIRST missing field (missingFields returns them in
 // question-priority order already).
 const PENDING_KIND_BY_MISSING = {
@@ -1155,11 +1188,32 @@ async function runBookingPipeline(deps, ctx, { threadId, rawMessage, message, pr
     const contextualName = contextualCustomerNameAnswer(rawMessage, today);
     if (contextualName) facts.fields.customer_name = contextualName;
   }
+  // Bare-numeral routing by the PENDING question: «٥٠» answering the TOTAL
+  // question is money — without this, the guests whole-message rule (1-200)
+  // claimed it and the total stayed missing forever.
+  if (row && pendingQ && pendingQ.kind === "total" && facts.fields.total === undefined) {
+    const folded = foldDigits(String(rawMessage || "")).trim();
+    if (/^\d{1,6}$/.test(folded)) {
+      const n = Number(folded);
+      if (n >= 0 && n <= 100000) {
+        facts.fields.total = n;
+        facts.fields.total_source = "explicit";
+        delete facts.fields.guests;
+      }
+    }
+  }
   const pick = row ? parseAlternativePick(message, row.fields || {}) : null;
+  // A bare reply while WE asked for the chalet is the chalet name.
+  const chaletAnswer =
+    row && pendingQ && pendingQ.kind === "chalet" ? contextualChaletAnswer(rawMessage) : "";
   const timeText = facts.time ? `${facts.time.start}-${facts.time.end}` : "";
   // The meridiem word answered the time question — it must not double as a
-  // period-name correction this turn.
-  const periodWord = meridiemAnswered ? "" : extractPeriodText(message);
+  // period-name correction this turn. A bare label while WE asked for the
+  // period rides the same periodWord plumbing as known period words.
+  const periodWord = meridiemAnswered
+    ? ""
+    : extractPeriodText(message) ||
+      (row && pendingQ && pendingQ.kind === "period" ? contextualPeriodAnswer(rawMessage) : "");
   const factSignal = Boolean(
     (facts.fields &&
       (facts.fields.booking_date ||
@@ -1171,7 +1225,8 @@ async function runBookingPipeline(deps, ctx, { threadId, rawMessage, message, pr
       facts.free ||
       facts.accept_suggestion ||
       (facts.private && facts.private.customer_phone) ||
-      periodWord,
+      periodWord ||
+      chaletAnswer,
   );
   if (row && !intent && !factSignal && !pick && !forced) {
     // CLOSED GUIDED MODE: an active-draft turn NEVER falls through to the
@@ -1208,7 +1263,11 @@ async function runBookingPipeline(deps, ctx, { threadId, rawMessage, message, pr
   // The chalet hint the resolver sees is a REDACTED copy of the message —
   // fields jsonb is model-visible by design and must never carry a raw phone.
   const safeMessage = redactText(rawMessage || "").slice(0, 200);
-  if (!fields.chalet_id && (intent || !row) && safeMessage) fields.chalet_text = safeMessage;
+  // The chalet hint comes from a NEW booking sentence — or from the owner's
+  // ANSWER to our own chalet question (live IMG_6703: «تولوم» must bind).
+  if (!fields.chalet_id && (intent || !row || chaletAnswer) && safeMessage) {
+    fields.chalet_text = chaletAnswer ? redactText(chaletAnswer).slice(0, 200) : safeMessage;
+  }
   const dateChanged = Boolean(facts.fields && facts.fields.booking_date);
   if (timeText) {
     fields.period_text = timeText;
@@ -1306,6 +1365,10 @@ async function runBookingPipeline(deps, ctx, { threadId, rawMessage, message, pr
       fields.chalet_name = String(cres.chalet.name || "");
       delete fields.chalet_text;
     } else if (cres.error === "CHALET_AMBIGUOUS") {
+      return ask(cres.reason_ar, { pending_q: { kind: "chalet" } });
+    } else if (cres.error === "CHALET_NOT_FOUND" && chaletAnswer) {
+      // The owner ANSWERED our chalet question with a name we cannot match —
+      // re-ask listing the REAL registered names (never the generic fallback).
       return ask(cres.reason_ar, { pending_q: { kind: "chalet" } });
     }
     // NOT_FOUND on a generic sentence just means "chalet still unknown".

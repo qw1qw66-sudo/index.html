@@ -736,3 +736,114 @@ test('source has no old public auth or redirect patterns', async ({ page }) => {
     expect(html).not.toContain(pattern);
   }
 });
+
+// ---- R5 guarded cloud freshness (live bug: «لا توجد حجوزات» while the ----
+// ---- server held today's booking — the tab rendered a stale local doc) ----
+
+// Tomorrow in Riyadh time: always >= the app's today(), no midnight flake.
+const RIYADH_TOMORROW = new Date(Date.now() + 3 * 3600000 + 86400000).toISOString().slice(0, 10);
+
+function freshnessDoc(bookings) {
+  return {
+    schema_version: 3,
+    settings: { facility_name: '', tag: '', holidays: [] },
+    chalets: [{ id: 'c1', name: 'شاليه تولوم', capacity: 10, deleted_at: null, periods: [{ id: 'p1', label: 'مسائي', start: '19:00', end: '05:00', active: true }] }],
+    bookings,
+  };
+}
+function freshnessBooking(id, name) {
+  return { id, customer_name: name, chalet_id: 'c1', period_id: 'p1', booking_date: RIYADH_TOMORROW, guests: 2, total: 500, paid: 0, status: 'confirmed', deleted_at: null };
+}
+
+// A v1-style server whose canonical doc the test can swap mid-run.
+async function mockMutableCloud(page) {
+  const box = {
+    exists: false,
+    cloud: { ok: true, workspace_key: 'TEST1', updated_at: '2026-01-01T00:00:00.000Z', data: freshnessDoc([]) },
+  };
+  await page.route('**/rest/v1/rpc/**', async (route) => {
+    const name = route.request().url().split('/').pop();
+    const body = JSON.parse(route.request().postData() || '{}');
+    if (name === 'get_shared_workspace') {
+      if (!box.exists) return route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ message: 'WORKSPACE_NOT_FOUND_OR_PIN_INVALID' }) });
+      return route.fulfill({ contentType: 'application/json', body: JSON.stringify(box.cloud) });
+    }
+    if (name === 'save_shared_workspace') {
+      box.exists = true;
+      box.cloud = { ok: true, workspace_key: String(body.p_workspace_key || 'TEST1').toUpperCase(), updated_at: new Date(Date.parse(box.cloud.updated_at) + 60000).toISOString(), data: body.p_data };
+      return route.fulfill({ contentType: 'application/json', body: JSON.stringify(box.cloud) });
+    }
+    return route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ message: 'unknown rpc' }) });
+  });
+  return box;
+}
+
+test('a restored session converges to the server truth without re-login (stale snapshot heals)', async ({ page }) => {
+  const box = await mockMutableCloud(page);
+  // The SERVER already holds tomorrow's booking…
+  box.exists = true;
+  box.cloud = { ok: true, workspace_key: 'TEST1', updated_at: '2026-01-01T00:10:00.000Z', data: freshnessDoc([freshnessBooking('b1', 'علي اختبار')]) };
+  // …but the tab restores an OLDER cached snapshot without it (live IMG_6705).
+  await page.addInitScript(({ snap }) => {
+    sessionStorage.setItem('active_workspace_session', JSON.stringify(snap));
+    sessionStorage.setItem('active_session_pin', '123456');
+  }, { snap: { workspaceKey: 'TEST1', state: freshnessDoc([]), lastCloudCounts: { chalets: 1, bookings: 0 }, lastCloudUpdatedAt: '2026-01-01T00:00:00.000Z', dirty: false } });
+  await page.goto('/');
+  await expect(page.locator('#appShell')).toBeVisible(); // restored, not re-logged
+  await page.locator('[data-tab="bookings"]').click();
+  // The quiet refresh adopts the server doc: the booking IS there.
+  await expect(page.locator('#bookingList')).toContainText('علي اختبار');
+  await expect(page.locator('#bookingList')).not.toContainText('لا توجد حجوزات');
+});
+
+test('«تحديث» pulls the server truth; unsaved local edits are never clobbered', async ({ page }) => {
+  const box = await mockMutableCloud(page);
+  await page.goto('/');
+  await create(page);
+  await page.locator('[data-tab="bookings"]').click();
+  await expect(page.locator('#bookingList')).toContainText('لا توجد حجوزات');
+  // Another device adds a booking server-side.
+  box.cloud = { ...box.cloud, updated_at: '2026-01-01T01:00:00.000Z', data: freshnessDoc([freshnessBooking('b1', 'ضيف السحابة')]) };
+  await page.locator('[data-action="refresh-cloud"]').click();
+  await expect(page.locator('#bookingList')).toContainText('ضيف السحابة');
+  await expect(page.locator('#feedback')).toContainText('تم تحديث البيانات من السحابة');
+  // A LOCAL unsaved edit now exists (new chalet, never uploaded)…
+  await page.locator('[data-tab="chalets"]').click();
+  await page.locator('[data-action="new-chalet"]').click();
+  await page.locator('#chaletName').fill('شاليه محلي');
+  await page.locator('[data-action="save-chalet"]').click();
+  // …and the server moves again.
+  box.cloud = { ...box.cloud, updated_at: '2026-01-01T02:00:00.000Z', data: freshnessDoc([freshnessBooking('b1', 'ضيف السحابة'), freshnessBooking('b2', 'ضيف ثاني')]) };
+  await page.locator('[data-tab="bookings"]').click();
+  await page.locator('[data-action="refresh-cloud"]').click();
+  // Refresh REFUSES (explicit wording) and local data stays intact.
+  await expect(page.locator('#feedback')).toContainText('ارفعها أولًا');
+  await expect(page.locator('#bookingList')).not.toContainText('ضيف ثاني');
+  await page.locator('[data-tab="chalets"]').click();
+  await expect(page.locator('#chaletList')).toContainText('شاليه محلي');
+});
+
+test('after حفظ الحجز the bookings tab shows the booking — no re-login needed', async ({ page }) => {
+  const box = await mockMutableCloud(page);
+  await page.route('**/functions/v1/chalet-assistant', async (route) => {
+    const body = JSON.parse(route.request().postData() || '{}');
+    if (body.invoke_tool && String(body.invoke_tool.name).startsWith('confirm_')) {
+      // The booking is written SERVER-side by the edge function.
+      box.cloud = { ...box.cloud, updated_at: '2026-01-01T03:00:00.000Z', data: freshnessDoc([freshnessBooking('bk-1', 'علي تجربة')]) };
+      return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true, kind: 'completed_action', tool: body.invoke_tool.name, result: { action: 'booking_created', booking_id: 'bk-1' } }) });
+    }
+    return route.fulfill({ contentType: 'application/json', body: JSON.stringify(BOOKING_CARD_BODY) });
+  });
+  await page.goto('/');
+  await create(page);
+  await page.locator('[data-tab="assistant"]').click();
+  await page.locator('#assistantInput').fill('احجز تولوم بكرة بالليل لشخصين بخمسمئة، العميل علي تجربة');
+  await page.locator('[data-action="assistant-send"]').click();
+  await expect(page.locator('#assistantActions .action-card')).toHaveCount(1);
+  await page.locator('[data-action="assistant-confirm"]').click();
+  await expect(page.locator('#assistantLog')).toContainText('تم إنشاء الحجز بنجاح');
+  // The post-confirm quiet refresh converged the tab to the server truth.
+  await page.locator('[data-tab="bookings"]').click();
+  await expect(page.locator('#bookingList')).toContainText('علي تجربة');
+  await expect(page.locator('#bookingList')).not.toContainText('لا توجد حجوزات');
+});

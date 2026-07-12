@@ -946,9 +946,18 @@
           <div class="card">
             <div class="actions between">
               <h3>الحجوزات</h3>
-              <button id="newBookingButton" class="primary" data-action="new-booking">
-                + حجز جديد
-              </button>
+              <div class="actions header-actions">
+                <button
+                  id="refreshBookingsButton"
+                  class="secondary tiny"
+                  data-action="refresh-cloud"
+                >
+                  تحديث
+                </button>
+                <button id="newBookingButton" class="primary" data-action="new-booking">
+                  + حجز جديد
+                </button>
+              </div>
             </div>
             <div id="bookingList"></div>
             <details id="bookingsPastSection" class="section-details">
@@ -2216,6 +2225,10 @@
             lastCloudUpdatedAt = restoredLastCloudUpdatedAt;
             setDirty(restoredDirty, "restored session");
             feedback("تم استرجاع الجلسة الحالية في نفس التبويب.", "good");
+            // The cached snapshot can lag the server (e.g. a booking the
+            // assistant saved just before the reload). Converge quietly —
+            // but NEVER over unsaved local edits.
+            if (!restoredDirty) refreshFromCloud({ quiet: true });
             return true;
           } catch (e) {
             log("Session restore failed", { message: e.message });
@@ -2541,16 +2554,24 @@
             }) || null
           );
         }
-        function openApp(r) {
+        // Adopt a server document as the local truth: data + revision stamp +
+        // clean dirty state + re-render. Shared by login (openApp) and the
+        // mid-session cloud refresh — the ONLY two places allowed to replace
+        // `state` with a server copy. setDirty() persists the session snapshot,
+        // so the cached copy converges too.
+        function adoptServerDoc(r) {
           loadedWorkspace = r;
           state = normalizeData(r.data);
           lastCloudCounts = counts(state);
           lastCloudUpdatedAt = String(r.updated_at || "");
+          setDirty(false, "adopted cloud");
+          renderAll();
+        }
+        function openApp(r) {
+          adoptServerDoc(r);
           $("connectScreen").classList.add("hidden");
           $("appShell").classList.remove("hidden");
           $("settingsWorkspace").textContent = r.workspace_key || workspaceKey;
-          setDirty(false, "current session login/create");
-          renderAll();
           log("App opened", {
             workspace_key: r.workspace_key,
             lastCloudCounts,
@@ -2564,6 +2585,52 @@
           // Pending work survives a refresh: recover the latest prepared card
           // with a server-rotated token (never stored client-side).
           assistantRecoverPending();
+        }
+        // Guarded cloud freshness: converge the open tab to the server truth
+        // WITHOUT ever clobbering unsaved local edits. Fired after an
+        // assistant action succeeds server-side, after a session restore
+        // (which renders a cached snapshot), and by the «تحديث» button.
+        let cloudRefreshBusy = false;
+        async function refreshFromCloud(opts) {
+          const quiet = !opts || opts.quiet !== false;
+          if (!loadedWorkspace || !workspaceKey || !accessPin) return false;
+          if (cloudRefreshBusy) return false;
+          if (dirty) {
+            if (!quiet)
+              feedback(
+                "لديك تعديلات محلية غير مرفوعة — ارفعها أولًا ثم حدّث.",
+                "bad",
+              );
+            return false;
+          }
+          cloudRefreshBusy = true;
+          try {
+            const r = await callRpc("get_shared_workspace", {
+              p_workspace_key: workspaceKey,
+              p_access_pin: accessPin,
+            });
+            if (!r || r.ok !== true) throw new Error("RPC_RESPONSE_NOT_OK");
+            // Race guard: an edit made while the fetch was in flight wins —
+            // never overwrite it with the (already-older) server copy.
+            if (dirty) return false;
+            if (String(r.updated_at || "") === lastCloudUpdatedAt) {
+              if (!quiet) feedback("البيانات محدّثة — لا جديد في السحابة.", "good");
+              return true;
+            }
+            adoptServerDoc(r);
+            if (!quiet) feedback("تم تحديث البيانات من السحابة.", "good");
+            return true;
+          } catch (e) {
+            log("Cloud refresh failed", {
+              message: e.message,
+              status: e.status || null,
+            });
+            if (!quiet)
+              feedback("تعذّر التحديث — تبقى البيانات المحلية كما هي.", "bad");
+            return false;
+          } finally {
+            cloudRefreshBusy = false;
+          }
         }
         async function pullWorkspace() {
           log("Login clicked");
@@ -4285,6 +4352,7 @@
           if (a === "cancel-chalet") return cancelChalet();
           if (a === "delete-chalet")
             return softDeleteChalet($("chaletId").value);
+          if (a === "refresh-cloud") return refreshFromCloud({ quiet: false });
           if (a === "new-booking") return newBooking();
           if (a === "edit-booking") return editBooking(id, sourceEl);
           if (a === "soft-delete-booking") return softDeleteBooking(id);
@@ -4782,8 +4850,11 @@
                 const w = window.open(body.result.manual_url, "_blank", "noopener,noreferrer");
                 if (!w) location.href = body.result.manual_url;
               }
-              // Refresh affected views with real data.
+              // Refresh affected views with real data, then converge to the
+              // server truth: the booking/edit the assistant just executed
+              // was written SERVER-side, so the local doc is now behind.
               renderAll();
+              refreshFromCloud({ quiet: true });
               if (
                 currentPaymentBookingId &&
                 body.result &&
