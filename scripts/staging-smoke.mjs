@@ -81,6 +81,23 @@ async function main() {
     record("cors_payment_preflight_allowed", pay.status === 204 && pay.headers.get("access-control-allow-origin") === ORIGIN, pay.status);
   }
 
+  // 3b. EDGE ENVELOPE: even syntactically-broken input from a browser origin
+  // must come back as JSON WITH the allow-origin header — never CORS-less
+  // air, which a phone can only render as «تعذّر الاتصال» (live incident).
+  {
+    const res = await fetch(BASE + "/functions/v1/chalet-assistant", {
+      method: "POST",
+      headers: { apikey: ANON, authorization: "Bearer " + ANON, "content-type": "application/json", origin: ORIGIN },
+      body: "{",
+    });
+    const text = await res.text();
+    let j = null;
+    try { j = JSON.parse(text); } catch { /* must not happen */ }
+    const corsOk = res.headers.get("access-control-allow-origin") === ORIGIN;
+    const jsonFail = Boolean(j) && j.ok === false && typeof (j.reason_ar || j.error) === "string";
+    record("edge_alive_with_cors", corsOk && jsonFail, res.status + ":cors=" + corsOk);
+  }
+
   // 4. setup-status refuses a wrong workspace/PIN.
   {
     const r = await http("POST", "/functions/v1/chalet-setup-status", { body: { workspace_key: "NOSUCHWS", access_pin: "00000000" } });
@@ -407,6 +424,27 @@ async function main() {
     record("agent_booking_cleanup", done, done ? "cancelled" : "CLEANUP_FAILED");
   } else {
     record("agent_booking_cleanup", false, "NO_BOOKING");
+  }
+
+  // 10h. OWNER-VERBATIM (IMG_6702): the exact live message that appeared to
+  // "disconnect" the assistant must be answered deterministically on a fresh
+  // thread — a card or ONE Arabic question, zero model calls, no crash class.
+  {
+    const r = await http("POST", "/functions/v1/chalet-assistant", {
+      body: {
+        workspace_key: WS_KEY, access_pin: PIN,
+        message: "سجل حجز اليوم باسم علي تجريبي شالية تولوم الوقت ٧ المسا الى ٥ الصباح عدد الضيوف ١٠ و الرقم 0503666853 شالية تولوم",
+      },
+    });
+    const b = r.json || {};
+    const card = (b.tool_results || []).some((x) => x.kind === "prepared_action");
+    const asksOne = typeof b.reply_ar === "string" && b.reply_ar.length > 0 && !/تعذّر|خلل/.test(b.reply_ar);
+    const phoneHidden = !r.text.includes("0503666853"); // masked or absent only
+    record(
+      "owner_message_verbatim",
+      r.status === 200 && b.ok === true && b.model_calls === 0 && (card || asksOne) && phoneHidden && !leaks(r.text),
+      "model_calls=" + b.model_calls + ",card=" + card,
+    );
   }
 
   // 11. No automation rule exists/enabled on staging.

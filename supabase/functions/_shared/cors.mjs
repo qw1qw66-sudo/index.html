@@ -75,10 +75,31 @@ export function withCors(req, env, response) {
   return new Response(response.body, { status: response.status, headers: merged });
 }
 
-// Convenience wrapper for a browser-facing Edge Function.
+// Convenience wrapper for a browser-facing Edge Function. The handler call
+// is GUARDED: an uncaught exception must still produce a JSON response WITH
+// CORS headers — a bare 500 without allow-origin is indistinguishable from a
+// dead network in the browser («تعذّر الاتصال») and hides the real fault.
 export async function corsWrap(req, env, handler) {
   const pf = handlePreflight(req, env);
   if (pf) return pf;
-  const res = await handler();
+  let res;
+  try {
+    res = await handler();
+  } catch (e) {
+    // Redacted one-liner only: never a request body, key, token, or stack.
+    try {
+      console.error("EDGE_CRASH", (e && e.name) || "Error", String((e && e.message) || "").slice(0, 160));
+    } catch { /* logging must never throw */ }
+    res = new Response(
+      JSON.stringify({
+        ok: false,
+        error: "EDGE_CRASH",
+        public_code: "unavailable",
+        recoverable: true,
+        reason_ar: "حدث خلل مؤقت في المساعد. لم يتغيّر شيء — أعد المحاولة بعد قليل.",
+      }),
+      { status: 500, headers: { "content-type": "application/json" } },
+    );
+  }
   return withCors(req, env, res);
 }

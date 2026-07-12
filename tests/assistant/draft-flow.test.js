@@ -586,4 +586,13 @@ describe("booking agent draft flow (deterministic, zero model calls)", () => {
     expect(deps._modelCalls.length).toBeGreaterThan(0);
     expect(deps._drafts.get("th-2")).toBeFalsy();
   });
+
+  it("«سجل حجز …» with content opens the deterministic pipeline (never the model)", async () => {
+    const deps = makeDeps();
+    const r = await chat(deps, "سجل حجز جديد لعلي تجربة بكرة بالليل في تولوم");
+    expect(r.model_calls).toBe(0);
+    expect(deps._modelCalls).toHaveLength(0);
+    expect(deps._drafts.get("th-1")).toBeTruthy();
+    expect(deps._drafts.get("th-1").fields.chalet_id).toBe("tulum");
+  });
 });

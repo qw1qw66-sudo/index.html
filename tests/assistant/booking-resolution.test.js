@@ -148,5 +148,12 @@ describe("authoritative chalet/period name resolution", () => {
     });
     expect(result).toMatchObject({ ok: true, args: { period_id: "tulum-pm", period_label: "مسائي" } });
   });
-});
 
+  it("«شالية تولوم» (taa-marbuta spelling) resolves to the stored «شاليه تولوم»", () => {
+    const result = resolveBookingCreateArgs(workspaceDoc(), {
+      customer_name: "عميل تجربة", chalet_name: "شالية تولوم",
+      period_label: "مسائي", booking_date: "2099-07-11",
+    });
+    expect(result).toMatchObject({ ok: true, args: { chalet_id: "tulum-real-id" } });
+  });
+});

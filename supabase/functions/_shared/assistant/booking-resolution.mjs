@@ -7,7 +7,9 @@ import { availabilityCheck, availabilityFailureAr, isPeriodBookable, normalizeTi
 import { parseTimeExpression } from "./nl-normalize.mjs";
 
 const ARABIC_MARKS = /[\u0610-\u061a\u064b-\u065f\u0670\u06d6-\u06ed\u0640]/g;
-const CHALET_WORDS = new Set(["شاليه", "الشاليه", "شاليهات", "الشاليهات", "chalet", "chalets"]);
+// «شالية» (taa-marbuta) is how owners actually type it on phones — it must
+// strip exactly like «شاليه» so «شالية تولوم» matches the stored name.
+const CHALET_WORDS = new Set(["شاليه", "الشاليه", "شالية", "الشالية", "شاليهات", "الشاليهات", "شاليات", "chalet", "chalets"]);
 const PERIOD_WORDS = new Set(["فترة", "الفترة", "فترات", "الفترات", "period", "periods"]);
 
 function normalizedTokens(value, ignored) {
