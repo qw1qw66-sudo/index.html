@@ -471,6 +471,112 @@ describe("booking agent draft flow (deterministic, zero model calls)", () => {
     expect(r.reason_ar).not.toMatch(/AVAILABILITY_UNPROVABLE/);
   });
 
+  it("CLOSED GUIDED MODE: mid-draft nonsense gets the pending question back — the model is never called", async () => {
+    const deps = makeDeps();
+    const t1 = await chat(deps, "احجز تولوم");
+    expect(t1.reply_ar).toContain("تاريخ"); // pending question = the date
+    const r = await chat(deps, "هلا والله شخبارك", "th-1");
+    expect(r.model_calls).toBe(0);
+    expect(deps._modelCalls).toHaveLength(0);
+    expect(r.reply_ar).toContain("لم أفهم ردّك");
+    expect(r.reply_ar).toContain("تاريخ"); // repeats the SAME pending question
+    expect(r.reply_ar).toContain("الغِ الحجز");
+    // Nothing merged on the fallback turn — the draft is unchanged.
+    expect(deps._drafts.get("th-1").fields.pending_q.kind).toBe("date");
+  });
+
+  it("«مساء» answers the AM/PM clarify deterministically (and «صباح» keeps the morning)", async () => {
+    const deps = makeDeps();
+    const q = await chat(deps, "احجز تولوم من 7 الى 12");
+    expect(q.reply_ar).toContain("صباحاً أم مساءً");
+    expect(deps._drafts.get("th-1").fields.pending_q.kind).toBe("time_ampm");
+    const r = await chat(deps, "مساء", "th-1");
+    expect(r.model_calls).toBe(0);
+    expect(deps._modelCalls).toHaveLength(0);
+    const f = deps._drafts.get("th-1").fields;
+    // The PM reading (19:00→…) then binds the REAL evening period by its
+    // start time — real workspace periods always win over free-text times.
+    expect(f.canonical_start).toBe("19:00");
+    expect(f.canonical_end).toBe("05:00");
+    expect(f.period_id).toBe("t-pm");
+    expect(r.reply_ar).not.toContain("صباحاً أم مساءً"); // question not re-asked
+
+    const deps2 = makeDeps();
+    await chat(deps2, "احجز تولوم من 7 الى 12");
+    await chat(deps2, "صباح", "th-1");
+    const f2 = deps2._drafts.get("th-1").fields;
+    expect(f2.canonical_start).toBe("07:00");
+    expect(f2.canonical_end).toBe("12:00");
+    expect(deps2._modelCalls).toHaveLength(0);
+  });
+
+  it("pasting the option's own line selects it (times + dashes folded), producing a card", async () => {
+    const doc = fixtureDoc();
+    doc.bookings.push({ id: "b-x", customer_name: "سابق", chalet_id: "tulum", booking_date: TOMORROW, period_id: "t-pm", guests: 2, total: 400, paid: 0, status: "confirmed", deleted_at: null });
+    const deps = makeDeps({ doc });
+    const r = await chat(deps, "احجز تولوم بكرة بالليل لشخصين بمئة ريال، العميل تجربة");
+    expect(r.reply_ar).toContain("1.");
+    // The owner pastes option 1's printed line back (en/em dashes included).
+    const alt = deps._drafts.get("th-1").fields.alternatives[0];
+    const pasted = `${alt.chalet_name} — ${alt.date} — ${alt.start}–${alt.end} — ${alt.price || 300} ريال`;
+    const pick = await chat(deps, pasted, "th-1");
+    expect(pick.model_calls).toBe(0);
+    const prep = (pick.tool_results || []).find((x) => x.kind === "prepared_action");
+    expect(prep).toBeTruthy();
+    expect(pick.reply_ar).not.toContain("الوقت غير واضح"); // never re-ambiguous
+    const f = deps._drafts.get("th-1").fields;
+    expect(f.period_id).toBe(alt.period_id);
+    expect(f.time_low_confidence).toBeUndefined();
+  });
+
+  it("typed «الغِ الحجز» cancels the draft and retires its prepared action", async () => {
+    const deps = makeDeps();
+    const t = await chat(deps, "احجز تولوم بكرة بالليل لشخصين بمئة ريال، العميل تجربة");
+    const prep = (t.tool_results || []).find((x) => x.kind === "prepared_action");
+    expect(prep).toBeTruthy();
+    const r = await chat(deps, "الغِ الحجز", "th-1");
+    expect(r.model_calls).toBe(0);
+    expect(r.draft_cancelled).toBe(true);
+    expect(r.reply_ar).toContain("تم الإلغاء");
+    expect(deps._drafts.get("th-1").status).toBe("cancelled");
+    expect(deps._actions.get(prep.action_id).status).toBe("rejected");
+    expect(deps._executed).toHaveLength(0);
+  });
+
+  it("a slot gone stale surfaces on the NEXT answer turn — before any card exists", async () => {
+    const deps = makeDeps();
+    await chat(deps, "احجز تولوم بكرة بالليل باسم تجربة بمئة ريال"); // guests still missing
+    expect(deps._drafts.get("th-1").fields.period_id).toBe("t-pm");
+    // A competing booking lands from another device.
+    deps._doc.bookings.push({ id: "b-race", customer_name: "منافس تجريبي", chalet_id: "tulum", booking_date: TOMORROW, period_id: "t-pm", guests: 2, total: 400, paid: 0, status: "confirmed", deleted_at: null });
+    const r = await chat(deps, "شخصين", "th-1"); // a guests-only answer turn
+    expect(r.model_calls).toBe(0);
+    expect(r.reply_ar).toContain("محجوزة");
+    expect(r.reply_ar).toContain("منافس تجريبي"); // names the blocker
+    expect(Array.isArray(r.next_actions)).toBe(true);
+    expect((r.tool_results || []).some((x) => x.kind === "prepared_action")).toBe(false); // NO card
+  });
+
+  it("a pre-existing conflicting pair blocks BEFORE the card with the doc-integrity reason", async () => {
+    const doc = fixtureDoc();
+    // Two overlapping confirmed bookings on تولوم (07-12 vs an overlapping
+    // 11-13 period) — the SQL guard would reject EVERY save.
+    doc.chalets[0].periods.push({ id: "t-mid", label: "ظهيرة", start: "11:00", end: "13:00", active: true, sort: 9 });
+    doc.bookings.push(
+      { id: "old1", customer_name: "قديم أول", chalet_id: "tulum", booking_date: "2099-03-01", period_id: "t-am", guests: 2, total: 100, paid: 0, status: "confirmed", deleted_at: null },
+      { id: "old2", customer_name: "قديم ثاني", chalet_id: "tulum", booking_date: "2099-03-01", period_id: "t-mid", guests: 2, total: 100, paid: 0, status: "confirmed", deleted_at: null },
+    );
+    const deps = makeDeps({ doc });
+    // A COMPLETE booking on the other chalet — its own slot is free.
+    const r = await chat(deps, "احجز سكاي بكرة بالليل لشخصين بمئة ريال، العميل تجربة");
+    expect(r.model_calls).toBe(0);
+    expect((r.tool_results || []).some((x) => x.kind === "prepared_action")).toBe(false);
+    expect(r.reply_ar).toContain("تعارض قائم");
+    expect(r.reply_ar).toContain("قديم أول");
+    expect(r.reply_ar).toContain("تبويب الحجوزات");
+    expect(deps._executed).toHaveLength(0);
+  });
+
   it("drafts are thread-scoped: a new thread starts clean and general chat falls to the model", async () => {
     const deps = makeDeps({ modelSeq: [{ ok: true, reply: "أهلاً!", toolCalls: [] }] });
     await chat(deps, "احجز تولوم"); // creates draft on th-1

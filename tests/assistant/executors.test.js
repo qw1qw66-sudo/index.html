@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { handleAssistant } from "../../supabase/functions/chalet-assistant/handler.mjs";
 import { executeConfirmedAction } from "../../supabase/functions/_shared/assistant/executors.mjs";
-import { availabilityCheck, availabilityFailureAr, isSlotAvailable } from "../../supabase/functions/_shared/assistant/availability.mjs";
+import { availabilityCheck, availabilityFailureAr, findDocConflictPair, isSlotAvailable } from "../../supabase/functions/_shared/assistant/availability.mjs";
 
 // Drives the REAL handler + REAL executeConfirmedAction dispatcher against a
 // faithful in-memory contract layer (revision-atomic save, workspace-scoped
@@ -397,5 +397,93 @@ describe("availabilityCheck causes", () => {
     const d = doc([{ id: "b1", customer_name: "سابق", chalet_id: "c1", booking_date: "2099-06-01", period_id: "p1", status: "confirmed", deleted_at: null }]);
     expect(availabilityCheck(d, "c1", "2099-06-01", P1, { excludeBookingId: "b1" }).available).toBe(true);
     expect(availabilityFailureAr({ available: true })).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// findDocConflictPair — the JS twin of the SQL whole-document save guard.
+// A PRE-EXISTING overlapping pair blocks EVERY save, so the executors must
+// name the pair (WORKSPACE_DATA_CONFLICT) instead of a bare token — the live
+// «هذه الفترة محجوزة بالفعل» trap where every alternative also failed.
+// ---------------------------------------------------------------------------
+describe("doc-integrity conflicts (SQL guard twin)", () => {
+  const P1 = { id: "p1", label: "صباحي", start: "07:00", end: "17:00", active: true, sort: 1 };
+  const P2 = { id: "p2", label: "مسائي", start: "16:00", end: "22:00", active: true, sort: 2 };
+  const bk = (id, name, period, date = "2099-06-01", extra = {}) => ({
+    id, customer_name: name, chalet_id: "c1", booking_date: date, period_id: period,
+    status: "confirmed", deleted_at: null, total: 100, paid: 0, ...extra,
+  });
+  function pairDoc(extraChalet = {}) {
+    return {
+      chalets: [{ id: "c1", name: "شاليه", deleted_at: null, periods: [P1, P2], ...extraChalet }],
+      bookings: [bk("old1", "قديم أول", "p1"), bk("old2", "قديم ثاني", "p2")],
+    };
+  }
+
+  it("detects an overlapping pair with both bookings' facts (scan order = SQL)", () => {
+    const pair = findDocConflictPair(pairDoc());
+    expect(pair).toBeTruthy();
+    expect(pair.a).toMatchObject({ id: "old1", customer_name: "قديم أول", start: "07:00", end: "17:00" });
+    expect(pair.b).toMatchObject({ id: "old2", customer_name: "قديم ثاني", start: "16:00", end: "22:00" });
+  });
+
+  it("mirrors SQL parity edges: deleted chalet still counts; invalid date and timeless skip; start==end wraps 24h", () => {
+    // SQL resolves chalets regardless of deleted_at.
+    expect(findDocConflictPair(pairDoc({ deleted_at: "2099-01-01" }))).toBeTruthy();
+    // Invalid booking_date drops the row (no crash, no pair).
+    const badDate = pairDoc();
+    badDate.bookings[0].booking_date = "متى ما كان";
+    expect(findDocConflictPair(badDate)).toBeNull();
+    // Timeless period drops the row in the SQL guard too.
+    const timeless = pairDoc();
+    timeless.chalets[0].periods = [{ id: "p1", label: "x", start: "", end: "" }, P2];
+    expect(findDocConflictPair(timeless)).toBeNull();
+    // start==end wraps a full day and overlaps everything that date.
+    const wrap = pairDoc();
+    wrap.chalets[0].periods = [{ id: "p1", label: "كامل", start: "10:00", end: "10:00" }, P2];
+    expect(findDocConflictPair(wrap)).toBeTruthy();
+    // Duplicate period ids: FIRST match wins (SQL limit 1) — the first copy
+    // here does not overlap p2, so no pair even though the second copy would.
+    const dup = pairDoc();
+    dup.chalets[0].periods = [
+      { id: "p1", label: "أ", start: "01:00", end: "03:00" },
+      { id: "p1", label: "ب", start: "16:00", end: "22:00" },
+      P2,
+    ];
+    expect(findDocConflictPair(dup)).toBeNull();
+    // Cancelled/deleted bookings never participate.
+    const cancelled = pairDoc();
+    cancelled.bookings[1].status = "cancelled";
+    expect(findDocConflictPair(cancelled)).toBeNull();
+  });
+
+  it("executor create is blocked UP FRONT with the doc-integrity reason (no trap alternatives)", async () => {
+    const doc = { schema_version: 3, settings: {}, ...pairDoc() };
+    const { deps, ws } = makeHarness({ workspaces: { WSA: { pin: "123456", doc, revision: 1 } } });
+    // The new slot itself is FREE (another date) — the pair alone blocks.
+    const prep = await prepare(deps, "WSA", "123456", "prepare_booking_create", { customer_name: "علي", chalet_id: "c1", booking_date: "2099-07-15", period_id: "p1", guests: 2, total: 900 });
+    const { body } = await confirm(deps, "WSA", "123456", "confirm_booking_create", prep.action_id, prep.confirmation_token);
+    expect(body.ok).toBe(false);
+    expect(body.error).toBe("WORKSPACE_DATA_CONFLICT");
+    expect(body.public_code).toBe("conflict");
+    expect(body.reason_ar).toContain("قديم أول");
+    expect(body.reason_ar).toContain("قديم ثاني");
+    expect(body.reason_ar).toContain("تبويب الحجوزات");
+    expect(body.next_actions).toBeUndefined(); // rebooking can never fix this
+    expect(body.reason_ar).not.toMatch(/[A-Z]{2,}_[A-Z]|[0-9a-f]{8}-[0-9a-f]{4}/i);
+    expect(ws.WSA.doc.bookings).toHaveLength(2); // nothing saved
+  });
+
+  it("a cancel blocked by an UNRELATED exact-duplicate pair maps the bare save token to the doc-integrity reason", async () => {
+    // Exact same (chalet,date,period) twice => the harness save layer itself
+    // rejects with BOOKING_CONFLICT:old1:old2 (like SQL); the overlap twin
+    // sees it too, so the executor's mapper must translate the save failure.
+    const doc = { schema_version: 3, settings: {}, chalets: [{ id: "c1", name: "شاليه", deleted_at: null, periods: [P1, P2] }], bookings: [bk("old1", "قديم أول", "p1"), bk("old2", "قديم ثاني", "p1"), bk("b3", "مستقل", "p2", "2099-08-01")] };
+    const { deps } = makeHarness({ workspaces: { WSA: { pin: "123456", doc, revision: 1 } } });
+    const prep = await prepare(deps, "WSA", "123456", "prepare_booking_cancel", { booking_id: "b3" });
+    const { body } = await confirm(deps, "WSA", "123456", "confirm_booking_cancel", prep.action_id, prep.confirmation_token);
+    expect(body.ok).toBe(false);
+    expect(body.error).toBe("WORKSPACE_DATA_CONFLICT");
+    expect(body.reason_ar).toContain("تبويب الحجوزات");
   });
 });

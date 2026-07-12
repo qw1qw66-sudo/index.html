@@ -173,6 +173,85 @@ export function isSlotAvailable(doc, chaletId, dateIso, candidatePeriod, opts = 
   return availabilityCheck(doc, chaletId, dateIso, candidatePeriod, opts).available;
 }
 
+/**
+ * EXACT JS twin of the SQL save guard `workspace_doc_booking_conflict`
+ * (migrations/20260701000001): scans the WHOLE document for any overlapping
+ * pair of confirmed bookings. The SQL guard rejects EVERY save while such a
+ * pair exists — even when the new booking's own slot is free — so callers use
+ * this to explain the block BEFORE attempting a save, instead of surfacing a
+ * bare «BOOKING_CONFLICT:id:id». Parity notes (mirrors SQL, NOT the stricter
+ * fail-closed rules above): chalets are looked up regardless of deleted_at
+ * (first match by id), periods first-match by id (active or not), bookings
+ * with unparseable dates/times are SKIPPED, end<=start wraps +24h.
+ * Returns { a, b } with owner-visible facts of the first conflicting pair
+ * (scan order identical to SQL), or null when the document is consistent.
+ */
+export function findDocConflictPair(doc) {
+  const bookings = Array.isArray(doc?.bookings) ? doc.bookings : [];
+  const chalets = Array.isArray(doc?.chalets) ? doc.chalets : [];
+  const rows = [];
+  for (const b of bookings) {
+    if (!b || b.status !== "confirmed") continue;
+    const del = b.deleted_at;
+    if (del !== null && del !== undefined && String(del) !== "") continue;
+    const date = String(b.booking_date || "");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
+    const chalet = chalets.find((c) => String(c?.id ?? "") === String(b.chalet_id ?? ""));
+    if (!chalet) continue;
+    const period = (chalet.periods || []).find((p) => String(p?.id ?? "") === String(b.period_id ?? ""));
+    if (!period) continue;
+    const sm = /^(\d{1,2}):(\d{2})$/.exec(String(period.start ?? ""));
+    const em = /^(\d{1,2}):(\d{2})$/.exec(String(period.end ?? ""));
+    if (!sm || !em) continue;
+    const sh = Number(sm[1]), smin = Number(sm[2]), eh = Number(em[1]), emin = Number(em[2]);
+    if (sh > 23 || smin > 59 || eh > 23 || emin > 59) continue; // SQL would error; treat as unparseable
+    const base = new Date(`${date}T00:00:00Z`).getTime();
+    if (!isFinite(base)) continue;
+    let start = base + (sh * 60 + smin) * 60000;
+    let end = base + (eh * 60 + emin) * 60000;
+    if (end <= start) end += 86400000;
+    rows.push({
+      start, end,
+      chalet_id: String(b.chalet_id ?? ""),
+      facts: {
+        id: String(b.id ?? ""),
+        customer_name: String(b.customer_name || ""),
+        booking_date: date,
+        start: `${String(sh).padStart(2, "0")}:${sm[2]}`,
+        end: `${String(eh).padStart(2, "0")}:${em[2]}`,
+        chalet_name: String(chalet.name || ""),
+      },
+    });
+  }
+  for (let i = 0; i < rows.length; i += 1) {
+    for (let j = i + 1; j < rows.length; j += 1) {
+      if (
+        rows[i].chalet_id === rows[j].chalet_id &&
+        rows[i].facts.id !== rows[j].facts.id &&
+        rows[i].start < rows[j].end &&
+        rows[i].end > rows[j].start
+      ) {
+        return { a: rows[i].facts, b: rows[j].facts };
+      }
+    }
+  }
+  return null;
+}
+
+// Owner-safe wording for a whole-document conflict pair: names both bookings
+// and sends the owner to the bookings tab — rebooking another slot can NEVER
+// fix this (the SQL guard rejects every save until the pair is resolved).
+export function docConflictReasonAr(pair, { tail } = {}) {
+  const end = typeof tail === "string" && tail ? tail : "لم يتم حفظ أي تغيير.";
+  const one = (f) =>
+    `«${f.customer_name || "بدون اسم"}» بتاريخ ${displayDate(f.booking_date)} (${f.start}–${f.end})`;
+  return (
+    `لا يمكن حفظ أي حجز الآن: يوجد تعارض قائم في بياناتك بين حجز ${one(pair.a)} ` +
+    `وحجز ${one(pair.b)} على «${pair.a.chalet_name || "نفس الشاليه"}». ` +
+    `أصلح هذا التعارض من تبويب الحجوزات (عدّل أو ألغِ أحدهما) ثم أعد المحاولة. ${end}`
+  );
+}
+
 /** Available active periods for a chalet on a date (overlap-aware). Periods
  * with incomplete times are excluded up front (they are not bookable). */
 export function availablePeriodsOn(doc, chaletId, dateIso, opts = {}) {

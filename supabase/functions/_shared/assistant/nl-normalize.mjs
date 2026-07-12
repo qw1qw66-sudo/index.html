@@ -54,9 +54,9 @@ export function normalizeTimeHHmm(s) {
 }
 
 // Meridiem marker vocabularies (matched against diacritic-stripped tokens).
-const AM_WORDS = new Set(['ص', 'صباحا', 'صباح', 'الصبح']);
+const AM_WORDS = new Set(['ص', 'صباحا', 'صباح', 'الصباح', 'الصبح']);
 const PM_WORDS = new Set([
-  'م', 'مساءا', 'مساء', 'المسا', 'بالليل', 'ليل', 'ليلا', 'عشاء',
+  'م', 'مساءا', 'مساء', 'المساء', 'المسا', 'بالليل', 'ليل', 'الليل', 'ليلا', 'عشاء',
   'عصر', 'عصرا', 'العصر',
 ]);
 // Noon words imply PM only for hours 1-6 and 12 (e.g. «١ ظهراً» -> 13:00).
@@ -190,6 +190,12 @@ export function parseTimeExpression(text) {
     startH = to24(sh, 'PM');
     endH = to24(eh, 'AM');
     confidence = 'medium';
+  } else if (first[2] && second[2]) {
+    // Ascending with EXPLICIT minutes on both sides («07:00-12:00» — e.g. an
+    // option line pasted back): the literal clock reading is unambiguous.
+    startH = sh;
+    endH = eh;
+    confidence = 'high';
   } else {
     // Bare pair like "5-7": naive AM reading; caller must clarify.
     startH = sh;
@@ -204,6 +210,24 @@ export function parseTimeExpression(text) {
     wraps_next_day,
     confidence,
   };
+}
+
+// A pure meridiem ANSWER («مساء», «صباحاً», «بالليل») to the assistant's own
+// AM/PM clarify question. null when the message carries digits (a real time
+// re-parses normally) or mixes/lacks meridiem words.
+export function classifyMeridiemWord(text) {
+  if (typeof text !== 'string' || !text.trim()) return null;
+  const t = scrubPunct(normalizeText(text));
+  if (/\d/.test(t)) return null;
+  const words = t.match(/[ء-ي]+/g) || [];
+  let mer = null;
+  for (const w of words) {
+    const cur = AM_WORDS.has(w) ? 'AM' : PM_WORDS.has(w) ? 'PM' : null;
+    if (!cur) continue;
+    if (mer && mer !== cur) return null; // contradictory answer
+    mer = cur;
+  }
+  return mer;
 }
 
 // ---------------------------------------------------------------------------
