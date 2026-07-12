@@ -23,16 +23,20 @@
 
 import { riyalsNumberToHalalas } from "../ledger-core.mjs";
 import { resolveOutbound, detectMode } from "./whatsapp.mjs";
-import { availabilityCheck, availabilityFailureAr, findDocConflictPair, docConflictReasonAr, isPeriodBookable } from "./availability.mjs";
+import { availabilityCheck, availabilityFailureAr, findDocConflictPairs, docConflictReasonAr, isPeriodBookable } from "./availability.mjs";
 
-// The SQL save guard validates the WHOLE document, so its bare
-// «BOOKING_CONFLICT:id:id» token needs owner-actionable wording: either the
-// booking being written truly overlaps (name the blocker) or a PRE-EXISTING
-// pair blocks every save until the owner fixes it from the bookings tab.
+// The SQL save guard returns the NEW conflicting pair as
+// «BOOKING_CONFLICT:id:id». Resolve that exact pair into owner-actionable
+// wording without exposing ids. Pre-existing pairs are grandfathered by the
+// save contract and therefore never arrive here merely for existing.
 function mapSaveFailure(saved, nextDoc, subjectId) {
-  const base = String(saved.error || "").split(":", 1)[0];
+  const parts = String(saved.error || "").split(":");
+  const base = parts[0];
   if (base !== "BOOKING_CONFLICT") return { ok: false, error: saved.error || "SAVE_FAILED" };
-  const pair = findDocConflictPair(nextDoc);
+  const wanted = parts.length >= 3 ? [parts[1], parts[2]].sort().join("\u0000") : "";
+  const pair = findDocConflictPairs(nextDoc).find((p) =>
+    !wanted || [String(p.a.id), String(p.b.id)].sort().join("\u0000") === wanted,
+  ) || null;
   if (pair && subjectId && (pair.a.id === String(subjectId) || pair.b.id === String(subjectId))) {
     const other = pair.a.id === String(subjectId) ? pair.b : pair.a;
     const fail = availabilityFailureAr({ available: false, cause: "overlap", conflict: other });
@@ -199,13 +203,6 @@ async function bookingCreate(wsKey, pin, args, deps) {
     const fail = availabilityFailureAr(avail);
     return { ok: false, error: fail.error, reason_ar: fail.reason_ar };
   }
-  // A pre-existing conflicting pair anywhere in the doc makes the SQL guard
-  // reject EVERY save — say so up front instead of a misleading slot conflict.
-  const pre = findDocConflictPair(doc);
-  if (pre) {
-    return { ok: false, error: "WORKSPACE_DATA_CONFLICT", reason_ar: docConflictReasonAr(pre, { tail: "لم يتم حفظ الحجز." }) };
-  }
-
   const nextDoc = { ...doc, bookings: [...(doc.bookings || []), booking] };
   const saved = await deps.saveWorkspaceV2(wsKey, pin, nextDoc, snap.updated_at);
   if (!saved.ok) return mapSaveFailure(saved, nextDoc, booking.id);
@@ -261,13 +258,6 @@ async function bookingUpdate(wsKey, pin, args, deps) {
 
   const bookings = (doc.bookings || []).map((b) => (b.id === bookingId ? resulting : b));
   const nextDoc = { ...doc, bookings };
-  // Pre-check the RESULTING doc: a pair NOT involving this booking blocks
-  // every save (doc integrity); a pair involving it is this edit's own
-  // overlap and the availability check above already reported it in detail.
-  const pre = findDocConflictPair(nextDoc);
-  if (pre && pre.a.id !== bookingId && pre.b.id !== bookingId) {
-    return { ok: false, error: "WORKSPACE_DATA_CONFLICT", reason_ar: docConflictReasonAr(pre, { tail: "لم يتم حفظ التعديل." }) };
-  }
   const saved = await deps.saveWorkspaceV2(wsKey, pin, nextDoc, snap.updated_at);
   if (!saved.ok) return mapSaveFailure(saved, nextDoc, bookingId);
   return { ok: true, result_reference: bookingId, safe_result: { booking_id: bookingId, updated_at: saved.updated_at, action: "booking_updated" } };
@@ -304,8 +294,8 @@ async function bookingCancel(wsKey, pin, args, deps) {
   );
   const nextDoc = { ...doc, bookings };
   const saved = await deps.saveWorkspaceV2(wsKey, pin, nextDoc, snap.updated_at);
-  // A cancel can itself be blocked by an UNRELATED pre-existing pair (the SQL
-  // guard validates the whole doc) — explain it instead of a bare token.
+  // A cancel never creates a conflict; the mapper remains defensive if a
+  // malformed caller somehow produces a new pair.
   if (!saved.ok) return mapSaveFailure(saved, nextDoc, null);
   return {
     ok: true,

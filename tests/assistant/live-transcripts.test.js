@@ -154,6 +154,59 @@ const post = (deps, body) => handleAssistant(
 const chat = (deps, message, threadId) => post(deps, { message, ...(threadId ? { thread_id: threadId } : {}) });
 
 describe("live transcript corpus (owner-reported conversations, zero model calls)", () => {
+  it("R0 (latest screenshots): full sentence → bare «علي» → exact card/save despite unrelated legacy conflicts", async () => {
+    const doc = fixtureDoc();
+    doc.chalets[0].periods.push(
+      { id: "t-short", label: "فترة 3", start: "19:00", end: "00:00", active: true, sort: 3, weekday_price: 450, weekend_price: 450 },
+      { id: "t-mid", label: "قديمة متداخلة", start: "11:00", end: "17:00", active: true, sort: 9 },
+    );
+    doc.bookings.push(
+      { id: "old1", customer_name: "زهراء", chalet_id: "tulum", booking_date: "2026-05-12", period_id: "t-am", guests: 2, total: 100, paid: 0, status: "confirmed", deleted_at: null },
+      { id: "old2", customer_name: "فقد الاحبه", chalet_id: "tulum", booking_date: "2026-05-12", period_id: "t-mid", guests: 2, total: 100, paid: 0, status: "confirmed", deleted_at: null },
+    );
+    const legacyBefore = JSON.stringify(doc.bookings);
+    const deps = makeDeps({ doc });
+    const first = await chat(
+      deps,
+      "سجل حجز جديد اليوم المساء من ٧ الى خمس الصباح رقم الجوال 0503666853 اسم الشاليه تولوم عدد الضيوف ١٠ السعر ٣٠٠",
+    );
+    expect(first.model_calls).toBe(0);
+    expect(first.reply_ar).toContain("باسم من");
+    expect(first.reply_ar).not.toMatch(/حدد الفترة|كم عدد الضيوف|سعر النظام/);
+    expect(deps._drafts.get("th-1").fields).toMatchObject({
+      booking_date: TODAY,
+      chalet_id: "tulum",
+      period_id: "t-pm",
+      canonical_start: "19:00",
+      canonical_end: "05:00",
+      guests: 10,
+      total: 300,
+      total_source: "explicit",
+    });
+    expect(deps._drafts.get("th-1").private.customer_phone).toBe("0503666853");
+
+    const named = await chat(deps, "علي", "th-1");
+    const prep = (named.tool_results || []).find((x) => x.kind === "prepared_action");
+    expect(prep).toBeTruthy();
+    expect(named.reply_ar).not.toContain("لم أفهم");
+    const rows = Object.fromEntries(prep.card.rows.map((r) => [r.k, r.v]));
+    expect(rows).toMatchObject({
+      "العميل": "علي",
+      "الجوال": "05••••6853",
+      "الشاليه": "شاليه تولوم",
+      "الفترة": "19:00 → 05:00",
+      "الضيوف": "10",
+      "الإجمالي": "300 ريال",
+    });
+
+    const saved = await post(deps, { invoke_tool: { name: "confirm_booking_create", arguments: { action_id: prep.action_id, confirmation_token: prep.confirmation_token } } });
+    expect(saved.ok).toBe(true);
+    expect(deps._doc.bookings).toHaveLength(3);
+    expect(JSON.stringify(deps._doc.bookings.slice(0, 2))).toBe(legacyBefore);
+    expect(deps._doc.bookings[2]).toMatchObject({ customer_name: "علي", booking_date: TODAY, period_id: "t-pm", guests: 10, total: 300 });
+    expect(deps._modelCalls).toHaveLength(0);
+  });
+
   it("R1 (IMG_6690): «١٠»→«اعتمد»→card; the confirm-time conflict names the blocker and options; «١» recovers", async () => {
     const deps = makeDeps();
     const replies = [];
@@ -193,7 +246,7 @@ describe("live transcript corpus (owner-reported conversations, zero model calls
     for (const rep of replies) expect(String(rep || "")).not.toContain("رقم الجوال");
   });
 
-  it("R1b: a legacy conflicting pair blocks with the doc-integrity reason — no trap alternatives", async () => {
+  it("R1b: an unrelated legacy conflicting pair no longer blocks a safe new booking", async () => {
     const doc = fixtureDoc();
     doc.chalets[0].periods.push({ id: "t-mid", label: "ظهيرة", start: "11:00", end: "13:00", active: true, sort: 9 });
     doc.bookings.push(
@@ -203,10 +256,8 @@ describe("live transcript corpus (owner-reported conversations, zero model calls
     const deps = makeDeps({ doc });
     const r = await chat(deps, "احجز سكاي بكرة بالليل لشخصين بمئة ريال، العميل تجربة");
     expect(r.model_calls).toBe(0);
-    expect(r.reply_ar).toContain("تعارض قائم");
-    expect(r.reply_ar).toContain("تبويب الحجوزات");
-    expect(r.reply_ar).not.toContain("أقرب الخيارات"); // rebooking cannot fix it
-    expect((r.tool_results || []).some((x) => x.kind === "prepared_action")).toBe(false);
+    expect(r.reply_ar).not.toContain("تعارض قائم");
+    expect((r.tool_results || []).some((x) => x.kind === "prepared_action")).toBe(true);
     expect(deps._modelCalls).toHaveLength(0);
   });
 
@@ -224,6 +275,21 @@ describe("live transcript corpus (owner-reported conversations, zero model calls
     expect(pick.reply_ar).not.toContain("الوقت غير واضح");
     expect(pick.reply_ar).not.toContain("لم أفهم");
     expect((pick.tool_results || []).some((x) => x.kind === "prepared_action")).toBe(true);
+    expect(deps._modelCalls).toHaveLength(0);
+  });
+
+  it("period ambiguity is rendered as real one-tap actions and a tap selects it", async () => {
+    const doc = fixtureDoc();
+    doc.chalets[0].periods.push({ id: "t-short", label: "فترة 3", start: "19:00", end: "00:00", active: true, sort: 3, weekday_price: 450, weekend_price: 450 });
+    const deps = makeDeps({ doc });
+    const r = await chat(deps, "احجز تولوم بكرة من ٧ مساء الى ١٠ مساء لشخصين بمئة ريال، العميل تجربة");
+    expect(r.model_calls).toBe(0);
+    expect(r.reply_ar).toContain("اضغط أحد الخيارات");
+    expect(r.next_actions).toHaveLength(2);
+    expect(deps._drafts.get("th-1").fields.alternatives).toHaveLength(2);
+    const picked = await chat(deps, "٢", "th-1");
+    expect(picked.model_calls).toBe(0);
+    expect((picked.tool_results || []).some((x) => x.kind === "prepared_action")).toBe(true);
     expect(deps._modelCalls).toHaveLength(0);
   });
 

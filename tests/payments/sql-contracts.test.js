@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 
 const m1 = readFileSync("supabase/migrations/20260701000001_atomic_workspace_save.sql", "utf8");
 const m2 = readFileSync("supabase/migrations/20260701000002_payment_ledger.sql", "utf8");
+const m7 = readFileSync("supabase/migrations/20260712000007_grandfather_existing_booking_conflicts.sql", "utf8");
 
 // Executable statements only — SQL comments (e.g. the documented rollback
 // section) must not satisfy or violate the contracts below.
@@ -22,6 +23,7 @@ function code(sql) {
 }
 const c1 = code(m1);
 const c2 = code(m2);
+const c7 = code(m7);
 
 describe("migration 0001 (atomic workspace save) contracts", () => {
   it("save v2 verifies the expected revision inside the row lock", () => {
@@ -117,5 +119,27 @@ describe("migration 0002 (payment ledger) contracts", () => {
   });
   it("write-back to booking.paid is explicit opt-in only", () => {
     expect(m2).toContain("p_write_back boolean default false");
+  });
+});
+
+describe("migration 0007 (grandfather legacy booking conflicts) contracts", () => {
+  it("compares old and new conflict sets in both save contracts", () => {
+    expect(c7).toContain("workspace_doc_booking_conflicts");
+    expect(c7).toContain("workspace_doc_new_booking_conflict(v_workspace.data, v_data)");
+    expect((c7.match(/workspace_doc_new_booking_conflict\(v_workspace\.data, v_data\)/g) || []).length).toBeGreaterThanOrEqual(2);
+    expect(c7).toContain("workspace_doc_new_booking_conflict('{}'::jsonb, v_data)");
+  });
+
+  it("is function-only and never mutates existing booking/customer data", () => {
+    expect(c7).not.toMatch(/delete\s+from/i);
+    expect(c7).not.toMatch(/truncate\s+/i);
+    expect(c7).not.toMatch(/update\s+public\.shared_workspaces\s+set\s+data\s*=\s*'{}'/i);
+    expect(c7).not.toMatch(/jsonb_set\s*\(/i);
+  });
+
+  it("keeps new conflicts fail-closed and helper functions private", () => {
+    expect(c7).toContain("BOOKING_CONFLICT:");
+    expect(c7).toContain("revoke all on function public.workspace_doc_new_booking_conflict(jsonb, jsonb)");
+    expect(c7).toContain("notify pgrst, 'reload schema'");
   });
 });

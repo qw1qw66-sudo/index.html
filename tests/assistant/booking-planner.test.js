@@ -44,6 +44,16 @@ const skyEvening = () => fixtureDoc().chalets[0].periods[0];
 const isSubset = (a, b) => a.every((k) => b.includes(k));
 
 describe('extractFacts + mergeDraft: multi-turn accumulation', () => {
+  it('extracts every owner-supplied field from the reported full sentence', () => {
+    const f = extractFacts(
+      'سجل حجز جديد اليوم المساء من ٧ الى خمس الصباح رقم الجوال 0503666853 اسم الشاليه تولوم عدد الضيوف ١٠ السعر ٣٠٠',
+      TODAY,
+    );
+    expect(f.fields).toMatchObject({ booking_date: TODAY, guests: 10, total: 300, total_source: 'explicit' });
+    expect(f.private.customer_phone).toBe('0503666853');
+    expect(f.time).toEqual({ start: '19:00', end: '05:00', wraps_next_day: true, confidence: 'high' });
+  });
+
   it('accumulates facts across turns; missing fields only ever shrink', () => {
     let draft = {};
 

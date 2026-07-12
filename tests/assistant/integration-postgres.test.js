@@ -7,7 +7,7 @@ import { randomUUID } from "node:crypto";
 
 // REAL end-to-end: the actual chalet-assistant handler + the real
 // executeConfirmedAction dispatcher, driven against a REAL PostgreSQL 16 with
-// the full migration chain (baseline + 0001 + 0002 + 0003) and the ACTUAL
+// the migration chain needed by these contracts (through 0007) and the ACTUAL
 // RPCs (workspace_auth, assistant_consume_confirmation, save_shared_workspace_v2,
 // record_manual_payment, get_booking_payments). Proves confirmed actions write
 // real rows — not a scaffold, not only mocks.
@@ -45,6 +45,7 @@ d("REAL Postgres: confirmed assistant actions write real rows", () => {
       "supabase/migrations/20260701000001_atomic_workspace_save.sql",
       "supabase/migrations/20260701000002_payment_ledger.sql",
       "supabase/migrations/20260711000003_chalet_assistant.sql",
+      "supabase/migrations/20260712000007_grandfather_existing_booking_conflicts.sql",
     ]) {
       await pool.query(readFileSync(f, "utf8"));
     }
@@ -187,6 +188,30 @@ d("REAL Postgres: confirmed assistant actions write real rows", () => {
     const p = await prep("prepare_manual_payment", { booking_id: "b1", amount_halalas: 5000, payment_method: "cash" });
     const res = await call({ workspace_key: "WSREAL", access_pin: "000000", invoke_tool: { name: "confirm_manual_payment", arguments: { action_id: p.action_id, confirmation_token: p.confirmation_token } } });
     expect(res.status).toBe(401);
+  });
+
+  it("real save v2 allows an unrelated write beside a seeded legacy pair but rejects a new pair", async () => {
+    const seeded = (await pool.query("select data from public.shared_workspaces where workspace_key='WSREAL'")).rows[0].data;
+    seeded.chalets[0].periods.push({ id: "p2", label: "متداخلة", start: "16:00", end: "22:00", active: true, sort: 2 });
+    seeded.bookings.push(
+      { id: "legacy-a", customer_name: "قديم أ", chalet_id: "c1", booking_date: "2099-11-01", period_id: "p1", guests: 2, total: 100, paid: 0, status: "confirmed", deleted_at: null },
+      { id: "legacy-b", customer_name: "قديم ب", chalet_id: "c1", booking_date: "2099-11-01", period_id: "p2", guests: 2, total: 100, paid: 0, status: "confirmed", deleted_at: null },
+    );
+    // Test fixture setup only: simulate a conflict that predates migration 0007.
+    await pool.query("update public.shared_workspaces set data=$2::jsonb, updated_at=statement_timestamp() where workspace_key=$1", ["WSREAL", JSON.stringify(seeded)]);
+
+    let snap = (await pool.query("select data, updated_at::text as rev from public.shared_workspaces where workspace_key='WSREAL'")).rows[0];
+    const safe = structuredClone(snap.data);
+    safe.bookings.push({ id: "safe-new", customer_name: "جديد آمن", chalet_id: "c1", booking_date: "2099-11-02", period_id: "p1", guests: 2, total: 100, paid: 0, status: "confirmed", deleted_at: null });
+    let saved = (await pool.query("select public.save_shared_workspace_v2($1,$2,$3::jsonb,$4::timestamptz) r", ["WSREAL", "123456", JSON.stringify(safe), snap.rev])).rows[0].r;
+    expect(saved.ok).toBe(true);
+
+    snap = (await pool.query("select data, updated_at::text as rev from public.shared_workspaces where workspace_key='WSREAL'")).rows[0];
+    const unsafe = structuredClone(snap.data);
+    unsafe.bookings.push({ id: "bad-new", customer_name: "جديد متعارض", chalet_id: "c1", booking_date: "2099-11-01", period_id: "p1", guests: 2, total: 100, paid: 0, status: "confirmed", deleted_at: null });
+    saved = (await pool.query("select public.save_shared_workspace_v2($1,$2,$3::jsonb,$4::timestamptz) r", ["WSREAL", "123456", JSON.stringify(unsafe), snap.rev])).rows[0].r;
+    expect(saved.ok).toBe(false);
+    expect(saved.error).toMatch(/^BOOKING_CONFLICT:/);
   });
 
   it("composite workspace FK blocks a message referencing another workspace's thread (Stage 5)", async () => {

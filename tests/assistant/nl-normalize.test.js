@@ -79,6 +79,12 @@ describe('parseTimeExpression', () => {
     }
   });
 
+  it('reads a spoken end hour and never borrows the later guest count', () => {
+    const full = 'سجل حجز جديد اليوم المساء من ٧ الى خمس الصباح رقم الجوال 0503666853 اسم الشاليه تولوم عدد الضيوف ١٠ السعر ٣٠٠';
+    expect(parseTimeExpression(full)).toEqual({ ...overnight, confidence: 'high' });
+    expect(parseTimeExpression('احجز من ٧ الى اسم الشاليه تولوم عدد الضيوف ١٠')).toBeNull();
+  });
+
   it('24h pair 19:00 إلى 05:00 is high and wraps', () => {
     expect(parseTimeExpression('19:00 إلى 05:00')).toEqual({
       ...overnight,
@@ -239,6 +245,11 @@ describe('extractAmount', () => {
     expect(extractAmount('٥٠٠ ريال')).toBe(500);
     expect(extractAmount('500ريال')).toBe(500);
     expect(extractAmount('٥٠٫٥ ريال')).toBe(50.5);
+  });
+  it('parses a marked price without requiring a currency word', () => {
+    expect(extractAmount('السعر ٣٠٠')).toBe(300);
+    expect(extractAmount('عدد الضيوف ١٠ السعر: ٣٠٠')).toBe(300);
+    expect(extractAmount('رقم الجوال 0503666853 عدد الضيوف ١٠')).toBeNull();
   });
   it('parses hundred-words', () => {
     expect(extractAmount('بمئة ريال')).toBe(100);

@@ -102,6 +102,10 @@ async function main() {
             { id: "p4", label: "عصري", start: "15:00", end: "17:00", active: true, sort: 4, weekday_price: 400, weekend_price: 600 },
             { id: "p5", label: "مسائي", start: "17:00", end: "22:00", active: true, sort: 5, weekday_price: 400, weekend_price: 600 },
             { id: "p6", label: "ليلي", start: "22:00", end: "02:00", active: true, sort: 6, weekday_price: 400, weekend_price: 600 },
+            // Owner-reported shape: two periods share 19:00, but only one is
+            // the requested 19:00→05:00 slot.
+            { id: "p7", label: "فترة 3", start: "19:00", end: "00:00", active: true, sort: 7, weekday_price: 450, weekend_price: 450 },
+            { id: "p8", label: "فترة 4", start: "19:00", end: "05:00", active: true, sort: 8, weekday_price: 450, weekend_price: 450 },
           ],
         },
         {
@@ -247,9 +251,9 @@ async function main() {
     record("booking_cancelled", false, "NO_BOOKING_ID");
   }
 
-  // 10b. BOOKING AGENT conversation (§ live acceptance A) — the deterministic
-  // draft pipeline collects fields ACROSS turns with ZERO model calls, never
-  // re-asks known data, and ends in a structured confirmation card.
+  // 10b. Exact owner-reported conversation — spoken end hour, later guest
+  // count, marker-only price and a bare customer-name answer must all survive
+  // into one exact card with ZERO model calls.
   let agentThread = null, agentBookingId = null;
   let agentAction, agentToken;
   {
@@ -259,19 +263,19 @@ async function main() {
       if (b.thread_id) agentThread = b.thread_id;
       return { r, b };
     };
-    const t1 = await turn("احجز تولوم");
-    const t2 = await turn("بكرة بالليل");
-    const t3 = await turn("أربعة");
-    const t4 = await turn("500 ريال، العميل علي تجربة");
-    const prepared = (t4.b.tool_results || []).find((x) => x.kind === "prepared_action" && x.ok);
+    const t1 = await turn(`سجل حجز جديد اليوم المساء من ٧ الى خمس الصباح رقم الجوال ${FAKE_PHONE} اسم الشاليه تولوم عدد الضيوف ١٠ السعر ٣٠٠`);
+    const t2 = await turn("علي");
+    const prepared = (t2.b.tool_results || []).find((x) => x.kind === "prepared_action" && x.ok);
     agentAction = prepared && prepared.action_id;
     agentToken = prepared && prepared.confirmation_token;
-    const zeroModel = [t1, t2, t3, t4].every((t) => t.b.model_calls === 0);
-    const askedOnce = [t1, t2, t3].every((t) => t.r.status === 200 && t.b.ok === true && typeof t.b.reply_ar === "string" && t.b.reply_ar.length > 0);
+    const zeroModel = [t1, t2].every((t) => t.b.model_calls === 0);
+    const askedNameOnly = t1.r.status === 200 && t1.b.ok === true && /باسم من/.test(String(t1.b.reply_ar || "")) && !/حدد الفترة|كم عدد الضيوف|سعر النظام/.test(String(t1.b.reply_ar || ""));
     const cardOk = Boolean(prepared && prepared.card && Array.isArray(prepared.card.rows) && prepared.card.rows.length >= 6);
-    // Never re-asks: the final turn must NOT ask about date/guests again.
-    const noReask = !/(أي يوم|كم عدد الضيوف)/.test(String(t4.b.reply_ar || ""));
-    record("agent_draft_conversation", zeroModel && askedOnce && cardOk && noReask && Boolean(agentToken), "card_rows=" + (prepared && prepared.card ? prepared.card.rows.length : 0));
+    const rows = cardOk ? Object.fromEntries(prepared.card.rows.map((r) => [r.k, r.v])) : {};
+    const exact = rows["العميل"] === "علي" && rows["الفترة"] === "19:00 → 05:00" && rows["الضيوف"] === "10" && rows["الإجمالي"] === "300 ريال" && rows["الجوال"] === "05••••0000";
+    const noReask = !/لم أفهم|أي يوم|كم عدد الضيوف|سعر النظام/.test(String(t2.b.reply_ar || ""));
+    record("agent_draft_conversation", zeroModel && askedNameOnly && cardOk && exact && noReask && Boolean(agentToken), "card_rows=" + (prepared && prepared.card ? prepared.card.rows.length : 0));
+    record("agent_reported_transcript_exact", zeroModel && exact && askedNameOnly && noReask, exact ? "exact" : "CARD_MISMATCH");
   }
 
   // 10c. Typed «سجل» NEVER executes — it re-displays the card (rotated token).
@@ -280,10 +284,10 @@ async function main() {
     const b = r.json || {};
     const again = (b.tool_results || []).find((x) => x.kind === "prepared_action");
     const noExec = !(b.tool_results || []).some((x) => x.kind === "completed_action");
-    const listB = await assistant({ invoke_tool: { name: "list_bookings", arguments: { from: RIYADH_TOMORROW, to: RIYADH_TOMORROW, status: "confirmed" } } });
+    const listB = await assistant({ invoke_tool: { name: "list_bookings", arguments: { from: RIYADH_TODAY, to: RIYADH_TODAY, status: "confirmed" } } });
     const n = listB.json && listB.json.result && Array.isArray(listB.json.result.bookings) ? listB.json.result.bookings.length : -1;
     if (again && again.confirmation_token) agentToken = again.confirmation_token; // rotated
-    record("sajil_never_executes", r.status === 200 && b.model_calls === 0 && Boolean(again) && noExec && n === 0, "confirmed_tomorrow=" + n);
+    record("sajil_never_executes", r.status === 200 && b.model_calls === 0 && Boolean(again) && noExec && n === 1, "confirmed_today=" + n);
   } else {
     record("sajil_never_executes", false, "NO_PREPARED_CARD");
   }
@@ -310,19 +314,17 @@ async function main() {
     // A COMPETING action on the same slot, prepared while it is still free —
     // its confirm (after the agent's booking lands) is the confirm-time
     // conflict probe of step 10e2.
-    // Same slot the agent conversation binds: «بكرة بالليل» resolves to the
-    // native night period («ليلي») on the seeded chalet.
-    const racePrep = await assistant({ invoke_tool: { name: "prepare_booking_create", arguments: { customer_name: "سباق تجريبي", chalet_name: "تولوم", booking_date: RIYADH_TOMORROW, period_label: "ليلي", total: 100, guests: 2 } } });
+    const racePrep = await assistant({ invoke_tool: { name: "prepare_booking_create", arguments: { customer_name: "سباق تجريبي", chalet_name: "تولوم", booking_date: RIYADH_TODAY, period_label: "فترة 4", total: 100, guests: 2 } } });
     const race = racePrep.json || {};
 
     const conf = await assistant({ invoke_tool: { name: "confirm_booking_create", arguments: { action_id: agentAction, confirmation_token: agentToken } } });
     const c = conf.json || {};
     agentBookingId = c.result && c.result.booking_id;
-    const one = await assistant({ invoke_tool: { name: "list_bookings", arguments: { from: RIYADH_TOMORROW, to: RIYADH_TOMORROW, status: "confirmed" } } });
-    const n = one.json && one.json.result ? (one.json.result.bookings || []).length : -1;
+    const one = await assistant({ invoke_tool: { name: "list_bookings", arguments: { from: RIYADH_TODAY, to: RIYADH_TODAY, status: "confirmed" } } });
+    const n = one.json && one.json.result ? (one.json.result.bookings || []).filter((x) => x.customer_name === "علي").length : -1;
     record("agent_booking_confirmed_once", conf.status === 200 && c.ok === true && n === 1, "count=" + n);
 
-    const conflict = await assistant({ message: "احجز تولوم بكرة بالليل لشخصين بمئة ريال، العميل تجربة ثانية" });
+    const conflict = await assistant({ message: "احجز تولوم اليوم من ٧ مساء الى خمس الصباح لشخصين بمئة ريال، العميل تجربة ثانية" });
     const cb = conflict.json || {};
     const noCard = !(cb.tool_results || []).some((x) => x.kind === "prepared_action");
     const talksAlternatives = /محجوزة/.test(String(cb.reply_ar || "")) && /1\./.test(String(cb.reply_ar || ""));
@@ -365,8 +367,8 @@ async function main() {
       const conflictCode = rb.public_code === "conflict";
       const options = Array.isArray(rb.next_actions) && rb.next_actions.length > 0;
       const wordsOk = /محجوزة|جودة البيانات/.test(String(rb.reason_ar || "")) && /الخيارات|1\./.test(String(rb.reason_ar || ""));
-      const still1 = await assistant({ invoke_tool: { name: "list_bookings", arguments: { from: RIYADH_TOMORROW, to: RIYADH_TOMORROW, status: "confirmed" } } });
-      const n2 = still1.json && still1.json.result ? (still1.json.result.bookings || []).length : -1;
+      const still1 = await assistant({ invoke_tool: { name: "list_bookings", arguments: { from: RIYADH_TODAY, to: RIYADH_TODAY, status: "confirmed" } } });
+      const n2 = still1.json && still1.json.result ? (still1.json.result.bookings || []).filter((x) => x.customer_name === "علي").length : -1;
       record(
         "confirm_conflict_recovers",
         failedClosed && terminal && conflictCode && options && wordsOk && n2 === 1 && !leaks(rc.text),

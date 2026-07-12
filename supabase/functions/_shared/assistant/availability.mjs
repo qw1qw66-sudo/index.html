@@ -183,10 +183,10 @@ export function isSlotAvailable(doc, chaletId, dateIso, candidatePeriod, opts = 
  * fail-closed rules above): chalets are looked up regardless of deleted_at
  * (first match by id), periods first-match by id (active or not), bookings
  * with unparseable dates/times are SKIPPED, end<=start wraps +24h.
- * Returns { a, b } with owner-visible facts of the first conflicting pair
- * (scan order identical to SQL), or null when the document is consistent.
+ * Returns every { a, b } pair with owner-visible facts (scan order identical
+ * to SQL). `findDocConflictPair` below preserves the original first-pair API.
  */
-export function findDocConflictPair(doc) {
+export function findDocConflictPairs(doc) {
   const bookings = Array.isArray(doc?.bookings) ? doc.bookings : [];
   const chalets = Array.isArray(doc?.chalets) ? doc.chalets : [];
   const rows = [];
@@ -223,6 +223,7 @@ export function findDocConflictPair(doc) {
       },
     });
   }
+  const pairs = [];
   for (let i = 0; i < rows.length; i += 1) {
     for (let j = i + 1; j < rows.length; j += 1) {
       if (
@@ -231,11 +232,29 @@ export function findDocConflictPair(doc) {
         rows[i].start < rows[j].end &&
         rows[i].end > rows[j].start
       ) {
-        return { a: rows[i].facts, b: rows[j].facts };
+        pairs.push({ a: rows[i].facts, b: rows[j].facts });
       }
     }
   }
-  return null;
+  return pairs;
+}
+
+export function findDocConflictPair(doc) {
+  return findDocConflictPairs(doc)[0] || null;
+}
+
+function docConflictPairKey(pair) {
+  const ids = [String(pair?.a?.id || ""), String(pair?.b?.id || "")].sort();
+  return `${ids[0]}\u0000${ids[1]}`;
+}
+
+// Migration 0007 grandfathers only conflict PAIRS that already existed in the
+// stored document. This is its JS twin for executors/tests: unrelated legacy
+// corruption may remain untouched, while any newly introduced pair is still
+// rejected fail-closed.
+export function findNewDocConflictPair(oldDoc, nextDoc) {
+  const oldKeys = new Set(findDocConflictPairs(oldDoc).map(docConflictPairKey));
+  return findDocConflictPairs(nextDoc).find((pair) => !oldKeys.has(docConflictPairKey(pair))) || null;
 }
 
 // Owner-safe wording for a whole-document conflict pair: names both bookings
