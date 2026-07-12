@@ -123,6 +123,10 @@ async function main() {
             // the requested 19:00→05:00 slot.
             { id: "p7", label: "فترة 3", start: "19:00", end: "00:00", active: true, sort: 7, weekday_price: 450, weekend_price: 450 },
             { id: "p8", label: "فترة 4", start: "19:00", end: "05:00", active: true, sort: 8, weekday_price: 450, weekend_price: 450 },
+            // Post-midnight slot: under the night-anchor convention it is the
+            // TAIL of its booking_date's night — the 10f3 probe proves the
+            // deployed engine blocks it while the 19:00→05:00 night is taken.
+            { id: "p9", label: "منتصف الليل", start: "00:00", end: "05:00", active: true, sort: 9, weekday_price: 200, weekend_price: 200 },
           ],
         },
         {
@@ -431,6 +435,27 @@ async function main() {
     );
   } else {
     record("today_bookings_read_consistent", false, "NO_BOOKING");
+  }
+
+  // 10f3. NIGHT ANCHOR (IMG_6706 «سالفة التوقيت»): while the agent's
+  // 19:00→05:00 booking occupies tonight, the 5-hour «منتصف الليل» slot on
+  // the SAME date is the middle of that occupied night — the deployed engine
+  // must refuse to prepare it (it used to read «متاحة»).
+  if (agentBookingId) {
+    const r = await assistant({ invoke_tool: { name: "prepare_booking_create", arguments: { customer_name: "تجربة منتصف الليل", chalet_name: "تولوم", booking_date: RIYADH_TODAY, period_label: "منتصف الليل", guests: 2, total: 100 } } });
+    const b = r.json || {};
+    const blocked = b.ok !== true && !(b.kind === "prepared_action" && b.ok);
+    const saysConflict = /محجوز|تتعارض|تعارض/.test(String(b.reason_ar || ""));
+    const safeText = !/[A-Z]{2,}_[A-Z]/.test(String(b.reason_ar || ""));
+    const still = await assistant({ invoke_tool: { name: "list_bookings", arguments: { from: RIYADH_TODAY, to: RIYADH_TODAY, status: "confirmed" } } });
+    const n = still.json && still.json.result ? (still.json.result.bookings || []).filter((x) => x.customer_name === "علي").length : -1;
+    record(
+      "night_containment_blocked",
+      r.status === 200 && blocked && saysConflict && safeText && n === 1 && !leaks(r.text),
+      "blocked=" + blocked + ",count=" + n,
+    );
+  } else {
+    record("night_containment_blocked", false, "NO_BOOKING");
   }
 
   // 10g. Cleanup: cancel the agent's synthetic booking (nothing real remains).

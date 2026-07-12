@@ -46,6 +46,7 @@ d("REAL Postgres: confirmed assistant actions write real rows", () => {
       "supabase/migrations/20260701000002_payment_ledger.sql",
       "supabase/migrations/20260711000003_chalet_assistant.sql",
       "supabase/migrations/20260712000007_grandfather_existing_booking_conflicts.sql",
+      "supabase/migrations/20260712000008_night_anchor_booking_conflicts.sql",
     ]) {
       await pool.query(readFileSync(f, "utf8"));
     }
@@ -212,6 +213,42 @@ d("REAL Postgres: confirmed assistant actions write real rows", () => {
     saved = (await pool.query("select public.save_shared_workspace_v2($1,$2,$3::jsonb,$4::timestamptz) r", ["WSREAL", "123456", JSON.stringify(unsafe), snap.rev])).rows[0].r;
     expect(saved.ok).toBe(false);
     expect(saved.error).toMatch(/^BOOKING_CONFLICT:/);
+  });
+
+  it("night anchor (migration 0008): the middle of an occupied night is rejected by the REAL guard", async () => {
+    // A dedicated workspace so the shared WSREAL doc stays untouched.
+    const doc = {
+      schema_version: 3, settings: {},
+      chalets: [{ id: "n1", name: "شاليه الليل", deleted_at: null, periods: [
+        { id: "night", label: "ليلة كاملة", start: "19:00", end: "05:00", active: true, sort: 1 },
+        { id: "mid", label: "منتصف الليل", start: "00:00", end: "05:00", active: true, sort: 2 },
+      ] }],
+      bookings: [{ id: "bn1", customer_name: "علي", chalet_id: "n1", booking_date: "2099-09-01", period_id: "night", guests: 2, total: 500, paid: 0, status: "confirmed", deleted_at: null }],
+    };
+    await pool.query("select public.create_shared_workspace($1,$2,$3::jsonb)", ["WSNIGHT", "123456", JSON.stringify(doc)]);
+    let snap = (await pool.query("select data, updated_at::text as rev from public.shared_workspaces where workspace_key='WSNIGHT'")).rows[0];
+
+    // SAME date + post-midnight period → same physical night → rejected.
+    const clash = structuredClone(snap.data);
+    clash.bookings.push({ id: "bn2", customer_name: "متأخر", chalet_id: "n1", booking_date: "2099-09-01", period_id: "mid", guests: 2, total: 100, paid: 0, status: "confirmed", deleted_at: null });
+    let saved = (await pool.query("select public.save_shared_workspace_v2($1,$2,$3::jsonb,$4::timestamptz) r", ["WSNIGHT", "123456", JSON.stringify(clash), snap.rev])).rows[0].r;
+    expect(saved.ok).toBe(false);
+    expect(saved.error).toMatch(/^BOOKING_CONFLICT:/);
+
+    // NEXT date = the next night → accepted.
+    const nextNight = structuredClone(snap.data);
+    nextNight.bookings.push({ id: "bn3", customer_name: "الليلة التالية", chalet_id: "n1", booking_date: "2099-09-02", period_id: "mid", guests: 2, total: 100, paid: 0, status: "confirmed", deleted_at: null });
+    saved = (await pool.query("select public.save_shared_workspace_v2($1,$2,$3::jsonb,$4::timestamptz) r", ["WSNIGHT", "123456", JSON.stringify(nextNight), snap.rev])).rows[0].r;
+    expect(saved.ok).toBe(true);
+
+    // A doc that ALREADY carries a (shift-revealed) pair still accepts
+    // unrelated edits — grandfathering with the redefined function.
+    await pool.query("update public.shared_workspaces set data=$2::jsonb, updated_at=statement_timestamp() where workspace_key=$1", ["WSNIGHT", JSON.stringify(clash)]);
+    snap = (await pool.query("select data, updated_at::text as rev from public.shared_workspaces where workspace_key='WSNIGHT'")).rows[0];
+    const unrelated = structuredClone(snap.data);
+    unrelated.bookings.push({ id: "bn4", customer_name: "آمن", chalet_id: "n1", booking_date: "2099-09-10", period_id: "night", guests: 2, total: 100, paid: 0, status: "confirmed", deleted_at: null });
+    saved = (await pool.query("select public.save_shared_workspace_v2($1,$2,$3::jsonb,$4::timestamptz) r", ["WSNIGHT", "123456", JSON.stringify(unrelated), snap.rev])).rows[0].r;
+    expect(saved.ok).toBe(true);
   });
 
   it("composite workspace FK blocks a message referencing another workspace's thread (Stage 5)", async () => {

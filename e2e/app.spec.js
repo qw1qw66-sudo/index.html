@@ -160,7 +160,7 @@ test('conflict and voucher use selected period exactly', async ({ page }) => {
   await page.locator('#bookingCustomerPhone').fill('0555555555');
   await page.locator('#bookingDate').fill(FUTURE_DATE);
   await page.locator('[data-action="save-booking"]').click();
-  await expect(page.locator('#feedback')).toContainText('يوجد حجز مؤكد متعارض في نفس الشاليه والفترة.');
+  await expect(page.locator('#feedback')).toContainText('يوجد حجز مؤكد يتعارض زمنيًا مع هذا الحجز في نفس الشاليه.');
 
   await page.locator('#bookingList [data-action="voucher"]').first().click();
   await expect(page.locator('#voucherBox')).toContainText('QA Facility');
@@ -821,6 +821,64 @@ test('«تحديث» pulls the server truth; unsaved local edits are never clobb
   await expect(page.locator('#bookingList')).not.toContainText('ضيف ثاني');
   await page.locator('[data-tab="chalets"]').click();
   await expect(page.locator('#chaletList')).toContainText('شاليه محلي');
+});
+
+test('night anchoring: the middle of a booked night is blocked in the manual editor (incl. legacy «7:00» times)', async ({ page }) => {
+  // Server doc: a night chalet with a full-night period, a post-midnight
+  // period, a LEGACY 1-digit-hour period («7:00» used to parse as Invalid
+  // Date and silently disable conflict detection), a free morning slot, and
+  // two existing confirmed bookings (the night + the legacy morning).
+  const NIGHT_DATE = FUTURE_DATE;
+  const doc = {
+    schema_version: 3,
+    settings: { facility_name: '', tag: '', holidays: [] },
+    chalets: [{ id: 'cn', name: 'شاليه الليل', capacity: 10, deleted_at: null, periods: [
+      { id: 'pn', label: 'ليلة كاملة', start: '19:00', end: '05:00', active: true, sort: 1 },
+      { id: 'pm', label: 'منتصف الليل', start: '00:00', end: '05:00', active: true, sort: 2 },
+      { id: 'p7', label: 'صباح قديم', start: '7:00', end: '17:00', active: true, sort: 3 },
+      { id: 'pd', label: 'ضحى', start: '09:00', end: '11:00', active: true, sort: 4 },
+    ] }],
+    bookings: [
+      { id: 'bn', customer_name: 'حجز الليل', chalet_id: 'cn', period_id: 'pn', booking_date: NIGHT_DATE, guests: 2, total: 500, paid: 0, status: 'confirmed', deleted_at: null },
+      { id: 'b7', customer_name: 'حجز الصباح', chalet_id: 'cn', period_id: 'p7', booking_date: NIGHT_DATE, guests: 2, total: 300, paid: 0, status: 'confirmed', deleted_at: null },
+    ],
+  };
+  await page.route('**/rest/v1/rpc/**', async (route) => {
+    const name = route.request().url().split('/').pop();
+    if (name === 'get_shared_workspace') {
+      return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true, workspace_key: 'TEST1', updated_at: '2026-01-01T00:00:00.000Z', data: doc }) });
+    }
+    return route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ message: 'unknown rpc' }) });
+  });
+  await page.goto('/');
+  await page.locator('#workspaceInput').fill('test1');
+  await page.locator('#pinInput').fill('123456');
+  await page.locator('#pullButton').click();
+  await expect(page.locator('#appShell')).toBeVisible();
+  await page.locator('[data-tab="bookings"]').click();
+  await expect(page.locator('#bookingList [data-booking-card-id]')).toHaveCount(2);
+
+  // «منتصف الليل» on the SAME date = the same physical night → blocked.
+  await page.locator('[data-action="new-booking"]').click();
+  await page.locator('#bookingCustomerName').fill('متطفل');
+  await page.locator('#bookingDate').fill(NIGHT_DATE);
+  await page.selectOption('#bookingPeriodId', 'pm');
+  await page.locator('[data-action="save-booking"]').click();
+  await expect(page.locator('#feedback')).toContainText('يتعارض زمنيًا');
+  await page.locator('[data-action="cancel-booking"]').click().catch(() => {});
+  await page.locator('[data-tab="bookings"]').click();
+  await expect(page.locator('#bookingList [data-booking-card-id]')).toHaveCount(2);
+
+  // «ضحى» overlaps the LEGACY «7:00» booking: before the padding fix this
+  // slipped through silently (NaN interval) — now it must be blocked too.
+  await page.locator('[data-action="new-booking"]').click();
+  await page.locator('#bookingCustomerName').fill('متطفل ثاني');
+  await page.locator('#bookingDate').fill(NIGHT_DATE);
+  await page.selectOption('#bookingPeriodId', 'pd');
+  await page.locator('[data-action="save-booking"]').click();
+  await expect(page.locator('#feedback')).toContainText('يتعارض زمنيًا');
+  await page.locator('[data-tab="bookings"]').click();
+  await expect(page.locator('#bookingList [data-booking-card-id]')).toHaveCount(2);
 });
 
 test('after حفظ الحجز the bookings tab shows the booking — no re-login needed', async ({ page }) => {

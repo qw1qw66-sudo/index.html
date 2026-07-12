@@ -91,6 +91,8 @@ describe("supabase/migrations — single, ordered source of truth", () => {
       "20260712000006_assistant_booking_drafts.sql",
       // Existing conflict pairs stay untouched; only NEW pairs block a save.
       "20260712000007_grandfather_existing_booking_conflicts.sql",
+      // Night anchor: a pre-06:00 non-wrapping period counts on its date's NIGHT.
+      "20260712000008_night_anchor_booking_conflicts.sql",
     ]);
   });
 

@@ -80,9 +80,9 @@ export function isVacancyStillEmpty(doc, { chalet_id, date, period_id }) {
   const chalet = activeChalets(doc).find((c) => c.id === chalet_id);
   const period = chalet ? (chalet.periods || []).find((p) => p.id === period_id) : null;
   if (chalet && period) return isSlotAvailable(doc, chalet_id, date, period);
-  return !activeBookings(doc).some(
-    (b) => b.status === "confirmed" && b.chalet_id === chalet_id && b.booking_date === date && b.period_id === period_id,
-  );
+  // Unresolvable chalet/period (deleted, repointed): emptiness cannot be
+  // PROVEN — fail closed, never market a slot we can't verify.
+  return false;
 }
 
 const KSA_PHONE = /^(?:\+?9665\d{8}|00966\d{9}|05\d{8}|5\d{8})$/;

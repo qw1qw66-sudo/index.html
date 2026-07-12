@@ -263,6 +263,19 @@ describe('nextQuestionAr', () => {
 });
 
 describe('findAlternatives', () => {
+  // Night anchoring (IMG_6706): a post-midnight period on the SAME date is
+  // inside the requested/occupied night — tier-1 must never offer it as an
+  // «alternative». The same slot re-appears legitimately on the next date.
+  it('never offers the middle of the requested night as a same-day alternative', () => {
+    const doc = fixtureDoc();
+    doc.chalets[0].periods.push({ id: 'p5', label: 'منتصف الليل', start: '00:00', end: '05:00', active: true, weekday_price: 200, weekend_price: 300, sort: 4 });
+    const alts = findAlternatives(doc, 'c1', D, skyEvening(), { max: 5, todayIso: TODAY });
+    expect(alts.length).toBeGreaterThan(0);
+    for (const a of alts) {
+      expect(`${a.chalet_id}|${a.period_id}|${a.date}`).not.toBe(`c1|p5|${D}`);
+    }
+  });
+
   it('strict order: same-day other period, same fingerprint next day, other chalet', () => {
     const doc = fixtureDoc();
     const alts = findAlternatives(doc, 'c1', D, skyEvening(), { max: 3, todayIso: TODAY });
