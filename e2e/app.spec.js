@@ -1042,12 +1042,15 @@ test('assistant refuses stale cloud answers while local changes are unsaved', as
   await create(page);
   await createChaletWithSixPeriods(page); // local, dirty, not uploaded
   await page.locator('[data-tab="assistant"]').click();
+  // Opening the tab may perform its own connection probe; the owner's dirty
+  // request itself must add zero assistant calls.
+  const callsBeforeSend = assistantCalls;
   await page.locator('#assistantInput').fill('جهز حجز مهره');
   await page.locator('[data-action="assistant-send"]').click();
   await expect(page.locator('#assistantLog')).toContainText('تغييرات محلية غير مرفوعة');
   await expect(page.locator('#feedback')).toContainText('رفع التعديلات');
   await expect(page.locator('#assistantActions .action-card')).toHaveCount(0);
-  expect(assistantCalls).toBe(0);
+  expect(assistantCalls).toBe(callsBeforeSend);
 });
 
 test('a new manual booking cannot be hidden as an old booking; historical edits remain possible', async ({ page }) => {
