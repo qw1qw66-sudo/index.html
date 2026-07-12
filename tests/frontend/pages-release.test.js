@@ -198,6 +198,18 @@ describe("booking agent frontend (structured card + safe errors)", () => {
     expect(html).not.toContain("فتح تبويب");
   });
 
+  it("connection failures are honest and self-healing (network vs server fault)", () => {
+    // Network-level failure and server-side crash carry DIFFERENT wordings…
+    expect(html).toContain("تعذّر الوصول إلى الخادم");
+    expect(html).toContain("خلل مؤقت في الخادم");
+    // …the dead-air wording from the live incident is gone from the send path…
+    expect(html).not.toContain("تعذّر الاتصال بالمساعد. لم يتغيّر شيء.");
+    // …and a red badge re-probes on backoff + is tappable for an instant check.
+    expect(html).toContain("function scheduleAssistantReprobe");
+    expect(html).toContain("assistantReprobeNow");
+    expect(html).toMatch(/thread_action:\s*"list"/); // side-effect-free ping
+  });
+
   it("conflict alternatives render as one-tap chips in BOTH reply paths", () => {
     expect(html).toContain("function renderNextActionChips");
     // Chips reuse the auto-send suggestion delegation (tap sends «١»).

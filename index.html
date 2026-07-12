@@ -4354,6 +4354,12 @@
         let assistantThreadId = null,
           assistantBackendMissing = false,
           assistantBusy = false;
+        // Self-healing connection probe: after a failure the badge re-checks
+        // on backoff (30s→60s→…, 5 tries) and a tap re-checks immediately —
+        // a transient outage never leaves a permanently red badge.
+        let assistantReprobeTimer = null,
+          assistantReprobeTries = 0,
+          assistantReprobeDelay = 30000;
         const assistantTokens = {}; // action_id -> confirmation_token (kept out of model context)
         // Every visible suggestion maps to a genuinely registered read/prepare
         // tool (the `tool` field). Automation is write-disabled by design, so no
@@ -4437,6 +4443,53 @@
           if (el) {
             el.textContent = text;
             el.className = cls || "";
+            // A red badge is TAPPABLE: one tap re-checks the connection now.
+            el.style.cursor = cls === "bad" ? "pointer" : "";
+            el.title = cls === "bad" ? "اضغط لإعادة فحص الاتصال" : "";
+            el.onclick = cls === "bad" ? assistantReprobeNow : null;
+          }
+        }
+        // One lightweight, side-effect-free ping (thread list — never token
+        // rotation) that flips the badge back to «متصل» on success.
+        async function assistantProbeOnce() {
+          try {
+            const body = await assistantCall({ thread_action: "list" });
+            if (body && body.ok) {
+              assistantReprobeTries = 0;
+              assistantReprobeDelay = 30000;
+              setAssistantConn("متصل", "ok");
+              return true;
+            }
+          } catch (_) {
+            /* still down */
+          }
+          return false;
+        }
+        function scheduleAssistantReprobe() {
+          if (assistantReprobeTimer || assistantBackendMissing || !loadedWorkspace) return;
+          if (assistantReprobeTries >= 5) return; // the badge stays tappable
+          assistantReprobeTimer = setTimeout(async () => {
+            assistantReprobeTimer = null;
+            assistantReprobeTries += 1;
+            const okNow = await assistantProbeOnce();
+            if (!okNow) {
+              assistantReprobeDelay = Math.min(assistantReprobeDelay * 2, 480000);
+              scheduleAssistantReprobe();
+            }
+          }, assistantReprobeDelay);
+        }
+        async function assistantReprobeNow() {
+          if (assistantReprobeTimer) {
+            clearTimeout(assistantReprobeTimer);
+            assistantReprobeTimer = null;
+          }
+          assistantReprobeTries = 0;
+          assistantReprobeDelay = 30000;
+          setAssistantConn("جارٍ إعادة الفحص…", "");
+          const okNow = await assistantProbeOnce();
+          if (!okNow) {
+            setAssistantConn("غير متاح — اضغط لإعادة الفحص", "bad");
+            scheduleAssistantReprobe();
           }
         }
         // DEFENSIVE error mapper: the server already sends reason_ar +
@@ -4627,6 +4680,7 @@
               // status page and the chat never contradict each other.
               setAssistantConn("غير متاح مؤقتاً", "bad");
               setSetupRow("setupStatusDeepseek", "model_down");
+              scheduleAssistantReprobe();
               assistantAppend(
                 "bot",
                 "تعذّر الوصول إلى المساعد حالياً، ولم يتم تنفيذ أي إجراء.",
@@ -4643,6 +4697,12 @@
               renderToolResults(body.tool_results);
             } else {
               // Defensive mapper: never a raw code, UUID, or body.error.
+              // A server-side crash (EDGE_CRASH from the edge envelope) is a
+              // SERVER fault, not a connection fault — say so, and re-probe.
+              if (body && body.error === "EDGE_CRASH") {
+                setAssistantConn("خلل مؤقت في الخادم", "bad");
+                scheduleAssistantReprobe();
+              }
               assistantAppend("bot", assistantSafeError(body));
             }
           } catch (e) {
@@ -4655,8 +4715,14 @@
               setAssistantConn("فشل التحقق من الدخول", "bad");
               assistantAppend("bot", "بيانات الدخول غير صحيحة للمساعد.");
             } else {
-              setAssistantConn("غير متاح مؤقتاً", "bad");
-              assistantAppend("bot", "تعذّر الاتصال بالمساعد. لم يتغيّر شيء.");
+              // Fetch itself failed: network/DNS or a CORS-less response.
+              // Distinct wording from server faults + a tappable badge.
+              setAssistantConn("تعذر الاتصال — اضغط لإعادة الفحص", "bad");
+              scheduleAssistantReprobe();
+              assistantAppend(
+                "bot",
+                "تعذّر الوصول إلى الخادم — تحقق من الإنترنت ثم أعد الإرسال، أو اضغط شارة الاتصال لإعادة الفحص. لم يتغيّر شيء.",
+              );
             }
           } finally {
             assistantBusy = false;

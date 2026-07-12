@@ -844,8 +844,11 @@ function withPrivateBookingFacts(call, facts) {
 // confirmation all come from this deterministic path.
 // ---------------------------------------------------------------------------
 
+// «سجل حجز …» (with content) is the owner's most natural opener — it must
+// enter the deterministic pipeline. Bare «سجل الحجز» stays a confirm word:
+// bareConfirmReminder runs BEFORE this test and only on bare phrases.
 const BOOKING_INTENT_RE =
-  /(احجز|أحجز|احجزلي|ابي حجز|أبي حجز|ابغى حجز|أبغى حجز|بغيت حجز|جهز حجز|جهّز حجز|جهزلي حجز|حجز جديد|سوي حجز|اعمل حجز|رتب حجز)/;
+  /(احجز|أحجز|احجزلي|ابي حجز|أبي حجز|ابغى حجز|أبغى حجز|بغيت حجز|جهز حجز|جهّز حجز|جهزلي حجز|حجز جديد|سوي حجز|اعمل حجز|رتب حجز|سجل حجز|سجّل حجز|سجل لي حجز|سجلي حجز)/;
 
 // Wording that clearly TRIES to state a date (tomorrow-family words, weekday
 // names, «تاريخ», «يوم …»). Consulted ONLY when the deterministic parser

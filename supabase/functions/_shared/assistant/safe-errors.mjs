@@ -127,6 +127,9 @@ const ERROR_MAP = {
   OFFICIAL_WHATSAPP_NOT_WIRED: e("unavailable", false, "قناة واتساب الرسمية غير مربوطة بعد."),
   TOOL_NOT_IMPLEMENTED: e("unavailable", false, "هذا الإجراء غير متاح حالياً."),
   UNHANDLED_TOOL: e("unavailable", false, "هذا الإجراء غير مدعوم حالياً."),
+  // The edge envelope's own catch-all (corsWrap): an uncaught crash still
+  // answers as JSON with CORS instead of dead air.
+  EDGE_CRASH: e("unavailable", true, "حدث خلل مؤقت في المساعد. لم يتغيّر شيء — أعد المحاولة بعد قليل."),
   EXECUTION_ERROR: e("unavailable", true, "حدث خلل أثناء التنفيذ. تحقق من النتيجة قبل إعادة المحاولة."),
   PREVIOUSLY_FAILED: e("unavailable", false, "لم ينجح هذا الإجراء سابقاً. جهّزه من جديد إذا أردت."),
   ASSISTANT_CONFIRM_SECRET_MISSING: e("unavailable", false, "إعداد التأكيد غير مكتمل في الخادم. تواصل مع الدعم الفني."),

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { handleAssistant } from "../../supabase/functions/chalet-assistant/handler.mjs";
 import { executeConfirmedAction } from "../../supabase/functions/_shared/assistant/executors.mjs";
 import { toolCatalogForModel, buildToolCatalogText, TOOL_REGISTRY } from "../../supabase/functions/_shared/assistant/tools.mjs";
+import { corsWrap } from "../../supabase/functions/_shared/cors.mjs";
 
 // Covers the FINAL PRE-MERGE hardening: mandatory confirm secret, real tool
 // catalog (no sensitive tools), two-stage model loop, prepare-time booking id
@@ -243,5 +244,47 @@ describe("thread lifecycle (Stage 5)", () => {
     expect(ok.body.ok).toBe(true);
     const missing = await call(deps, { workspace_key: "WSA", access_pin: "123456", thread_action: "archive", thread_id: "nope" });
     expect(missing.status).toBe(404);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Edge envelope: an uncaught handler crash must STILL answer as JSON with the
+// CORS allow-origin header — a bare 500 without it renders as «تعذّر الاتصال»
+// on the phone (live incident IMG_6702) and hides the real fault.
+// ---------------------------------------------------------------------------
+
+describe("edge envelope (corsWrap)", () => {
+  const APP_ORIGIN = "https://qw1qw66-sudo.github.io";
+
+  it("a throwing handler returns JSON 500 WITH allow-origin and a clean Arabic reason", async () => {
+    const req = new Request("https://edge.local/fn", { method: "POST", headers: { origin: APP_ORIGIN } });
+    const res = await corsWrap(req, {}, () => {
+      throw new Error("boom sk-SECRETSECRETSECRET details");
+    });
+    expect(res.status).toBe(500);
+    expect(res.headers.get("access-control-allow-origin")).toBe(APP_ORIGIN);
+    const body = await res.json();
+    expect(body).toMatchObject({ ok: false, error: "EDGE_CRASH", public_code: "unavailable", recoverable: true });
+    expect(body.reason_ar).toContain("لم يتغيّر شيء");
+    // The crash detail (and anything secret-shaped in it) never reaches the body.
+    expect(JSON.stringify(body)).not.toMatch(/boom|sk-/);
+  });
+
+  it("a rejecting async handler is caught the same way", async () => {
+    const req = new Request("https://edge.local/fn", { method: "POST", headers: { origin: APP_ORIGIN } });
+    const res = await corsWrap(req, {}, async () => Promise.reject(new TypeError("cannot read x of undefined")));
+    expect(res.status).toBe(500);
+    expect(res.headers.get("access-control-allow-origin")).toBe(APP_ORIGIN);
+    expect((await res.json()).error).toBe("EDGE_CRASH");
+  });
+
+  it("successful responses and preflights are unchanged", async () => {
+    const pre = await corsWrap(new Request("https://edge.local/fn", { method: "OPTIONS", headers: { origin: APP_ORIGIN } }), {}, () => {
+      throw new Error("handler must not run on preflight");
+    });
+    expect(pre.status).toBe(204);
+    const okRes = await corsWrap(new Request("https://edge.local/fn", { method: "POST", headers: { origin: APP_ORIGIN } }), {}, async () => new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } }));
+    expect(okRes.status).toBe(200);
+    expect(okRes.headers.get("access-control-allow-origin")).toBe(APP_ORIGIN);
   });
 });

@@ -310,4 +310,28 @@ describe("live transcript corpus (owner-reported conversations, zero model calls
     expect(deps._modelCalls).toHaveLength(0);
     for (const rep of replies) expect(String(rep || "")).not.toContain("رقم الجوال");
   });
+
+  it("R4 (IMG_6702): the exact «سجل حجز…شالية…٧ المسا الى ٥ الصباح» message is fully deterministic", async () => {
+    const deps = makeDeps();
+    const replies = [];
+    const t1 = await chat(deps, "سجل حجز اليوم باسم علي تجريبي شالية تولوم الوقت ٧ المسا الى ٥ الصباح عدد الضيوف ١٠ و الرقم 0503666853 شالية تولوم");
+    replies.push(t1.reply_ar);
+    expect(t1.ok).toBe(true);
+    expect(t1.model_calls).toBe(0);
+    const f = deps._drafts.get("th-1").fields;
+    expect(f.chalet_id).toBe("tulum"); // «شالية» (taa-marbuta) resolves
+    expect(f.booking_date).toBe(TODAY);
+    expect(f.canonical_start).toBe("19:00");
+    expect(f.canonical_end).toBe("05:00");
+    expect(f.period_id).toBe("t-pm");
+    expect(f.guests).toBe(10);
+    expect(f.customer_name).toBe("علي تجريبي");
+    expect(t1.reply_ar).toContain("سعر"); // total is the ONLY missing field
+    const done = await chat(deps, "اعتمد", "th-1");
+    replies.push(done.reply_ar);
+    expect((done.tool_results || []).some((x) => x.kind === "prepared_action")).toBe(true);
+    expect(deps._modelCalls).toHaveLength(0);
+    // The raw phone never appears in any reply (masked only on the card).
+    for (const rep of replies) expect(String(rep || "")).not.toContain("0503666853");
+  });
 });
