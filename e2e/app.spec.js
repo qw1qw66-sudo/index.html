@@ -71,9 +71,14 @@ async function createChaletWithSixPeriods(page) {
   await page.locator('[data-action="new-chalet"]').click();
   await page.locator('#chaletName').fill('Tulum');
   await expect(page.locator('.period-card')).toHaveCount(6);
-  await page.locator('[data-period-field="label"]').first().fill('Morning');
-  await page.locator('[data-period-field="start"]').first().fill('07:00');
-  await page.locator('[data-period-field="end"]').first().fill('17:00');
+  const starts = ['07:00', '17:00', '18:00', '19:00', '20:00', '21:00'];
+  const ends = ['17:00', '18:00', '19:00', '20:00', '21:00', '22:00'];
+  for (let i = 0; i < 6; i++) {
+    await page.locator('[data-period-field="label"]').nth(i).fill(i === 0 ? 'Morning' : 'Period ' + (i + 1));
+    await page.locator('[data-period-field="start"]').nth(i).fill(starts[i]);
+    await page.locator('[data-period-field="end"]').nth(i).fill(ends[i]);
+    await page.locator('[data-period-field="active"]').nth(i).check();
+  }
   await page.locator('[data-action="save-chalet"]').click();
 }
 
@@ -519,7 +524,7 @@ test('booking card: structured rows, LTR values, three buttons, dark theme, abov
 });
 
 test('typed «سجل» flashes the card and never fires a request; double-tap confirms once', async ({ page }) => {
-  await mockRpc(page);
+  const box = await mockMutableCloud(page);
   let assistantCalls = 0;
   let confirmCalls = 0;
   await page.route('**/functions/v1/chalet-assistant', async (route) => {
@@ -529,7 +534,25 @@ test('typed «سجل» flashes the card and never fires a request; double-tap co
       confirmCalls++;
       // Slow response so a double-tap window exists.
       await new Promise((r) => setTimeout(r, 400));
-      return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true, kind: 'completed_action', tool: body.invoke_tool.name, result: { action: 'booking_created', booking_id: 'bk-1' } }) });
+      box.cloud = {
+        ...box.cloud,
+        updated_at: '2026-01-01T03:30:00.000Z',
+        data: freshnessDoc([freshnessBooking('bk-1', 'علي تجربة')]),
+      };
+      return route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ok: true,
+          kind: 'completed_action',
+          tool: body.invoke_tool.name,
+          result: {
+            action: 'booking_created',
+            booking_id: 'bk-1',
+            updated_at: box.cloud.updated_at,
+            booking: freshnessBooking('bk-1', 'علي تجربة'),
+          },
+        }),
+      });
     }
     return route.fulfill({ contentType: 'application/json', body: JSON.stringify(BOOKING_CARD_BODY) });
   });
@@ -976,4 +999,96 @@ test('after حفظ الحجز the bookings tab shows the booking — no re-login
   await page.locator('[data-tab="bookings"]').click();
   await expect(page.locator('#bookingList')).toContainText('علي تجربة');
   await expect(page.locator('#bookingList')).not.toContainText('لا توجد حجوزات');
+});
+
+test('assistant create is not called successful until its exact booking is visible in الحجوزات', async ({ page }) => {
+  const box = await mockMutableCloud(page);
+  let confirmCalls = 0;
+  await page.route('**/functions/v1/chalet-assistant', async (route) => {
+    const body = JSON.parse(route.request().postData() || '{}');
+    if (body.invoke_tool && String(body.invoke_tool.name).startsWith('confirm_')) {
+      confirmCalls++;
+      // Simulate a slow cloud projection. The old frontend printed success
+      // immediately and left the owner staring at a list without the booking.
+      await new Promise((resolve) => setTimeout(resolve, 650));
+      box.cloud = { ...box.cloud, updated_at: '2026-01-01T04:00:00.000Z', data: freshnessDoc([freshnessBooking('bk-mahra', 'مهره اختبار')]) };
+      return route.fulfill({ contentType: 'application/json', body: JSON.stringify({
+        ok: true, kind: 'completed_action',
+        result: { action: 'booking_created', booking_id: 'bk-mahra', updated_at: box.cloud.updated_at, booking: { id: 'bk-mahra', customer_name: 'مهره اختبار', booking_date: RIYADH_TOMORROW, chalet_id: 'c1', period_id: 'p1', status: 'confirmed' } },
+      }) });
+    }
+    return route.fulfill({ contentType: 'application/json', body: JSON.stringify(BOOKING_CARD_BODY) });
+  });
+  await page.goto('/');
+  await create(page);
+  await page.locator('[data-tab="assistant"]').click();
+  await page.locator('#assistantInput').fill('سجل حجز تجريبي باسم مهره');
+  await page.locator('[data-action="assistant-send"]').click();
+  await page.locator('[data-action="assistant-confirm"]').click();
+  await expect(page.locator('[data-tab="bookings"]')).toHaveClass(/active/);
+  await expect(page.locator('#bookingList [data-booking-card-id="bk-mahra"]')).toContainText('مهره اختبار');
+  await expect(page.locator('#assistantLog')).toContainText('تم إنشاء الحجز بنجاح');
+  expect(confirmCalls).toBe(1);
+});
+
+test('assistant booking confirm refuses split-brain execution while local changes are unsaved', async ({ page }) => {
+  await mockRpc(page);
+  let confirmCalls = 0;
+  await page.route('**/functions/v1/chalet-assistant', async (route) => {
+    const body = JSON.parse(route.request().postData() || '{}');
+    if (body.invoke_tool && String(body.invoke_tool.name).startsWith('confirm_')) confirmCalls++;
+    return route.fulfill({ contentType: 'application/json', body: JSON.stringify(BOOKING_CARD_BODY) });
+  });
+  await page.goto('/');
+  await create(page);
+  await createChaletWithSixPeriods(page); // local, dirty, not uploaded
+  await page.locator('[data-tab="assistant"]').click();
+  await page.locator('#assistantInput').fill('جهز حجز مهره');
+  await page.locator('[data-action="assistant-send"]').click();
+  await page.locator('[data-action="assistant-confirm"]').click();
+  await expect(page.locator('#feedback')).toContainText('ارفع التغييرات المحلية');
+  await expect(page.locator('#assistantActions .action-card')).toHaveCount(1);
+  expect(confirmCalls).toBe(0);
+});
+
+test('a new manual booking cannot be hidden as an old booking; historical edits remain possible', async ({ page }) => {
+  await mockRpc(page);
+  await page.goto('/');
+  await create(page);
+  await createChaletWithSixPeriods(page);
+  await page.locator('[data-tab="bookings"]').click();
+  await page.locator('[data-action="new-booking"]').click();
+  await page.locator('#bookingCustomerName').fill('مهره ماضي');
+  await page.locator('#bookingDate').fill('2025-04-07');
+  await page.locator('#bookingTotal').fill('450');
+  await page.locator('[data-action="save-booking"]').click();
+  await expect(page.locator('#feedback')).toContainText('لا يمكن إنشاء حجز جديد بتاريخ ماض');
+  await expect(page.locator('#bookingPastList')).not.toContainText('مهره ماضي');
+});
+
+test('period normalization preserves period 7 and does not activate five fake duplicate slots', async ({ page }) => {
+  const periods = Array.from({ length: 7 }, (_, i) => ({
+    id: 'p' + (i + 1), label: 'فترة ' + (i + 1), start: String(7 + i).padStart(2, '0') + ':00', end: String(8 + i).padStart(2, '0') + ':00', active: true, sort: i + 1,
+  }));
+  const doc = freshnessDoc([{ id: 'b7', customer_name: 'حجز الفترة السابعة', chalet_id: 'c1', period_id: 'p7', booking_date: RIYADH_TOMORROW, guests: 2, total: 500, paid: 0, status: 'confirmed', deleted_at: null }]);
+  doc.chalets[0].periods = periods;
+  await page.route('**/rest/v1/rpc/**', async (route) => {
+    const name = route.request().url().split('/').pop();
+    if (name === 'get_shared_workspace') return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true, workspace_key: 'TEST1', updated_at: '2026-01-01T00:00:00.000Z', data: doc }) });
+    return route.fulfill({ status: 404, contentType: 'application/json', body: '{"message":"unknown rpc"}' });
+  });
+  await page.goto('/');
+  await page.locator('#workspaceInput').fill('test1');
+  await page.locator('#pinInput').fill('123456');
+  await page.locator('#pullButton').click();
+  await page.locator('[data-tab="bookings"]').click();
+  await expect(page.locator('#bookingList')).toContainText('فترة 7');
+  await page.locator('[data-tab="chalets"]').click();
+  await page.locator('[data-action="edit-chalet"]').click();
+  await expect(page.locator('.period-card')).toHaveCount(7);
+
+  await page.locator('[data-action="cancel-chalet"]').click();
+  await page.locator('[data-action="new-chalet"]').click();
+  await expect(page.locator('.period-card')).toHaveCount(6);
+  await expect(page.locator('[data-period-field="active"]:checked')).toHaveCount(1);
 });

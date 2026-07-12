@@ -305,8 +305,25 @@ export function applyWebhookEvent({ event, order, existingTransaction }) {
         return { actions: [{ type: "reject", error: "MISSING_PROVIDER_TRANSACTION_ID" }] };
       }
       if (existingTransaction) {
-        // Provider retry / duplicate delivery: the money is already recorded.
-        return { actions: [{ type: "skip_duplicate", reason: "TRANSACTION_ALREADY_RECORDED" }] };
+        // A previous delivery may have inserted the immutable ledger row and
+        // crashed before updating the order. Reconcile that partial success on
+        // retry; treating it as a plain duplicate would leave the order stuck
+        // pending forever and block future sessions.
+        if (order && (order.status === "pending" || order.status === "partially_paid")) {
+          const recordedAmount = Number(
+            existingTransaction.amount_halalas ?? event.amountHalalas,
+          );
+          if (Number.isSafeInteger(recordedAmount) && recordedAmount > 0) {
+            actions.push({
+              type: "update_order_status",
+              orderId: order.id,
+              from: order.status,
+              to: recordedAmount >= order.amount_halalas ? "paid" : "partially_paid",
+            });
+          }
+        }
+        actions.push({ type: "skip_duplicate", reason: "TRANSACTION_ALREADY_RECORDED" });
+        return { actions };
       }
       if (!Number.isSafeInteger(amount) || amount <= 0) {
         return { actions: [{ type: "reject", error: "INVALID_AMOUNT" }] };

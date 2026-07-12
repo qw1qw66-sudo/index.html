@@ -25,7 +25,9 @@ function normalizeText(s) {
   return foldDigits(s)
     .replace(MARKS_RE, '')
     .replace(/[أإآ]/g, 'ا')
-    .replace(/[–—]/g, '-')
+    // One canonical dash set for BOTH date and time parsing. Mobile keyboards,
+    // copied WhatsApp text and RTL rendering commonly produce these variants.
+    .replace(/[‐‑‒–—−﹘﹣－]/g, '-')
     .toLowerCase();
 }
 
@@ -361,10 +363,16 @@ export function parseDateExpression(text, todayIso) {
   }
 
   // 3) Day-first pair without a year: current year, rolling forward when past.
-  m = t.match(/(?<![\d/-])(\d{1,2})[/-](\d{1,2})(?![\d/-])/);
+  m = t.match(/(?<![\d/-])(\d{1,2})([/-])(\d{1,2})(?![\d/-])/);
   if (m) {
     const d = Number(m[1]);
-    const mo = Number(m[2]);
+    const separator = m[2];
+    const mo = Number(m[3]);
+    // «7-5» is the owner's common 19:00→05:00 shorthand. When BOTH
+    // components are valid hours, a hyphen-only pair is ambiguous and must
+    // not silently become 7 May. Slash stays the explicit DD/MM form, while
+    // an unambiguous day such as 15-08 remains accepted.
+    if (separator === '-' && d <= 12 && mo <= 12) return null;
     let y = Number(todayIso.slice(0, 4));
     if (!utcValid(y, mo, d)) return { error: 'INVALID_DATE', reason_ar: INVALID_DATE_AR };
     if (`${y}-${pad2(mo)}-${pad2(d)}` < todayIso) y += 1;

@@ -73,6 +73,7 @@ const ERROR_MAP = {
   WORKSPACE_NOT_FOUND: e("not_found", false, "لم أجد مساحة العمل. أعد تسجيل الدخول ثم حاول من جديد."),
   THREAD_NOT_FOUND: e("not_found", false, "لم أجد هذه المحادثة. افتح محادثة جديدة وأعد طلبك."),
   BOOKING_ID_MISSING: e("not_found", false, "لم يتضح أي حجز تقصد. حدده باسم العميل أو التاريخ."),
+  BOOKING_ID_CONFLICT: e("unavailable", false, "تعارض معرّف الحجز مع سجل مختلف. لم يتم إنشاء حجز جديد."),
 
   // --- invalid_input ----------------------------------------------------
   INVALID_DATE: e("invalid_input", false, "التاريخ غير صالح. اذكر اليوم والشهر بوضوح ثم أعد المحاولة."),
@@ -109,6 +110,7 @@ const ERROR_MAP = {
   // Synthetic frontend code for fetch/network failures.
   NETWORK: e("unavailable", true, "تعذّر الاتصال بالخادم مؤقتاً. لم يتغيّر شيء."),
   SAVE_FAILED: e("unavailable", true, "تعذّر حفظ التغييرات. لم يتغيّر شيء. حاول مرة أخرى."),
+  SAVE_VERIFICATION_FAILED: e("unavailable", true, "وصل تأكيد غير مكتمل من الحفظ. تحققنا من السجل ولم نعتبر العملية ناجحة."),
   READ_FAILED: e("unavailable", true, "تعذّرت قراءة البيانات حالياً. حاول مرة أخرى بعد قليل."),
   PREPARE_FAILED: e("unavailable", true, "تعذّر تجهيز الطلب. لم يتغيّر شيء. حاول مرة أخرى."),
   CONSUME_FAILED: e("unavailable", true, "تعذّر إتمام التأكيد. حاول مرة أخرى."),

@@ -642,6 +642,10 @@
       .booking-upcoming {
         border-right: 3px solid var(--ok);
       }
+      .booking-verified {
+        outline: 3px solid color-mix(in srgb, var(--ok) 55%, transparent);
+        box-shadow: 0 0 0 6px color-mix(in srgb, var(--ok) 12%, transparent);
+      }
       .booking-past {
         border-right: 3px solid var(--r);
         opacity: 0.92;
@@ -867,7 +871,7 @@
             </div>
           </div>
           <div class="card">
-            <h3>تنبيهات المتبقي</h3>
+            <h3>تنبيهات مبالغ الحجوزات السابقة</h3>
             <div id="remainingAlerts"></div>
           </div>
           <div class="card">
@@ -1746,6 +1750,13 @@
           const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || ""));
           return m ? m[3] + "-" + m[2] + "-" + m[1] : String(iso || "—");
         }
+        function validIsoCalendarDate(iso) {
+          const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || ""));
+          if (!m) return false;
+          const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
+          const dt = new Date(Date.UTC(y, mo - 1, d));
+          return dt.getUTCFullYear() === y && dt.getUTCMonth() === mo - 1 && dt.getUTCDate() === d;
+        }
         // A period is BOOKABLE only when both times are valid HH:mm. New
         // bookings on timeless periods fail closed (availability cannot be
         // proven); historical bookings still display normally.
@@ -2142,31 +2153,43 @@
             bookings: (doc.bookings || []).filter((x) => !x.deleted_at).length,
           };
         }
-        function defaultPeriods(existing) {
-          const arr = Array.isArray(existing) ? existing.slice(0, 6) : [];
-          while (arr.length < 6) {
-            const n = arr.length + 1;
-            arr.push({
-              id: uid(),
-              label: "الفترة " + n,
-              start: "07:00",
-              end: "17:00",
-              weekday_price: 0,
-              weekend_price: 0,
-              active: true,
-              sort: n,
-            });
-          }
-          return arr.slice(0, 6).map((p, i) => ({
+        // Normalize the REAL stored list without truncating or inventing active
+        // periods. The old helper silently cut period 7+ and padded missing
+        // slots as six identical active 07:00→17:00 periods, which could hide
+        // bookings and create fake assistant ambiguity.
+        function normalizePeriods(existing) {
+          const arr = Array.isArray(existing) ? existing : [];
+          return arr.map((p, i) => ({
             id: String(p.id || uid()),
             label: String(p.label || "الفترة " + (i + 1)),
-            start: String(p.start || "07:00"),
-            end: String(p.end || "17:00"),
+            start: p.start == null ? "" : String(p.start),
+            end: p.end == null ? "" : String(p.end),
             weekday_price: Number(p.weekday_price || 0),
             weekend_price: Number(p.weekend_price || 0),
             active: p.active !== false,
             sort: Number(p.sort ?? i + 1),
           }));
+        }
+        // The editor still offers at least six slots. Only the first slot of a
+        // brand-new chalet is active; the other blank slots must be configured
+        // explicitly instead of masquerading as real duplicate periods.
+        function periodsForEditor(existing) {
+          const arr = normalizePeriods(existing).map((p) => ({ ...p }));
+          const startedEmpty = arr.length === 0;
+          while (arr.length < 6) {
+            const n = arr.length + 1;
+            arr.push({
+              id: uid(),
+              label: "الفترة " + n,
+              start: startedEmpty && n === 1 ? "07:00" : "",
+              end: startedEmpty && n === 1 ? "17:00" : "",
+              weekday_price: 0,
+              weekend_price: 0,
+              active: startedEmpty && n === 1,
+              sort: n,
+            });
+          }
+          return arr;
         }
         function setDirty(v, r) {
           dirty = Boolean(v);
@@ -2305,7 +2328,7 @@
                 workerName: String(c.workerName || ""),
                 mapUrl: String(c.mapUrl || ""),
                 terms: String(c.terms || ""),
-                periods: defaultPeriods(c.periods),
+                periods: normalizePeriods(c.periods),
                 deleted_at: c.deleted_at || null,
                 created_at: c.created_at || now(),
                 updated_at: c.updated_at || now(),
@@ -2338,7 +2361,7 @@
           return state.chalets.filter((c) => !c.deleted_at);
         }
         function allPeriods(c) {
-          return defaultPeriods(c && c.periods ? c.periods : []).sort(
+          return normalizePeriods(c && c.periods ? c.periods : []).sort(
             (a, b) => (+a.sort || 0) - (+b.sort || 0),
           );
         }
@@ -2620,6 +2643,7 @@
         let cloudRefreshBusy = false;
         async function refreshFromCloud(opts) {
           const quiet = !opts || opts.quiet !== false;
+          const forceAdopt = Boolean(opts && opts.forceAdopt);
           if (!loadedWorkspace || !workspaceKey || !accessPin) return false;
           if (cloudRefreshBusy) return false;
           if (dirty) {
@@ -2640,7 +2664,7 @@
             // Race guard: an edit made while the fetch was in flight wins —
             // never overwrite it with the (already-older) server copy.
             if (dirty) return false;
-            if (String(r.updated_at || "") === lastCloudUpdatedAt) {
+            if (!forceAdopt && String(r.updated_at || "") === lastCloudUpdatedAt) {
               if (!quiet) feedback("البيانات محدّثة — لا جديد في السحابة.", "good");
               return true;
             }
@@ -3118,7 +3142,7 @@
             esc(b.id) +
             '"><div class="actions between"><div><b>' +
             esc(b.customer_name || "بدون اسم") +
-            '</b><div class="muted">' +
+            '</b><div><span class="badge gold">حجز سابق</span></div><div class="muted">' +
             esc(ch ? ch.name : "—") +
             " · " +
             '<span class="ltr">' + esc(formatDateDisplay(b.booking_date)) + "</span>" +
@@ -3302,7 +3326,7 @@
         }
         // ========================= JS: chalet logic =========================
         function newChalet() {
-          editingChaletPeriods = defaultPeriods([]);
+          editingChaletPeriods = periodsForEditor([]);
           $("chaletId").value = "";
           $("chaletName").value = "";
           $("chaletCapacity").value = "0";
@@ -3322,7 +3346,7 @@
         function editChalet(id) {
           const c = state.chalets.find((x) => x.id === id);
           if (!c) return feedback("الشاليه غير موجود", "bad");
-          editingChaletPeriods = defaultPeriods(c.periods).map((p) =>
+          editingChaletPeriods = periodsForEditor(c.periods).map((p) =>
             Object.assign({}, p),
           );
           $("chaletId").value = c.id;
@@ -3363,7 +3387,7 @@
           return false;
         }
         function renderPeriodEditor() {
-          editingChaletPeriods = defaultPeriods(editingChaletPeriods);
+          editingChaletPeriods = periodsForEditor(editingChaletPeriods);
           const warning = hasOverlappingActivePeriods(editingChaletPeriods)
             ? '<div class="feedback bad">تنبيه: توجد فترات متداخلة في هذا الشاليه وقد تمنع أكثر من حجز في نفس اليوم.</div>'
             : "";
@@ -3410,7 +3434,7 @@
               else p[f] = input.value;
             });
           });
-          editingChaletPeriods = defaultPeriods(editingChaletPeriods);
+          editingChaletPeriods = periodsForEditor(editingChaletPeriods);
         }
         function saveChalet() {
           syncPeriodInputs();
@@ -3426,7 +3450,7 @@
               workerName: $("chaletWorkerName").value.trim(),
               mapUrl: $("chaletMapUrl").value.trim(),
               terms: $("chaletTerms").value.trim(),
-              periods: defaultPeriods(editingChaletPeriods),
+              periods: normalizePeriods(editingChaletPeriods),
               deleted_at: null,
               created_at: old ? old.created_at : now(),
               updated_at: now(),
@@ -3582,6 +3606,7 @@
           $("bookingCustomerPhone").value = "";
           fillBookingSelects();
           $("bookingDate").value = today();
+          $("bookingDate").min = today();
           $("bookingGuests").value = "1";
           $("bookingTotal").value = "0";
           $("bookingPaid").value = "0";
@@ -3627,6 +3652,7 @@
           ensureInactivePeriodOption(b.chalet_id, b.period_id);
           $("bookingPeriodId").value = b.period_id;
           $("bookingDate").value = b.booking_date;
+          $("bookingDate").min = b.booking_date < today() ? "" : today();
           $("bookingGuests").value = b.guests;
           $("bookingTotal").value = b.total;
           $("bookingPaid").value = b.paid;
@@ -3680,6 +3706,13 @@
           if (!b.chalet_id || !b.period_id)
             return feedback("اختر الشاليه والفترة", "bad");
           if (!b.booking_date) return feedback("التاريخ مطلوب", "bad");
+          if (!validIsoCalendarDate(b.booking_date))
+            return feedback("التاريخ غير صالح.", "bad");
+          if (b.booking_date < today() && (!old || b.booking_date !== old.booking_date))
+            return feedback(
+              "لا يمكن إنشاء حجز جديد بتاريخ ماضٍ أو نقل حجز إلى الماضي.",
+              "bad",
+            );
           const selectedChalet = getChalet(b.chalet_id);
           // getPeriodAny so editing a booking whose period was later
           // deactivated still validates (its period_id is preserved). New
@@ -4919,9 +4952,91 @@
           });
           if (btn) btn.textContent = busy ? "جاري التنفيذ..." : btn.dataset.label || btn.textContent;
         }
+        function bookingProjectionMatches(result) {
+          const id = String((result && result.booking_id) || "");
+          const actual = state.bookings.find(
+            (b) => String(b.id) === id && !b.deleted_at,
+          );
+          if (!actual) return false;
+          const expected = result && result.booking;
+          if (!expected || typeof expected !== "object") return true;
+          const textFields = [
+            "id",
+            "customer_name",
+            "chalet_id",
+            "booking_date",
+            "period_id",
+            "status",
+          ];
+          if (
+            !textFields.every(
+              (key) => String(actual[key] ?? "") === String(expected[key] ?? ""),
+            )
+          )
+            return false;
+          for (const key of ["guests", "total", "paid"]) {
+            if (
+              expected[key] !== undefined &&
+              Number(actual[key]) !== Number(expected[key])
+            )
+              return false;
+          }
+          return true;
+        }
+        function revealBooking(id) {
+          const booking = state.bookings.find(
+            (b) => String(b.id) === String(id) && !b.deleted_at,
+          );
+          if (!booking) return false;
+          showTab("bookings");
+          if (booking.status === "cancelled")
+            $("bookingsCancelledSection").open = true;
+          else if (booking.booking_date < today())
+            $("bookingsPastSection").open = true;
+          const card = Array.from(
+            $("tab-bookings").querySelectorAll("[data-booking-card-id]"),
+          ).find((el) => String(el.dataset.bookingCardId) === String(id));
+          if (!card) return false;
+          card.classList.add("booking-verified");
+          scrollIntoViewIfNeeded(card);
+          setTimeout(() => card.classList.remove("booking-verified"), 5000);
+          return true;
+        }
+        async function syncAssistantBookingResult(result) {
+          const id = String((result && result.booking_id) || "");
+          if (!id) return false;
+          const waits = [0, 250, 750, 1500];
+          for (const waitMs of waits) {
+            if (waitMs)
+              await new Promise((resolve) => setTimeout(resolve, waitMs));
+            await refreshFromCloud({ quiet: true, forceAdopt: true });
+            if (bookingProjectionMatches(result)) return revealBooking(id);
+          }
+          feedback(
+            "تم الحفظ في الخادم لكن تعذّر تأكيد ظهور الحجز في القائمة. اضغط تحديث قبل أي محاولة جديدة.",
+            "bad",
+          );
+          return false;
+        }
         async function assistantConfirm(actionId, confirmTool, btn) {
           const token = assistantTokens[actionId];
           if (!token) return feedback("انتهت صلاحية التأكيد. جهّز الإجراء من جديد.", "bad");
+          const bookingConfirm = new Set([
+            "confirm_booking_create",
+            "confirm_booking_update",
+            "confirm_booking_cancel",
+          ]).has(confirmTool);
+          // The assistant writes the authoritative cloud document. Running it
+          // while this phone has unsaved local edits would create two truths
+          // and prevent the guarded refresh from displaying the saved booking.
+          if (bookingConfirm && dirty) {
+            feedback("ارفع التغييرات المحلية أولاً، ثم اضغط تأكيد الحجز.", "bad");
+            assistantAppend(
+              "bot",
+              "لديك تغييرات محلية غير مرفوعة. ارفعها أولاً حتى لا يختفي أي تعديل، ثم اضغط تأكيد الحجز.",
+            );
+            return;
+          }
           // Prevent double-taps: one execution per action, and every button on
           // the card is disabled while the server works.
           if (assistantConfirmInFlight.has(actionId)) return;
@@ -4938,7 +5053,6 @@
             });
             if (body.ok && body.kind === "completed_action") {
               const msg = assistantResultMessage(body.result);
-              assistantAppend("bot", "✅ " + msg);
               delete assistantTokens[actionId];
               if (card) card.remove();
               // Open the manual WhatsApp link if the server produced one.
@@ -4946,11 +5060,20 @@
                 const w = window.open(body.result.manual_url, "_blank", "noopener,noreferrer");
                 if (!w) location.href = body.result.manual_url;
               }
-              // Refresh affected views with real data, then converge to the
-              // server truth: the booking/edit the assistant just executed
-              // was written SERVER-side, so the local doc is now behind.
-              renderAll();
-              refreshFromCloud({ quiet: true });
+              // A booking is not announced as complete until the exact id and
+              // safe projection returned by the server are visible in the
+              // authoritative cloud document and in تبويب الحجوزات.
+              if (bookingConfirm) {
+                const visible = await syncAssistantBookingResult(body.result);
+                assistantAppend(
+                  "bot",
+                  visible
+                    ? "✅ " + msg + " وظهر الآن في تبويب الحجوزات."
+                    : "تم الحفظ في الخادم، لكن لم أؤكد ظهوره في القائمة. اضغط تحديث قبل إعادة المحاولة.",
+                );
+              } else {
+                assistantAppend("bot", "✅ " + msg);
+              }
               if (
                 currentPaymentBookingId &&
                 body.result &&

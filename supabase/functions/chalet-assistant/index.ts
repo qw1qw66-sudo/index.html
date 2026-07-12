@@ -352,7 +352,7 @@ function makeDeps() {
           const { data } = await supabase.rpc("save_shared_workspace_v2", {
             p_workspace_key: k, p_access_pin: pin, p_data: dataObj, p_expected_updated_at: expectedRevision,
           });
-          if (data && data.ok) return { ok: true, updated_at: data.updated_at };
+          if (data && data.ok) return { ok: true, updated_at: data.updated_at, data: data.data };
           return { ok: false, error: (data && data.error) || "SAVE_FAILED" };
         },
         async recordManualPayment(k: string, pin: string, p: Record<string, unknown>) {

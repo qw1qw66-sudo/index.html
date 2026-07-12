@@ -23,7 +23,7 @@
 
 import { riyalsNumberToHalalas } from "../ledger-core.mjs";
 import { resolveOutbound, detectMode } from "./whatsapp.mjs";
-import { availabilityCheck, availabilityFailureAr, findDocConflictPairs, docConflictReasonAr, isPeriodBookable } from "./availability.mjs";
+import { availabilityCheck, availabilityFailureAr, findDocConflictPairs, docConflictReasonAr, isPeriodBookable, riyadhToday } from "./availability.mjs";
 
 // The SQL save guard returns the NEW conflicting pair as
 // «BOOKING_CONFLICT:id:id». Resolve that exact pair into owner-actionable
@@ -65,6 +65,59 @@ function findBooking(doc, id) {
   return (doc.bookings || []).find((b) => b.id === id && !b.deleted_at);
 }
 
+function validIsoDate(value) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value || ""));
+  if (!m) return false;
+  const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
+  const dt = new Date(Date.UTC(y, mo - 1, d));
+  return dt.getUTCFullYear() === y && dt.getUTCMonth() === mo - 1 && dt.getUTCDate() === d;
+}
+
+function sameCreateBooking(existing, args) {
+  return Boolean(
+    existing && !existing.deleted_at &&
+    String(existing.customer_name || "").trim() === String(args.customer_name || "").trim() &&
+    String(existing.customer_phone || "").trim() === String(args.customer_phone || "").trim() &&
+    String(existing.chalet_id || "") === String(args.chalet_id || "") &&
+    String(existing.period_id || "") === String(args.period_id || "") &&
+    String(existing.booking_date || "") === String(args.booking_date || "") &&
+    Number(existing.guests) === Number(args.guests) &&
+    Number(existing.total) === Number(args.total) &&
+    String(existing.notes || "").trim() === String(args.notes || "").trim() &&
+    String(existing.status || "confirmed") === "confirmed"
+  );
+}
+
+function sameStoredBooking(actual, expected) {
+  if (!actual || actual.deleted_at) return false;
+  const fields = ["id", "customer_name", "customer_phone", "chalet_id", "booking_date", "period_id", "status", "notes"];
+  if (!fields.every((key) => String(actual[key] ?? "") === String(expected[key] ?? ""))) return false;
+  for (const key of ["guests", "total", "paid"]) {
+    if (actual[key] === undefined && expected[key] === undefined) continue;
+    if (Number(actual[key]) !== Number(expected[key])) return false;
+  }
+  return true;
+}
+
+function savedBooking(saved, bookingId) {
+  if (!saved || !saved.data || !Array.isArray(saved.data.bookings)) return null;
+  return saved.data.bookings.find((b) => String(b.id || "") === String(bookingId || "")) || null;
+}
+
+function publicBookingProjection(booking) {
+  return {
+    id: String(booking.id || ""),
+    customer_name: String(booking.customer_name || ""),
+    chalet_id: String(booking.chalet_id || ""),
+    booking_date: String(booking.booking_date || ""),
+    period_id: String(booking.period_id || ""),
+    guests: Number(booking.guests),
+    total: Number(booking.total),
+    paid: Number(booking.paid || 0),
+    status: String(booking.status || "confirmed"),
+  };
+}
+
 // Validate a RESULTING booking against the authoritative document. Used by both
 // create and update so a write can never persist an invalid booking (unknown/
 // inactive chalet, period not belonging to that chalet or with incomplete
@@ -88,7 +141,11 @@ function validateResultingBooking(doc, booking, opts = {}) {
   // Fail CLOSED on incomplete/malformed period times for any NEW write —
   // availability cannot be proven when the interval cannot be computed.
   if (!isPeriodBookable(period).ok) return { ok: false, error: "PERIOD_TIME_INCOMPLETE" };
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(booking.booking_date || ""))) return { ok: false, error: "INVALID_DATE" };
+  if (!validIsoDate(booking.booking_date)) return { ok: false, error: "INVALID_DATE" };
+  const todayIso = String(opts.todayIso || riyadhToday(Date.now()));
+  if (!opts.allowPastDate && String(booking.booking_date) < todayIso) {
+    return { ok: false, error: "PAST_DATE" };
+  }
   if (!String(booking.customer_name || "").trim()) return { ok: false, error: "CUSTOMER_NAME_REQUIRED" };
   if (!BOOKING_STATUSES.has(String(booking.status || ""))) return { ok: false, error: "INVALID_STATUS" };
   const guests = Number(booking.guests);
@@ -160,7 +217,12 @@ async function bookingCreate(wsKey, pin, args, deps) {
   // already ran — return it instead of writing a second booking.
   const already = (doc.bookings || []).find((b) => String(b.id) === bookingId);
   if (already) {
-    return { ok: true, result_reference: bookingId, safe_result: { booking_id: bookingId, updated_at: snap.updated_at, action: "booking_created", duplicate: true } };
+    if (!sameCreateBooking(already, args)) return { ok: false, error: "BOOKING_ID_CONFLICT" };
+    return {
+      ok: true,
+      result_reference: bookingId,
+      safe_result: { booking_id: bookingId, updated_at: snap.updated_at, action: "booking_created", duplicate: true, booking: publicBookingProjection(already) },
+    };
   }
 
   const chalet = findChalet(doc, String(args.chalet_id || ""));
@@ -206,10 +268,12 @@ async function bookingCreate(wsKey, pin, args, deps) {
   const nextDoc = { ...doc, bookings: [...(doc.bookings || []), booking] };
   const saved = await deps.saveWorkspaceV2(wsKey, pin, nextDoc, snap.updated_at);
   if (!saved.ok) return mapSaveFailure(saved, nextDoc, booking.id);
+  const persisted = savedBooking(saved, booking.id);
+  if (!sameStoredBooking(persisted, booking)) return { ok: false, error: "SAVE_VERIFICATION_FAILED" };
   return {
     ok: true,
     result_reference: booking.id,
-    safe_result: { booking_id: booking.id, updated_at: saved.updated_at, action: "booking_created" },
+    safe_result: { booking_id: booking.id, updated_at: saved.updated_at, action: "booking_created", booking: publicBookingProjection(persisted) },
   };
 }
 
@@ -244,6 +308,9 @@ async function bookingUpdate(wsKey, pin, args, deps) {
     allowZeroTotal: args.total === undefined ? true : args.total_is_free === true,
     validatePhone: args.customer_phone !== undefined,
     allowMissingGuests: args.guests === undefined,
+    // Historical records remain editable, but changing a date can never move
+    // a booking into the past.
+    allowPastDate: args.booking_date === undefined,
   });
   if (!valid.ok) return valid;
   const chalet = findChalet(doc, String(resulting.chalet_id));
@@ -260,7 +327,13 @@ async function bookingUpdate(wsKey, pin, args, deps) {
   const nextDoc = { ...doc, bookings };
   const saved = await deps.saveWorkspaceV2(wsKey, pin, nextDoc, snap.updated_at);
   if (!saved.ok) return mapSaveFailure(saved, nextDoc, bookingId);
-  return { ok: true, result_reference: bookingId, safe_result: { booking_id: bookingId, updated_at: saved.updated_at, action: "booking_updated" } };
+  const persisted = savedBooking(saved, bookingId);
+  if (!sameStoredBooking(persisted, resulting)) return { ok: false, error: "SAVE_VERIFICATION_FAILED" };
+  return {
+    ok: true,
+    result_reference: bookingId,
+    safe_result: { booking_id: bookingId, updated_at: saved.updated_at, action: "booking_updated", booking: publicBookingProjection(persisted) },
+  };
 }
 
 async function bookingCancel(wsKey, pin, args, deps) {
@@ -297,11 +370,15 @@ async function bookingCancel(wsKey, pin, args, deps) {
   // A cancel never creates a conflict; the mapper remains defensive if a
   // malformed caller somehow produces a new pair.
   if (!saved.ok) return mapSaveFailure(saved, nextDoc, null);
+  const persisted = savedBooking(saved, bookingId);
+  if (!persisted || String(persisted.status) !== "cancelled" || persisted.deleted_at) {
+    return { ok: false, error: "SAVE_VERIFICATION_FAILED" };
+  }
   return {
     ok: true,
     result_reference: bookingId,
     safe_result: {
-      booking_id: bookingId, updated_at: saved.updated_at, action: "booking_cancelled",
+      booking_id: bookingId, updated_at: saved.updated_at, action: "booking_cancelled", booking: publicBookingProjection(persisted),
       paid_halalas: paidHalalas, warning,
       note_ar: warning ? "الحجز مدفوع جزئياً/كلياً — لن يتم استرداد تلقائي؛ راجع الاسترداد يدوياً." : null,
     },

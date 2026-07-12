@@ -20,10 +20,13 @@ function makeDeps(store, env = ENV) {
     env,
     createProviderAdapter,
     async insertWebhookEvent(row) { return store.insertWebhookEvent(row); },
+    async findWebhookEvent(provider, providerEventId) { return store.webhookEvents.get(provider + ":" + providerEventId) || null; },
     async findOrderByProviderRef(p, id) { return store.findOrderByProviderRef(p, id); },
     async findTxByProviderRef(p, id) { return store.findTransactionByProviderRef(p, id); },
     async insertTransaction(row) { store.insertTransaction(row); },
-    async updateOrderStatus(id, from, to) { store.updateOrderStatus(id, from, to); },
+    async updateOrderStatus(id, from, to) {
+      if (!store.updateOrderStatus(id, from, to)) throw { code: "ORDER_UPDATE_ROW_MISMATCH" };
+    },
     async insertAuditFlag(row) { store.flagForReview({ code: row.reason, detail: row.metadata?.detail }); },
     async markEventProcessed(id, status, err) {
       for (const e of store.webhookEvents.values()) if (e.id === id) { e.processing_status = status; e.error_message = err; }
@@ -84,6 +87,31 @@ describe("edge: payment-webhook handler (real runtime)", () => {
     const res = await handleWebhook(signedReq(adapter, ev), d);
     expect((await res.json()).duplicate).toBe(true);
     expect(store.transactionsFor("WSX", "bk-1")).toHaveLength(1);
+  });
+
+  it("a retry resumes an event that crashed after the ledger insert and finishes the order", async () => {
+    const firstDeps = makeDeps(store);
+    let failOnce = true;
+    firstDeps.updateOrderStatus = async (id, from, to) => {
+      if (failOnce) {
+        failOnce = false;
+        throw { code: "TRANSIENT_ORDER_WRITE" };
+      }
+      if (!store.updateOrderStatus(id, from, to)) throw { code: "ORDER_UPDATE_ROW_MISMATCH" };
+    };
+    const event = { id: "e-resume", type: "payment_succeeded", order_id: "test_ord_1", transaction_id: "t-resume", amount_halalas: 90000 };
+    const first = await handleWebhook(signedReq(adapter, event), firstDeps);
+    expect(first.status).toBe(500);
+    expect(store.transactionsFor("WSX", "bk-1")).toHaveLength(1);
+    expect(store.orders.get(order.id).status).toBe("pending");
+    expect(store.webhookEvents.get("test:e-resume").processing_status).toBe("received");
+
+    const retry = await handleWebhook(signedReq(adapter, event), makeDeps(store));
+    expect(retry.status).toBe(200);
+    expect((await retry.json()).status).toBe("skipped_duplicate");
+    expect(store.transactionsFor("WSX", "bk-1")).toHaveLength(1);
+    expect(store.orders.get(order.id).status).toBe("paid");
+    expect(store.webhookEvents.get("test:e-resume").processing_status).toBe("skipped_duplicate");
   });
 
   it("does not log or return the webhook secret", async () => {

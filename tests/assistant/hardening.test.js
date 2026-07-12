@@ -38,7 +38,7 @@ function makeHarness({ env = { ASSISTANT_CONFIRM_SECRET: SECRET }, model, worksp
       if (!w || w.pin !== pin) return { ok: false, error: "WORKSPACE_NOT_FOUND_OR_PIN_INVALID" };
       if (String(w.revision) !== String(expectedRevision)) return { ok: false, error: "STALE_REVISION" };
       w.doc = data; w.revision += 1;
-      return { ok: true, updated_at: String(w.revision) };
+      return { ok: true, updated_at: String(w.revision), data: w.doc };
     },
     async recordManualPayment() { return { ok: true, transaction_id: "tx-1" }; },
     async createPaymentSession(k, pin, p) {
@@ -188,7 +188,7 @@ describe("prepare-time booking id binding + crash-retry idempotency (Stage 6)", 
     const execDeps = {
       newId: () => "should-not-be-used",
       async getWorkspaceDoc(k) { const w = ws[k]; return { data: w.doc, updated_at: String(w.revision) }; },
-      async saveWorkspaceV2(k, pin, data) { ws[k].doc = data; ws[k].revision += 1; return { ok: true, updated_at: String(ws[k].revision) }; },
+      async saveWorkspaceV2(k, pin, data) { ws[k].doc = data; ws[k].revision += 1; return { ok: true, updated_at: String(ws[k].revision), data: ws[k].doc }; },
     };
     const payload = { args: { booking_id: "bound-1", customer_name: "علي", chalet_id: "c1", period_id: "p1", booking_date: "2099-06-01", total: 900, guests: 2 } };
     const first = await executeConfirmedAction({ wsKey: "WSA", pin: "123456", toolName: "confirm_booking_create", payload, actionId: "a1" }, execDeps);
@@ -197,6 +197,50 @@ describe("prepare-time booking id binding + crash-retry idempotency (Stage 6)", 
     expect(second.ok).toBe(true);
     expect(second.safe_result.duplicate).toBe(true);
     expect(ws.WSA.doc.bookings.filter((b) => b.id === "bound-1")).toHaveLength(1);
+  });
+
+  it("an existing id is idempotent only when it is the SAME booking", async () => {
+    const existing = { id: "bound-1", customer_name: "سجل مختلف", chalet_id: "c1", period_id: "p2", booking_date: "2099-06-02", total: 100, paid: 0, guests: 1, status: "confirmed", deleted_at: null };
+    const ws = { WSA: { doc: docWith([existing]), revision: 1 } };
+    const deps = {
+      async getWorkspaceDoc(k) { return { data: ws[k].doc, updated_at: String(ws[k].revision) }; },
+      async saveWorkspaceV2() { throw new Error("a collision must never write"); },
+    };
+    const result = await executeConfirmedAction({
+      wsKey: "WSA", pin: "123456", toolName: "confirm_booking_create", actionId: "a-collision",
+      payload: { args: { booking_id: "bound-1", customer_name: "مهره", chalet_id: "c1", period_id: "p1", booking_date: "2099-06-01", total: 450, guests: 2 } },
+    }, deps);
+    expect(result).toMatchObject({ ok: false, error: "BOOKING_ID_CONFLICT" });
+  });
+
+  it("the executor rejects impossible and past dates even if prepare validation was bypassed", async () => {
+    const ws = { WSA: { doc: docWith(), revision: 1 } };
+    const deps = {
+      async getWorkspaceDoc(k) { return { data: ws[k].doc, updated_at: String(ws[k].revision) }; },
+      async saveWorkspaceV2() { throw new Error("invalid dates must never reach save"); },
+    };
+    for (const [booking_date, error] of [["2026-02-31", "INVALID_DATE"], ["2025-04-07", "PAST_DATE"]]) {
+      const result = await executeConfirmedAction({
+        wsKey: "WSA", pin: "123456", toolName: "confirm_booking_create", actionId: "a-" + booking_date,
+        payload: { args: { booking_id: "bk-" + booking_date, customer_name: "مهره", chalet_id: "c1", period_id: "p1", booking_date, total: 450, guests: 2 } },
+      }, deps);
+      expect(result).toMatchObject({ ok: false, error });
+    }
+  });
+
+  it("never reports created when the atomic save echo does not contain the exact booking", async () => {
+    const ws = { WSA: { doc: docWith(), revision: 1 } };
+    const deps = {
+      async getWorkspaceDoc(k) { return { data: ws[k].doc, updated_at: String(ws[k].revision) }; },
+      async saveWorkspaceV2() {
+        return { ok: true, updated_at: "2", data: docWith() };
+      },
+    };
+    const result = await executeConfirmedAction({
+      wsKey: "WSA", pin: "123456", toolName: "confirm_booking_create", actionId: "a-verify",
+      payload: { args: { booking_id: "bk-verify", customer_name: "مهره", chalet_id: "c1", period_id: "p1", booking_date: "2099-06-01", total: 450, guests: 2 } },
+    }, deps);
+    expect(result).toMatchObject({ ok: false, error: "SAVE_VERIFICATION_FAILED" });
   });
 });
 

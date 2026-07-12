@@ -77,7 +77,7 @@ d("REAL Postgres: confirmed assistant actions write real rows", () => {
       async saveWorkspaceV2(k, pin, data, expectedRevision) {
         const rows = await q("select public.save_shared_workspace_v2($1,$2,$3::jsonb,$4::timestamptz) as r", [k, pin, JSON.stringify(data), expectedRevision]);
         const r = rows[0].r;
-        return r.ok ? { ok: true, updated_at: r.updated_at } : { ok: false, error: r.error };
+        return r.ok ? { ok: true, updated_at: r.updated_at, data: r.data } : { ok: false, error: r.error };
       },
       async recordManualPayment(k, pin, p) {
         const rows = await q("select public.record_manual_payment($1,$2,$3,$4,$5,$6,$7,now(),$8,false) as r",

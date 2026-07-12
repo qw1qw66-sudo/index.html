@@ -51,7 +51,7 @@ function makeHarness({ workspaces, memories = [], providerConfigured = false, wh
       const conflict = newDocConflict(w.doc, data);
       if (conflict) return { ok: false, error: conflict };
       w.doc = data; w.revision += 1;
-      return { ok: true, updated_at: String(w.revision) };
+      return { ok: true, updated_at: String(w.revision), data: w.doc };
     },
     async recordManualPayment(k, pin, p) {
       const w = ws[k];
