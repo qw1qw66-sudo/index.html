@@ -481,6 +481,51 @@ test('typed «سجل» flashes the card and never fires a request; double-tap co
   expect(confirmCalls).toBe(1);
 });
 
+test('a confirm-time conflict removes the dead card and shows numbered alternatives', async ({ page }) => {
+  await mockRpc(page);
+  await page.route('**/functions/v1/chalet-assistant', async (route) => {
+    const body = JSON.parse(route.request().postData() || '{}');
+    if (body.invoke_tool && String(body.invoke_tool.name).startsWith('confirm_')) {
+      // The slot was taken between prepare and confirm: terminal failure with
+      // the blocker named + numbered alternatives (server shape post-fix).
+      return route.fulfill({
+        status: 422,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ok: false,
+          kind: 'completed_action',
+          tool: body.invoke_tool.name,
+          public_code: 'conflict',
+          recoverable: true,
+          reason_ar:
+            'هذه الفترة محجوزة بالفعل — تتعارض مع حجز «منافس تجريبي» بتاريخ 13-07-2026 (19:00–05:00). لم يتم حفظ أي تغيير.\nأقرب الخيارات المتاحة:\n1. شاليه تولوم — 13-07-2026 — 07:00–12:00 — 300 ريال\nاكتب رقم الخيار، أو عدّل التاريخ/الفترة.',
+          next_actions: [{ pick: 1 }],
+          done_ar: 'لم يكتمل الإجراء. لم يتغيّر شيء بدون تأكيد الخادم.',
+        }),
+      });
+    }
+    return route.fulfill({ contentType: 'application/json', body: JSON.stringify(BOOKING_CARD_BODY) });
+  });
+  await page.goto('/');
+  await create(page);
+  await page.locator('[data-tab="assistant"]').click();
+  // Tab switches never surface debug text anywhere (the «فتح تبويب» bug).
+  await expect(page.locator('#feedback')).not.toContainText('فتح تبويب');
+  await page.locator('#assistantInput').fill('احجز تولوم');
+  await page.locator('[data-action="assistant-send"]').click();
+  await expect(page.locator('#assistantActions .action-card')).toHaveCount(1);
+  await page.locator('[data-action="assistant-confirm"]').click();
+  // Terminal failure: the reason (with numbered options) appears and the dead
+  // card is GONE — no armed «حفظ الحجز» button remains to replay errors.
+  await expect(page.locator('#assistantLog')).toContainText('محجوزة بالفعل');
+  await expect(page.locator('#assistantLog')).toContainText('منافس تجريبي');
+  await expect(page.locator('#assistantLog')).toContainText('أقرب الخيارات المتاحة');
+  await expect(page.locator('#assistantActions .action-card')).toHaveCount(0);
+  const log = await page.locator('#assistantLog').innerText();
+  expect(log).not.toMatch(/BOOKING_CONFLICT|completed_action|[A-Z]{2,}_[A-Z]/);
+  expect(log).not.toContain('تم إنشاء الحجز');
+});
+
 test('تعديل keeps the draft fields; إلغاء cancels safely (server-driven)', async ({ page }) => {
   await mockRpc(page);
   await page.route('**/functions/v1/chalet-assistant', async (route) => {

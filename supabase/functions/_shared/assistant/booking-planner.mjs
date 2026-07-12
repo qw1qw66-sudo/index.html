@@ -254,10 +254,10 @@ const TRACKED_FIELDS = new Set([
   "guests", "total", "notes",
 ]);
 // The model may only ever touch these — and it always loses to parsed values.
-const MODEL_FILLABLE = new Set([
-  "customer_name", "notes", "booking_date", "guests", "total",
-  "canonical_start", "canonical_end",
-]);
+// NOTHING ELSE: dates come from parseDateExpression/selection, times from
+// period resolution, guests/total from the owner's own words (or an accepted
+// system price). An LLM-guessed «10 ضيوف / 300 ريال» must never reach a card.
+const MODEL_FILLABLE = new Set(["customer_name", "notes"]);
 // Keys that must never enter the draft through a merge.
 const MERGE_BLOCKLIST = new Set(["customer_phone", "sources", "warnings", "phone_warning"]);
 
@@ -267,25 +267,14 @@ function sanitizeModelValue(key, value) {
     const s = typeof value === "string" ? value.trim() : "";
     return s ? s.slice(0, 200) : undefined;
   }
-  if (key === "booking_date") {
-    return typeof value === "string" && ISO_DATE_RE.test(value) ? value : undefined;
-  }
-  if (key === "guests") return Number.isInteger(value) && value >= 1 ? value : undefined;
-  // The model can never declare a booking free: strictly positive only.
-  if (key === "total") {
-    return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
-  }
-  if (key === "canonical_start" || key === "canonical_end") {
-    return normalizeTimeHHmm(value) || undefined;
-  }
   return undefined;
 }
 
 // Merge one turn into the draft. incoming is an extractFacts() result, plus an
-// optional modelFields object (same field names, produced by the LLM). Rules:
-//  - deterministic parsed values WIN over model values (dates/guests/total/times);
+// optional modelFields object (produced by the LLM). Rules:
+//  - the model may fill customer_name/notes ONLY, and only where the parser
+//    found none — every other field is deterministic-source-only (§5);
 //  - later messages REPLACE earlier values (corrections);
-//  - the model may fill customer_name/notes only where the parser found none;
 //  - free:true  -> total=0, total_source "free";
 //  - accept_suggestion:true + existing.total_suggested -> total=total_suggested.
 // Never mutates `existing`; incoming.private is intentionally ignored (the
@@ -310,7 +299,6 @@ export function mergeDraft(existing, incoming) {
     if (val === undefined) continue;
     draft[k] = val;
     sources[k] = "model";
-    if (k === "total") draft.total_source = "model";
   }
 
   // Parsed values REPLACE (corrections are later messages winning).

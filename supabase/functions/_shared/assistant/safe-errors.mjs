@@ -38,6 +38,13 @@ const FALLBACK = e("unavailable", true, "تعذّر تنفيذ الطلب حال
 const ERROR_MAP = {
   // --- conflict ---------------------------------------------------------
   BOOKING_CONFLICT: CONFLICT,
+  // Fail-closed data-quality block: a legacy booking without period times
+  // makes availability unprovable — actionable via «جودة البيانات».
+  AVAILABILITY_UNPROVABLE: e(
+    "conflict",
+    true,
+    "لا يمكن التأكد من توفر هذه الفترة: يوجد حجز قديم بوقت فترة غير مكتمل لهذا الشاليه. أكمل وقت الفترة من «جودة البيانات» في الإعدادات ثم أعد المحاولة.",
+  ),
 
   // --- stale ------------------------------------------------------------
   STALE_REVISION: e("stale", true, "تغيّرت بيانات الحجوزات بعد تجهيز الطلب. تحققت منها من جديد."),

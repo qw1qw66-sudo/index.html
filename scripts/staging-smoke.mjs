@@ -307,6 +307,12 @@ async function main() {
   // 10e. Confirm with the ROTATED token -> exactly one booking; then conflict
   // on the SAME slot returns Arabic alternatives (numbered, max 3).
   if (agentAction && agentToken) {
+    // A COMPETING action on the same slot, prepared while it is still free —
+    // its confirm (after the agent's booking lands) is the confirm-time
+    // conflict probe of step 10e2.
+    const racePrep = await assistant({ invoke_tool: { name: "prepare_booking_create", arguments: { customer_name: "سباق تجريبي", chalet_name: "تولوم", booking_date: RIYADH_TOMORROW, period_label: "المسائية", total: 100, guests: 2 } } });
+    const race = racePrep.json || {};
+
     const conf = await assistant({ invoke_tool: { name: "confirm_booking_create", arguments: { action_id: agentAction, confirmation_token: agentToken } } });
     const c = conf.json || {};
     agentBookingId = c.result && c.result.booking_id;
@@ -320,9 +326,32 @@ async function main() {
     const talksAlternatives = /محجوزة/.test(String(cb.reply_ar || "")) && /1\./.test(String(cb.reply_ar || ""));
     const cleanText = !/BOOKING_CONFLICT|[0-9a-f]{8}-[0-9a-f]{4}/i.test(String(cb.reply_ar || ""));
     record("conflict_returns_alternatives", conflict.status === 200 && cb.model_calls === 0 && noCard && talksAlternatives && cleanText, leaks(conflict.text) || "clean");
+
+    // 10e2. CONFIRM-TIME conflict is not a dead end (§12/§13 at confirm): the
+    // competing card's confirm fails closed with a terminal card signal +
+    // numbered alternatives — never a bare «محجوزة» with a re-armed button.
+    if (racePrep.status === 200 && race.action_id && race.confirmation_token) {
+      const rc = await assistant({ invoke_tool: { name: "confirm_booking_create", arguments: { action_id: race.action_id, confirmation_token: race.confirmation_token } } });
+      const rb = rc.json || {};
+      const failedClosed = rb.ok !== true;
+      const terminal = rb.kind === "completed_action" || rb.action_retired === true;
+      const conflictCode = rb.public_code === "conflict";
+      const options = Array.isArray(rb.next_actions) && rb.next_actions.length > 0;
+      const wordsOk = /محجوزة|جودة البيانات/.test(String(rb.reason_ar || "")) && /الخيارات|1\./.test(String(rb.reason_ar || ""));
+      const still1 = await assistant({ invoke_tool: { name: "list_bookings", arguments: { from: RIYADH_TOMORROW, to: RIYADH_TOMORROW, status: "confirmed" } } });
+      const n2 = still1.json && still1.json.result ? (still1.json.result.bookings || []).length : -1;
+      record(
+        "confirm_conflict_recovers",
+        failedClosed && terminal && conflictCode && options && wordsOk && n2 === 1 && !leaks(rc.text),
+        `terminal=${terminal},options=${options ? rb.next_actions.length : 0},count=${n2}`,
+      );
+    } else {
+      record("confirm_conflict_recovers", false, racePrep.status + ":" + (race.error || "RACE_PREPARE_FAILED"));
+    }
   } else {
     record("agent_booking_confirmed_once", false, "NO_TOKEN");
     record("conflict_returns_alternatives", false, "NO_TOKEN");
+    record("confirm_conflict_recovers", false, "NO_TOKEN");
   }
 
   // 10f. A period with incomplete times FAILS CLOSED with a safe Arabic reason.

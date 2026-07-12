@@ -358,11 +358,11 @@ describe('date errors and model merging', () => {
     expect(merged.sources.booking_date).toBe('parsed');
   });
 
-  it('the model fills only gaps and never overrides parsed values', () => {
-    let draft = mergeDraft({}, { fields: {}, modelFields: { customer_name: 'محمد', booking_date: '2026-08-01' } });
+  it('the model fills name/notes gaps only and never overrides parsed values', () => {
+    let draft = mergeDraft({}, { fields: {}, modelFields: { customer_name: 'محمد', notes: 'زينة' } });
     expect(draft.customer_name).toBe('محمد');
     expect(draft.sources.customer_name).toBe('model');
-    expect(draft.booking_date).toBe('2026-08-01');
+    expect(draft.notes).toBe('زينة');
     // A parsed correction replaces the model value…
     draft = mergeDraft(draft, { fields: { customer_name: 'علي تجربة' } });
     expect(draft.customer_name).toBe('علي تجربة');
@@ -370,6 +370,33 @@ describe('date errors and model merging', () => {
     // …and the model can never take it back.
     draft = mergeDraft(draft, { fields: {}, modelFields: { customer_name: 'سالم' } });
     expect(draft.customer_name).toBe('علي تجربة');
+  });
+
+  it('model guests/total/date/times are IGNORED — empty slots stay missing (§5)', () => {
+    // The live bug: DeepSeek volunteered guests=10 / total=300 the owner never
+    // typed and the card showed them. Model values may fill name/notes ONLY.
+    const draft = mergeDraft({}, {
+      fields: {},
+      modelFields: {
+        guests: 10,
+        total: 300,
+        booking_date: '2026-08-01',
+        canonical_start: '13:00',
+        canonical_end: '18:00',
+        customer_name: 'علي',
+      },
+    });
+    expect(draft.customer_name).toBe('علي');
+    expect(draft.guests).toBeUndefined();
+    expect(draft.total).toBeUndefined();
+    expect(draft.total_source).toBeUndefined();
+    expect(draft.booking_date).toBeUndefined();
+    expect(draft.canonical_start).toBeUndefined();
+    expect(draft.canonical_end).toBeUndefined();
+    const missing = missingFields(draft);
+    expect(missing).toContain('guests');
+    expect(missing).toContain('total');
+    expect(missing).toContain('booking_date');
   });
 
   it('a parsed time range replaces canonical times and unbinds the period', () => {

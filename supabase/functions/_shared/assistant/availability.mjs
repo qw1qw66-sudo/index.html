@@ -77,30 +77,100 @@ function periodsOf(chalet) {
   return m;
 }
 
+// Owner-visible facts of a blocking booking (their OWN workspace data — the
+// names here are the owner's customers, never another tenant's; no ids).
+function conflictFacts(b, period) {
+  const t = validatePeriodTimes(period || {});
+  return {
+    customer_name: String(b.customer_name || ""),
+    booking_date: String(b.booking_date || ""),
+    period_label: String(period?.label || ""),
+    start: t.ok ? t.start : "",
+    end: t.ok ? t.end : "",
+  };
+}
+
 /**
- * Is the (chalet, date, candidatePeriod) slot free of confirmed bookings?
- * Uses time-interval overlap across ALL confirmed bookings of that chalet
- * (so a wrap-past-midnight booking on the prior day is still considered).
- *
- * FAIL CLOSED (never assume availability when overlap cannot be calculated):
- *  - a candidate whose times are incomplete is NOT available;
- *  - a confirmed booking whose interval cannot be computed BLOCKS the chalet
- *    for that comparison (the unknown could overlap anything).
+ * Detailed availability verdict for a (chalet, date, candidatePeriod) slot.
+ * { available: true } or { available: false, cause, conflict? } where cause:
+ *  - "bad_candidate":    the candidate's own times are incomplete (unbookable);
+ *  - "overlap":          a confirmed booking really overlaps (conflict carries
+ *                        its owner-visible facts);
+ *  - "unknown_interval": a confirmed booking's interval cannot be computed
+ *                        (legacy data quality) so availability cannot be
+ *                        PROVEN — fail closed, but the caller can now say WHY.
+ * A real overlap wins over an unknown interval when both exist: the concrete
+ * conflict is the actionable one. The boolean outcome is identical to the old
+ * isSlotAvailable (available === no overlap AND no unknown interval).
  */
-export function isSlotAvailable(doc, chaletId, dateIso, candidatePeriod, { excludeBookingId } = {}) {
+export function availabilityCheck(doc, chaletId, dateIso, candidatePeriod, { excludeBookingId } = {}) {
   const ci = periodInterval(candidatePeriod, dateIso);
-  if (!ci) return false; // incomplete candidate times => cannot prove free
+  if (!ci) return { available: false, cause: "bad_candidate" };
   const chalet = activeChalets(doc).find((c) => String(c.id) === String(chaletId));
-  if (!chalet) return true;
+  if (!chalet) return { available: true };
   const byId = periodsOf(chalet);
+  let unknown = null;
   for (const b of activeBookings(doc)) {
     if (b.status !== "confirmed" || String(b.chalet_id) !== String(chaletId)) continue;
     if (excludeBookingId && String(b.id) === String(excludeBookingId)) continue;
-    const bi = periodInterval(byId.get(String(b.period_id)), String(b.booking_date));
-    if (!bi) return false; // unknown existing interval => cannot prove free
-    if (intervalsOverlap(ci, bi)) return false;
+    const period = byId.get(String(b.period_id));
+    const bi = periodInterval(period, String(b.booking_date));
+    if (!bi) {
+      // Cannot prove free — but keep scanning: a REAL overlap elsewhere is
+      // the more actionable cause to report.
+      if (!unknown) unknown = conflictFacts(b, period);
+      continue;
+    }
+    if (intervalsOverlap(ci, bi)) {
+      return { available: false, cause: "overlap", conflict: conflictFacts(b, period) };
+    }
   }
-  return true;
+  if (unknown) return { available: false, cause: "unknown_interval", conflict: unknown };
+  return { available: true };
+}
+
+// "2026-07-15" -> "15-07-2026" (display order); input echoed when not ISO.
+function displayDate(iso) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(String(iso || "")) ? String(iso).split("-").reverse().join("-") : String(iso || "");
+}
+
+/**
+ * Owner-safe {error, reason_ar} for a failed availabilityCheck — the ONE
+ * place that words the difference between a real overlap and a data-quality
+ * block, reused by executors and the resolver. null for an available slot.
+ * opts.tail: closing sentence («لم يتم حفظ أي تغيير.» by default; the resolver
+ * passes «لم يتم تجهيز أي حجز.» because nothing was prepared yet).
+ */
+export function availabilityFailureAr(check, { tail } = {}) {
+  if (!check || check.available) return null;
+  const end = typeof tail === "string" && tail ? tail : "لم يتم حفظ أي تغيير.";
+  const c = check.conflict || {};
+  const who = c.customer_name ? `«${c.customer_name}»` : "";
+  const when = c.booking_date ? ` بتاريخ ${displayDate(c.booking_date)}` : "";
+  const at = c.start && c.end ? ` (${c.start}–${c.end})` : "";
+  if (check.cause === "overlap") {
+    return {
+      error: "BOOKING_CONFLICT",
+      reason_ar: `هذه الفترة محجوزة بالفعل — تتعارض مع حجز ${who || "قائم"}${when}${at}. ${end}`,
+    };
+  }
+  if (check.cause === "unknown_interval") {
+    return {
+      error: "AVAILABILITY_UNPROVABLE",
+      reason_ar:
+        `لا يمكن التأكد من توفر هذه الفترة: يوجد حجز${who ? ` باسم ${who}` : " قديم"}${when} بوقت فترة غير مكتمل لهذا الشاليه. ` +
+        `أكمل وقت الفترة من «جودة البيانات» في الإعدادات ثم أعد المحاولة. ${end}`,
+    };
+  }
+  return { error: "PERIOD_TIME_INCOMPLETE", reason_ar: "وقت الفترة غير مكتمل. أكمل وقت البداية والنهاية من تبويب الشاليهات ثم أعد المحاولة." };
+}
+
+/**
+ * Boolean wrapper kept for every call site that only needs yes/no — the
+ * FAIL-CLOSED contract is unchanged (see availabilityCheck).
+ */
+export function isSlotAvailable(doc, chaletId, dateIso, candidatePeriod, opts = {}) {
+  return availabilityCheck(doc, chaletId, dateIso, candidatePeriod, opts).available;
 }
 
 /** Available active periods for a chalet on a date (overlap-aware). Periods

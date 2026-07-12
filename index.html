@@ -2887,7 +2887,6 @@
             const logEl = $("assistantLog");
             if (logEl && !logEl.children.length) assistantNew();
           }
-          feedback("فتح تبويب: " + tab);
           log("Tab changed; no upload", { tab });
         }
         // ========================= JS: rendering =========================
@@ -4695,6 +4694,15 @@
               delete assistantTokens[actionId];
               assistantAppend("bot", assistantSafeError(body));
               renderPreparedAction(body.fresh_action);
+            } else if (body.kind === "completed_action" || body.action_retired) {
+              // Terminal server-side (executed-and-failed, or the action was
+              // retired/expired/rejected): a dead card must not stay armed —
+              // pressing حفظ again only replays confusing errors. The reason
+              // carries numbered alternatives when the slot is taken; the
+              // conversation continues by picking one or rewording.
+              delete assistantTokens[actionId];
+              if (card) card.remove();
+              assistantAppend("bot", assistantSafeError(body));
             } else {
               // Never show "تم" — the underlying contract did not succeed, and
               // never show a raw code either.

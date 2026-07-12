@@ -183,6 +183,20 @@ describe("booking agent frontend (structured card + safe errors)", () => {
     expect(html).toMatch(/RIYADH_OFFSET_MS = 3 \* 60 \* 60 \* 1000/);
     expect(html).toMatch(/<span class="ltr">' \+ esc\(formatDateDisplay\(b\.booking_date\)\)/);
   });
+
+  it("a terminal confirm failure removes the dead card + its token (never re-arms)", () => {
+    const region = jsRegion("async function assistantConfirm", "async function assistantDraftAction");
+    // The completed_action-failure branch must clear the card and its token…
+    const failBranch = region.slice(region.indexOf('body.kind === "completed_action"'));
+    expect(failBranch).toContain("delete assistantTokens[actionId]");
+    expect(failBranch).toContain("card.remove()");
+    // …while non-terminal failures still just unlock the card.
+    expect(region).toContain("setCardBusy(card, false, btn)");
+  });
+
+  it("switching tabs never emits visible debug text (the «فتح تبويب» bubble)", () => {
+    expect(html).not.toContain("فتح تبويب");
+  });
 });
 
 // ---- Pages artifact: simulate the workflow build (copy + sed) ----

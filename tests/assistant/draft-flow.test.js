@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { handleAssistant } from "../../supabase/functions/chalet-assistant/handler.mjs";
 import { resolveBookingCreateArgs } from "../../supabase/functions/_shared/assistant/booking-resolution.mjs";
-import { riyadhToday, addDays } from "../../supabase/functions/_shared/assistant/availability.mjs";
+import { riyadhToday, addDays, availabilityCheck, availabilityFailureAr } from "../../supabase/functions/_shared/assistant/availability.mjs";
 
 // The deterministic Booking Agent: a server-owned per-thread draft collects
 // fields ACROSS messages with ZERO model calls, never re-asks known data,
@@ -361,6 +361,114 @@ describe("booking agent draft flow (deterministic, zero model calls)", () => {
     expect(deps._drafts.get("th-1").fields.booking_date).toBe(target);
     await chat(deps, "۴ اشخاص", "th-1"); // Persian four
     expect(deps._drafts.get("th-1").fields.guests).toBe(4);
+  });
+
+  it("mid-draft «بعد بكرا» applies; garbled date wording gets ONE deterministic clarify, zero model calls", async () => {
+    const deps = makeDeps();
+    await chat(deps, "احجز تولوم بالليل");
+    // The alif spelling the owner actually typed on the iPhone (live bug B).
+    const r1 = await chat(deps, "التاريخ بعد بكرا", "th-1");
+    expect(r1.model_calls).toBe(0);
+    expect(deps._drafts.get("th-1").fields.booking_date).toBe(addDays(TODAY, 2));
+    // Date-ish wording the parser cannot read: a precise clarify question —
+    // never the model's «لم أفهم هذا الطلب كأمر مدعوم» dead end.
+    const r2 = await chat(deps, "يوم الفلاني", "th-1");
+    expect(r2.model_calls).toBe(0);
+    expect(r2.reply_ar).toContain("لم أفهم التاريخ");
+    expect(r2.reply_ar).not.toContain("كأمر مدعوم");
+    expect(deps._modelCalls).toHaveLength(0);
+    // The draft was not corrupted by the clarify turn.
+    expect(deps._drafts.get("th-1").fields.booking_date).toBe(addDays(TODAY, 2));
+  });
+
+  it("a confirm-time conflict is NOT a dead end: names the blocker, returns numbered alternatives, draft stays active, a pick re-prepares", async () => {
+    const deps = makeDeps();
+    const t = await chat(deps, "احجز تولوم بكرة بالليل لشخصين بمئة ريال، العميل تجربة");
+    const prep = (t.tool_results || []).find((x) => x.kind === "prepared_action");
+    expect(prep).toBeTruthy();
+    // Another channel takes the slot BETWEEN prepare and confirm, and the
+    // executor (like the real one) fails closed on the overlap.
+    deps._doc.bookings.push({ id: "b-race", customer_name: "منافس تجريبي", chalet_id: "tulum", booking_date: TOMORROW, period_id: "t-pm", guests: 2, total: 400, paid: 0, status: "confirmed", deleted_at: null });
+    deps.executeConfirmed = async (_k, action) => {
+      const args = action.payload.args;
+      const chalet = deps._doc.chalets.find((c) => c.id === args.chalet_id);
+      const period = (chalet.periods || []).find((p) => p.id === args.period_id);
+      const check = availabilityCheck(deps._doc, args.chalet_id, args.booking_date, period);
+      if (!check.available) {
+        const fail = availabilityFailureAr(check);
+        return { ok: false, error: fail.error, reason_ar: fail.reason_ar };
+      }
+      return { ok: true, result_reference: "x", safe_result: { booking_id: "x", action: "booking_created" } };
+    };
+    const r = await post(deps, { invoke_tool: { name: "confirm_booking_create", arguments: { action_id: prep.action_id, confirmation_token: prep.confirmation_token } } });
+    expect(r.ok).toBe(false);
+    expect(r.kind).toBe("completed_action");
+    expect(r.public_code).toBe("conflict");
+    expect(r.reason_ar).toContain("محجوزة");
+    expect(r.reason_ar).toContain("منافس تجريبي"); // WHICH booking blocks
+    expect(r.reason_ar).toContain("1."); // numbered alternatives inline
+    expect(Array.isArray(r.next_actions)).toBe(true);
+    expect(r.next_actions.length).toBeGreaterThan(0);
+    expect(r.reason_ar).not.toMatch(/[A-Z]{2,}_[A-Z]|[0-9a-f]{8}-[0-9a-f]{4}/i);
+    expect(deps._doc.bookings.filter((b) => b.id !== "b-race")).toHaveLength(0); // nothing saved
+    // The draft survived (it closes ONLY on success) and remembers the options.
+    expect(deps._drafts.get("th-1").status).toBe("active");
+    expect((deps._drafts.get("th-1").fields.alternatives || []).length).toBeGreaterThan(0);
+    // «١» on the next turn binds option 1 and produces a NEW card.
+    const pick = await chat(deps, "١", "th-1");
+    const again = (pick.tool_results || []).find((x) => x.kind === "prepared_action");
+    expect(again).toBeTruthy();
+    expect(again.action_id).not.toBe(prep.action_id);
+  });
+
+  it("stale-at-confirm WITH a real conflict retires the card and still returns alternatives", async () => {
+    const deps = makeDeps();
+    const t = await chat(deps, "احجز تولوم بكرة بالليل لشخصين بمئة ريال، العميل تجربة");
+    const prep = (t.tool_results || []).find((x) => x.kind === "prepared_action");
+    // A competing booking lands first, so the revision moved (forceStale
+    // mimics the RPC) AND revalidation finds the slot taken.
+    deps._doc.bookings.push({ id: "b-race", customer_name: "منافس تجريبي", chalet_id: "tulum", booking_date: TOMORROW, period_id: "t-pm", guests: 2, total: 400, paid: 0, status: "confirmed", deleted_at: null });
+    deps._actions.get(prep.action_id).forceStale = true;
+    const r = await post(deps, { invoke_tool: { name: "confirm_booking_create", arguments: { action_id: prep.action_id, confirmation_token: prep.confirmation_token } } });
+    expect(r.ok).toBe(false);
+    expect(r.fresh_action).toBeFalsy(); // revalidation cannot hand back a card
+    expect(r.action_retired).toBe(true); // the frontend removes the dead card
+    expect(r.public_code).toBe("conflict");
+    expect(r.reason_ar).toContain("منافس تجريبي");
+    expect(Array.isArray(r.next_actions)).toBe(true);
+    expect(r.next_actions.length).toBeGreaterThan(0);
+    expect(deps._executed).toHaveLength(0); // nothing was executed
+    // The draft survived with the remembered options; «١» re-prepares.
+    expect(deps._drafts.get("th-1").status).toBe("active");
+    const pick = await chat(deps, "١", "th-1");
+    expect((pick.tool_results || []).some((x) => x.kind === "prepared_action")).toBe(true);
+  });
+
+  it("a confirm-time DATA-QUALITY block says so («جودة البيانات»), not a plain conflict", async () => {
+    const doc = fixtureDoc();
+    // A legacy booking whose period has NO times: availability is unprovable.
+    doc.chalets[0].periods.push({ id: "t-old", label: "قديمة", start: "", end: "", active: false, sort: 9 });
+    const deps = makeDeps({ doc });
+    const t = await chat(deps, "احجز تولوم بكرة بالليل لشخصين بمئة ريال، العميل تجربة");
+    const prep = (t.tool_results || []).find((x) => x.kind === "prepared_action");
+    expect(prep).toBeTruthy();
+    doc.bookings.push({ id: "b-legacy", customer_name: "قديم تجريبي", chalet_id: "tulum", booking_date: TOMORROW, period_id: "t-old", guests: 2, total: 0, paid: 0, status: "confirmed", deleted_at: null });
+    deps.executeConfirmed = async (_k, action) => {
+      const args = action.payload.args;
+      const chalet = deps._doc.chalets.find((c) => c.id === args.chalet_id);
+      const period = (chalet.periods || []).find((p) => p.id === args.period_id);
+      const check = availabilityCheck(deps._doc, args.chalet_id, args.booking_date, period);
+      if (!check.available) {
+        const fail = availabilityFailureAr(check);
+        return { ok: false, error: fail.error, reason_ar: fail.reason_ar };
+      }
+      return { ok: true, result_reference: "x", safe_result: { booking_id: "x", action: "booking_created" } };
+    };
+    const r = await post(deps, { invoke_tool: { name: "confirm_booking_create", arguments: { action_id: prep.action_id, confirmation_token: prep.confirmation_token } } });
+    expect(r.ok).toBe(false);
+    expect(r.reason_ar).toContain("جودة البيانات");
+    expect(r.reason_ar).toContain("قديم تجريبي");
+    expect(r.reason_ar).not.toMatch(/AVAILABILITY_UNPROVABLE/);
   });
 
   it("drafts are thread-scoped: a new thread starts clean and general chat falls to the model", async () => {
