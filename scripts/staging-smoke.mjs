@@ -293,6 +293,18 @@ async function main() {
     record("assistant_thread_second_message", second.status === 200 && second.json && second.json.ok === true, second.status);
   }
 
+  // 8b. Deterministic period summary read (count + income) — «كم دخلي هالشهر؟»
+  // dispatches to get_bookings_summary, renders count + إجمالي الدخل (or a clear
+  // empty answer), with ZERO model calls and no phone leak. Proves the new read
+  // tool's live wiring on the real Deno runtime.
+  {
+    const r = await assistant({ message: "كم دخلي هالشهر؟" });
+    const j = r.json || {};
+    const rendered = typeof j.reply_ar === "string" && /(إجمالي الدخل|لا توجد حجوزات في هذه المدة)/.test(j.reply_ar);
+    const ok = r.status === 200 && j.ok === true && j.model_calls === 0 && rendered && !leaks(j.reply_ar);
+    record("assistant_period_summary_read", ok, r.status + ":mc=" + (j.model_calls) + ":" + String(j.reply_ar || "").slice(0, 32));
+  }
+
   // 9. Confirmed booking create through the real contracts (staging only).
   let newBookingId = null;
   {

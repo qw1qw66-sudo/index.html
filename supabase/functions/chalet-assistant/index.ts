@@ -21,7 +21,7 @@ import { executeConfirmedAction } from "../_shared/assistant/executors.mjs";
 import { corsWrap } from "../_shared/cors.mjs";
 import { riyadhToday, addDays, availablePeriodsOn, isSlotAvailable } from "../_shared/assistant/availability.mjs";
 import { chaletCatalog, resolveBookingCreateArgs as resolveBookingCreateSelection, resolveChaletReference } from "../_shared/assistant/booking-resolution.mjs";
-import { bookingRowsForList, nonDeletedBookingRows } from "../_shared/assistant/booking-reads.mjs";
+import { bookingRowsForList, nonDeletedBookingRows, bookingsSummary } from "../_shared/assistant/booking-reads.mjs";
 
 // deno-lint-ignore no-explicit-any
 declare const Deno: any;
@@ -507,6 +507,12 @@ function readFromDoc(name: string, args: Record<string, unknown>, doc: { chalets
           (!from || String(b.booking_date) >= from) &&
           (!to || String(b.booking_date) <= to)),
       };
+    }
+    case "get_bookings_summary": {
+      // Count + total income over a date range (the intent computes the range:
+      // upcoming/past/this-week/this-month). Rows are redacted by the caller.
+      const s = bookingsSummary(bookings, { from: String(args.from || ""), to: String(args.to || "") });
+      return { summary: true, count: s.count, total_income: s.total_income, paid_total: s.paid_total, from: s.from, to: s.to, bookings: s.bookings.slice(0, 10) };
     }
     case "get_booking_details":
       return persistedB.find((b) => b.id === args.booking_id) ?? { error: "NOT_FOUND" };

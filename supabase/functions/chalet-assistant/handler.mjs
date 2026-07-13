@@ -40,6 +40,7 @@ import {
   maskPhone,
   knownCustomerPhone,
 } from "../_shared/assistant/booking-planner.mjs";
+import { monthRangeIso } from "../_shared/assistant/booking-reads.mjs";
 
 // The model gets at most TWO calls per turn (request tools -> ground the reply
 // on the tool results) and may request at most this many tools per turn.
@@ -509,6 +510,22 @@ function describeReadAr(result) {
     );
     return `آخر الحملات:\n${lines.join("\n")}`;
   }
+  // Period summary (count + income over a date range): «كم حجز عندي هالأسبوع؟»،
+  // «الحجوزات القادمة/السابقة»، «كم دخلي هالشهر؟». MUST precede the generic
+  // bookings branch. Booking totals are WHOLE RIYALS (not halalas) → no /100.
+  if (r.summary === true) {
+    const n = Number(r.count || 0);
+    if (!n) return "لا توجد حجوزات في هذه المدة.";
+    const income = Math.round(Number(r.total_income) || 0);
+    const shown = Array.isArray(r.bookings) ? r.bookings.slice(0, 10) : [];
+    const lines = shown.map((b) => {
+      const t = Math.round(Number(b.total) || 0);
+      return `• ${b.customer_name || "بدون اسم"} — ${formatDateDisplay(b.booking_date || "") || b.booking_date || ""}${t > 0 ? ` — ${t} ريال` : ""}`;
+    });
+    const head = n === 1 ? "حجز واحد" : n === 2 ? "حجزان" : `${n} حجوزات`;
+    const more = n > shown.length ? `\n…و${n - shown.length} حجوزات أخرى.` : "";
+    return `عندك ${head}، إجمالي الدخل ${income} ريال.\n${lines.join("\n")}${more}`;
+  }
   if (Array.isArray(r.chalets)) {
     if (!r.chalets.length) return "لا توجد شاليهات مسجلة في هذه المساحة.";
     const lines = r.chalets.map((c) => {
@@ -943,7 +960,37 @@ function deterministicReadIntent(message, todayIso) {
   }
   // The app's OWN suggestion chips (and their natural variants) must never
   // depend on the model (live IMG_6710/6711: «تمام.» / bare counts).
-  // Upcoming bookings.
+  // ---- Count + income SUMMARIES (get_bookings_summary) ----
+  // «الحجوزات السابقة»، «كم حجز عندي هالأسبوع؟»، «كم دخلي هالشهر؟». A SHOW/list
+  // request («اعرض الحجوزات القادمة») carries no كم/عدد/دخل and falls through to
+  // the upcoming LIST below. Marketing/vacancy have their own intents; excluded.
+  if (
+    todayIso && /(حجز|حجوزات|الحجوزات|دخل|دخلي|الدخل)/.test(text) &&
+    !/(تسويق|التسويق|حملة|حملات)/.test(text) &&
+    !/(فاضي|فاضية|فاضيه|متاح|متاحة|فراغ)/.test(text)
+  ) {
+    const asksSummary = /(?:كم|عدد|دخل|دخلي|الدخل|إجمالي|اجمالي|مجموع)/.test(text);
+    // Past — everything before today (count + income). Any past question.
+    if (/(السابقة|السابقه|سابقة|الماضية|الماضيه|الفائتة|الفايتة|المنتهية|القديمة|القديمه|اللي راحت|اللي فات)/.test(text)) {
+      return { name: "get_bookings_summary", arguments: { from: "2000-01-01", to: addDaysIso(todayIso, -1) } };
+    }
+    if (asksSummary && /(اسبوع|الاسبوع|الأسبوع|أسبوع)/.test(text)) {
+      return { name: "get_bookings_summary", arguments: { from: todayIso, to: addDaysIso(todayIso, 6) } };
+    }
+    if (asksSummary && /(شهر|الشهر|هالشهر)/.test(text)) {
+      const mr = monthRangeIso(todayIso);
+      return { name: "get_bookings_summary", arguments: { from: mr.from, to: mr.to } };
+    }
+    if (asksSummary && /(القادمة|القادمه|قادمة|قادمه|الجاية|الجايه)/.test(text)) {
+      return { name: "get_bookings_summary", arguments: { from: todayIso, to: addDaysIso(todayIso, 60) } };
+    }
+    // «كم دخلي؟» with no explicit period → this calendar month's income.
+    if (asksSummary && /(دخل|دخلي|الدخل)/.test(text)) {
+      const mr = monthRangeIso(todayIso);
+      return { name: "get_bookings_summary", arguments: { from: mr.from, to: mr.to } };
+    }
+  }
+  // Upcoming bookings (SHOW/list).
   if (/(القادمة|القادمه|قادمة|قادمه|الجاية|الجايه)/.test(text) && /(حجوزات|الحجوزات)/.test(text) && todayIso) {
     return { name: "list_bookings", arguments: { from: todayIso, to: addDaysIso(todayIso, 60) } };
   }
