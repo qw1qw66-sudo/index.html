@@ -2632,6 +2632,10 @@
           // environment badge right after login, so the owner never reads the
           // stale pre-check placeholders. Fire-and-forget — never blocks login.
           checkSetupConnection({ quiet: true });
+          // Continue the SAME conversation thread across app restarts, so a
+          // mid-booking draft never restarts from zero (id only, never a token;
+          // the server still verifies the thread belongs to this workspace).
+          if (!assistantThreadId) assistantThreadId = restoreAssistantThreadId();
           // Pending work survives a refresh: recover the latest prepared card
           // with a server-rotated token (never stored client-side).
           assistantRecoverPending();
@@ -3022,7 +3026,7 @@
           if (tab === "assistant") {
             renderAssistantSuggestions();
             const logEl = $("assistantLog");
-            if (logEl && !logEl.children.length) assistantNew();
+            if (logEl && !logEl.children.length) assistantNew({ keepThread: true });
           }
           log("Tab changed; no upload", { tab });
         }
@@ -4550,6 +4554,36 @@
           // The last message actually sent — so «إعادة المحاولة» can re-send it
           // after a failure (the input was already cleared on the first try).
           assistantLastMessage = "";
+        // The conversation thread SURVIVES app restarts (iOS kills background
+        // PWAs freely): the id — never a token — is kept per workspace so a
+        // mid-booking draft continues instead of restarting from zero. That
+        // was the live «نسي كل بيانات الحجز بعد اختيار البديل» failure: the
+        // in-memory id died with the page and the next message opened a brand
+        // new empty thread while the real draft sat orphaned on the server.
+        function assistantThreadStoreKey() {
+          return "chaletAssistantThread:" + String(workspaceKey || "");
+        }
+        function persistAssistantThreadId(id) {
+          try {
+            if (id) localStorage.setItem(assistantThreadStoreKey(), String(id));
+          } catch (_) {
+            /* storage unavailable — continuity degrades gracefully */
+          }
+        }
+        function restoreAssistantThreadId() {
+          try {
+            return localStorage.getItem(assistantThreadStoreKey()) || null;
+          } catch (_) {
+            return null;
+          }
+        }
+        function clearStoredAssistantThreadId() {
+          try {
+            localStorage.removeItem(assistantThreadStoreKey());
+          } catch (_) {
+            /* nothing to clear */
+          }
+        }
         // Self-healing connection probe: after a failure the badge re-checks
         // on backoff (30s→60s→…, 5 tries) and a tap re-checks immediately —
         // a transient outage never leaves a permanently red badge.
@@ -4901,8 +4935,12 @@
             } else if (body.ok) {
               setAssistantConn("متصل", "ok");
               // The server owns thread creation; reuse the id it returns so the
-              // whole conversation stays on ONE real, workspace-scoped thread.
-              if (body.thread_id) assistantThreadId = body.thread_id;
+              // whole conversation stays on ONE real, workspace-scoped thread —
+              // persisted so an app restart continues the same booking draft.
+              if (body.thread_id) {
+                assistantThreadId = body.thread_id;
+                persistAssistantThreadId(body.thread_id);
+              }
               if (body.reply_ar) assistantAppend("bot", body.reply_ar);
               // Conflict alternatives arrive as ONE-TAP chips; an empty list
               // just clears the previous row.
@@ -5167,7 +5205,10 @@
           try {
             const body = await assistantCall({ pending_action: "latest" });
             if (body && body.ok && body.pending && body.pending.action_id) {
-              if (body.pending.thread_id) assistantThreadId = body.pending.thread_id;
+              if (body.pending.thread_id) {
+                assistantThreadId = body.pending.thread_id;
+                persistAssistantThreadId(body.pending.thread_id);
+              }
               renderPreparedAction(body.pending);
               assistantAppend(
                 "bot",
@@ -5178,10 +5219,18 @@
             log("pending recovery skipped", { message: e && e.message });
           }
         }
-        function assistantNew() {
+        function assistantNew(opts) {
           // null => the server opens a fresh workspace-scoped thread on the next
           // message and returns its id (we never mint thread ids on the client).
-          assistantThreadId = null;
+          // keepThread: the automatic first-open greeting after a page reload —
+          // the persisted thread (and its server-side draft) must live on; only
+          // the explicit «محادثة جديدة» button really starts over.
+          if (opts && opts.keepThread) {
+            assistantThreadId = assistantThreadId || restoreAssistantThreadId();
+          } else {
+            assistantThreadId = null;
+            clearStoredAssistantThreadId();
+          }
           $("assistantLog").innerHTML = "";
           $("assistantActions").innerHTML = "";
           // Old cards are gone, so their tokens and in-flight locks go too —

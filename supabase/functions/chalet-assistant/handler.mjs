@@ -1111,6 +1111,10 @@ function parseAlternativePick(message, fields) {
     period_label: String(alt.period_label || ""),
     canonical_start: String(alt.start || ""),
     canonical_end: String(alt.end || ""),
+    // The price PRINTED on the tapped option. Consumed (and removed) by the
+    // pick branch: choosing an option that displays a price IS accepting that
+    // price — unless the owner already stated an explicit total, which wins.
+    pick_price: Number.isFinite(Number(alt.price)) && Number(alt.price) > 0 ? Number(alt.price) : null,
   };
 }
 
@@ -1174,6 +1178,10 @@ function contextualChaletAnswer(raw) {
 
 // And for «أي فترة تريد؟»: a short bare label («دوام») rides the resolver's
 // period_text tiers («فترة 3» is already caught by extractPeriodText).
+// Wording that clearly belongs to ANOTHER field (dates, phones, prices,
+// guests) is never a period label — «بعد يومين» must stay a date answer.
+const PERIOD_ANSWER_BLOCK_RE =
+  /(?:^|\s)(?:اليوم|بكرة|بكره|باكر|باكرا|غدا|غد|بعد|تاريخ|بتاريخ|يوم|يومين|اسبوع|أسبوع|جوال|هاتف|رقم|سعر|السعر|بسعر|مبلغ|بمبلغ|المبلغ|باسم|العميل|ضيوف|ضيف|شخص|اشخاص|عدد)(?=\s|$)/;
 function contextualPeriodAnswer(raw) {
   const s = String(raw || "").trim().replace(/[.!؟،,;؛:]+$/g, "").trim();
   if (!s || s.length > 30 || s.split(/\s+/).length > 3) return "";
@@ -1182,6 +1190,7 @@ function contextualPeriodAnswer(raw) {
   // (live IMG_6708 «فترة5»).
   if (!/^[\p{L}\p{N}\s'’-]+$/u.test(s)) return "";
   if (isBareConfirmPhrase(s) || CANCEL_DRAFT_RE.test(s)) return "";
+  if (PERIOD_ANSWER_BLOCK_RE.test(s)) return "";
   return s;
 }
 
@@ -1337,10 +1346,16 @@ async function runBookingPipeline(deps, ctx, { threadId, rawMessage, message, pr
   // The meridiem word answered the time question — it must not double as a
   // period-name correction this turn. A bare label while WE asked for the
   // period rides the same periodWord plumbing as known period words.
+  // A DATE answer to the period question is a date, not a period label —
+  // «بعد يومين» was filed as period_text and answered with «لم أجد هذه
+  // الفترة» (live Scenario A). Any parsed date this turn wins the reading.
   const periodWord = meridiemAnswered
     ? ""
     : extractPeriodText(message) ||
-      (row && pendingQ && pendingQ.kind === "period" ? contextualPeriodAnswer(rawMessage) : "");
+      (row && pendingQ && pendingQ.kind === "period" &&
+       !facts.fields.booking_date && !facts.fields.date_error
+        ? contextualPeriodAnswer(rawMessage)
+        : "");
   // A bare digit answering the PERIOD question is a label pick («٥» = «فترة
   // 5»), never a guest count — mirror the pick guard above.
   if (row && pendingQ && pendingQ.kind === "period" && periodWord) {
@@ -1466,6 +1481,7 @@ async function runBookingPipeline(deps, ctx, { threadId, rawMessage, message, pr
     fields = { ...fields, ...pick };
     delete fields.alternatives;
     delete fields.period_text;
+    delete fields.period_options;
     // A pasted option line may itself parse as a LOW-confidence bare time —
     // the explicit pick overrides that ambiguity completely.
     delete fields.time_low_confidence;
@@ -1478,13 +1494,29 @@ async function runBookingPipeline(deps, ctx, { threadId, rawMessage, message, pr
     delete fields.alternatives;
   }
   // Any change to the slot invalidates a previously quoted "system price":
-  // the weekday/weekend suggestion belongs to ONE specific date + period.
-  if ((dateChanged || timeText || periodWord || pick) && fields.total_suggested) {
-    if (fields.total_source === "suggested" || fields.total_source === "accepted_suggestion") {
+  // the weekday/weekend suggestion belongs to ONE specific date + period —
+  // and so does a price adopted from a previously tapped option.
+  if (dateChanged || timeText || periodWord || pick) {
+    if (
+      fields.total_source === "suggested" ||
+      fields.total_source === "accepted_suggestion" ||
+      fields.total_source === "alternative_price"
+    ) {
       delete fields.total;
       delete fields.total_source;
     }
     delete fields.total_suggested;
+  }
+  // Tapping an option that shows a price accepts that price (§ the owner's
+  // spec) — but an explicit owner-stated total always wins over it.
+  if (pick) {
+    const pickPrice = Number(fields.pick_price);
+    delete fields.pick_price;
+    if (Number.isFinite(pickPrice) && pickPrice > 0 && fields.total === undefined) {
+      fields.total = pickPrice;
+      fields.total_source = "alternative_price";
+      fields.sources = { ...(fields.sources || {}), total: "selection" };
+    }
   }
 
   const priv = (typeof deps.getDraftPrivate === "function" ? await deps.getDraftPrivate(ctx.wsKey, threadId) : {}) || {};
@@ -1556,6 +1588,7 @@ async function runBookingPipeline(deps, ctx, { threadId, rawMessage, message, pr
       if (pres.args.period_end) fields.canonical_end = String(pres.args.period_end);
       delete fields.period_text;
       delete fields.period_label_hint;
+      delete fields.period_options;
     } else if (pres && (pres.error === "BOOKING_CONFLICT" || pres.error === "AVAILABILITY_UNPROVABLE")) {
       return conflictWithAlternatives(deps, ctx, { fields, doc, today, ask, saveDraft, head: pres.reason_ar });
     } else if (pres && (pres.error === "PERIOD_AMBIGUOUS" || pres.error === "PERIOD_TIME_INCOMPLETE")) {
@@ -1591,6 +1624,26 @@ async function runBookingPipeline(deps, ctx, { threadId, rawMessage, message, pr
           }
         }
       }
+      if (
+        pres.error === "PERIOD_AMBIGUOUS" && !fields.booking_date &&
+        Array.isArray(pres.options) && pres.options.length
+      ) {
+        // No date yet, so the options cannot be availability-checked into
+        // one-tap picks. Ask for BOTH remaining answers in ONE message
+        // (§ never one-by-one) and keep the real options listed; either
+        // answer — or both together («بعد يومين فترة 5») — merges next turn.
+        const opts = pres.options.slice(0, 3).map((o) => ({
+          label: String(o.period_label || ""),
+          start: String(o.start || ""),
+          end: String(o.end || ""),
+        }));
+        fields.period_options = opts;
+        const optLines = opts.map((o, i) => `${i + 1}. ${o.label || "فترة"} (${o.start}–${o.end})`);
+        return ask(
+          `توجد عدة فترات بنفس هذا الوقت. باقي: التاريخ (مثل: بكرة أو 15-08-2026)، والفترة:\n${optLines.join("\n")}\nأرسلهما في رسالة واحدة، مثل: «بعد يومين ${opts[0].label || "فترة 1"}».`,
+          { pending_q: { kind: "period" } },
+        );
+      }
       return ask(pres.reason_ar || "حدد الفترة بالاسم أو بالوقت.", { pending_q: { kind: "period" } });
     } else if (pres && pres.error === "PERIOD_NOT_FOUND" && fields.period_text) {
       return ask(pres.reason_ar || "لم أجد هذه الفترة. اكتب اسمها أو وقتها كما هو مسجل.", { pending_q: { kind: "period" } });
@@ -1621,10 +1674,12 @@ async function runBookingPipeline(deps, ctx, { threadId, rawMessage, message, pr
     }
   }
 
-  // ---- missing fields: ONE question, never re-asking what is known ----
+  // ---- missing fields: ONE COMBINED question for everything still open ----
+  // (§ never one-by-one). The pending kind stays the FIRST missing field so
+  // bare-numeral routing keeps working; a combined reply merges every fact.
   const missing = missingFields(fields);
   if (missing.length) {
-    return ask(nextQuestionAr(fields, missing), {
+    return ask(nextQuestionAr(fields, missing, { hasPhone: Boolean(privMerged.customer_phone) }), {
       pending_q: { kind: PENDING_KIND_BY_MISSING[missing[0]] || "fix" },
     });
   }

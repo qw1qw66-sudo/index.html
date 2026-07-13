@@ -687,6 +687,48 @@ test('pending booking card is recovered after a reload (rotated token, nothing i
   expect(stored).not.toContain('tok-live');
 });
 
+test('the conversation thread SURVIVES a reload so a mid-booking draft continues (id persisted, never a token)', async ({ page }) => {
+  await mockRpc(page);
+  await page.route('**/functions/v1/chalet-setup-status', (route) =>
+    route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true, assistant_function_deployed: true, deepseek_configured: true, assistant_confirm_secret_configured: true, autopilot_secret_configured: true, whatsapp_configured: false, app_env: 'staging' }) }),
+  );
+  const seenThreadIds = [];
+  await page.route('**/functions/v1/chalet-assistant', async (route) => {
+    const body = JSON.parse(route.request().postData() || '{}');
+    if (body.pending_action === 'latest' || body.thread_action === 'list') {
+      return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true }) });
+    }
+    if (typeof body.message === 'string') seenThreadIds.push(body.thread_id || null);
+    // Server owns the thread id: it returns th-live and the client must reuse it.
+    return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true, thread_id: 'th-live', reply_ar: 'باقي فقط: عدد الضيوف، واسم العميل. أرسلها في رسالة واحدة.', model_calls: 0, tool_results: [] }) });
+  });
+  await page.goto('/');
+  await create(page);
+  await page.locator('[data-tab="assistant"]').click();
+  // First booking message opens the thread; the id is persisted to localStorage.
+  await page.locator('#assistantInput').fill('احجز تولوم بكرة فترة 5');
+  await page.locator('#assistantSendButton').click();
+  await expect(page.locator('#assistantLog')).toContainText('باقي فقط');
+  const persisted = await page.evaluate(() => {
+    for (const [k, v] of Object.entries(localStorage)) if (v === 'th-live') return k;
+    return '';
+  });
+  expect(persisted).toContain('chaletAssistantThread');
+  // Reload (an iOS PWA restart): the SAME thread must be reused, not a new one.
+  await page.reload();
+  await expect(page.locator('#appShell')).toBeVisible();
+  await page.locator('[data-tab="assistant"]').click();
+  await page.locator('#assistantInput').fill('4 ضيوف باسم سالم');
+  await page.locator('#assistantSendButton').click();
+  await expect(page.locator('#assistantLog')).toContainText('باقي فقط');
+  // The message AFTER the reload carried the persisted thread id — the draft
+  // continues on the server instead of restarting empty.
+  expect(seenThreadIds[seenThreadIds.length - 1]).toBe('th-live');
+  // Nothing token-shaped ever entered storage.
+  const stored = await page.evaluate(() => JSON.stringify([Object.entries(localStorage), Object.entries(sessionStorage)]));
+  expect(stored).not.toContain('tok-');
+});
+
 test('mobile setup page: iPhone-sized, button-only, opens official pages, checks connection', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await mockRpc(page);

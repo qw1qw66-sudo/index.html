@@ -127,6 +127,12 @@ async function main() {
             // TAIL of its booking_date's night — the 10f3 probe proves the
             // deployed engine blocks it while the 19:00→05:00 night is taken.
             { id: "p9", label: "منتصف الليل", start: "00:00", end: "05:00", active: true, sort: 9, weekday_price: 200, weekend_price: 200 },
+            // R8 §9: two SAME-TIME day periods (identical 07:00–17:00) named
+            // «فترة 5» / «الفترة 6» — the live shape behind Scenario A/D. The
+            // deployed assistant must offer these as a one-tap pick (never a
+            // «حدد بالاسم» dead-end), and a bare digit / «فترة خمسه» must bind.
+            { id: "p10", label: "فترة 5", start: "07:00", end: "17:00", active: true, sort: 10, weekday_price: 450, weekend_price: 450 },
+            { id: "p11", label: "الفترة 6", start: "07:00", end: "17:00", active: true, sort: 11, weekday_price: 400, weekend_price: 400 },
           ],
         },
         {
@@ -182,6 +188,63 @@ async function main() {
     const clean = typeof b.reply_ar === "string" && b.reply_ar.length > 0 &&
       !b.reply_ar.includes("get_today_bookings") && !b.reply_ar.includes("تم جلب البيانات") && !b.reply_ar.includes("جاري");
     record("deterministic_today_read", r.status === 200 && b.ok === true && b.model_calls === 0 && clean, r.status + ":model_calls=" + b.model_calls);
+  }
+
+  // 6d. R8 Scenario A (LIVE): a COMPLETE booking message never becomes an
+  // interrogation. The deployed endpoint must extract every stated field with
+  // ZERO model calls and re-ask NOTHING already given; the only open point is
+  // the same-time period pick, offered as one-tap options. Prepare-only — no
+  // booking is created, so nothing to clean up.
+  {
+    const complete = "اعمل حجز جديد بعد يومين شاليه تولوم من 7 الصباح إلى 5 العصر عدد الضيوف 4 رقم الجوال 0503559373 باسم خالد السعر 450";
+    const r1 = await assistant({ message: complete });
+    const b1 = r1.json || {};
+    const th = b1.thread_id;
+    const reply1 = String(b1.reply_ar || "");
+    const noReask =
+      !/لأي شاليه/.test(reply1) && !/كم عدد الضيوف/.test(reply1) &&
+      !/كم الإجمالي/.test(reply1) && !/باسم من/.test(reply1) && !/ما تاريخ/.test(reply1);
+    const offeredPick = Array.isArray(b1.next_actions) && b1.next_actions.length >= 1;
+    const zero1 = b1.model_calls === 0;
+    // Tap option 1 -> straight to a card that PRESERVES every stated field.
+    const r2 = th ? await assistant({ message: "1", thread_id: th }) : { json: {} };
+    const b2 = r2.json || {};
+    const prepared = (b2.tool_results || []).find((x) => x.kind === "prepared_action" && x.ok);
+    const rows = prepared && prepared.card && Array.isArray(prepared.card.rows)
+      ? Object.fromEntries(prepared.card.rows.map((x) => [x.k, x.v])) : {};
+    const preserved = rows["الضيوف"] === "4" && String(rows["الإجمالي"] || "").includes("450") && rows["العميل"] === "خالد";
+    const zero2 = b2.model_calls === 0;
+    const leak = leaks(r1.text) || leaks(r2.text);
+    record(
+      "complete_message_no_interrogation",
+      zero1 && zero2 && noReask && offeredPick && Boolean(prepared) && preserved && !leak,
+      `zero=${zero1 && zero2},noReask=${noReask},pick=${offeredPick},preserved=${preserved}` + (leak ? ",LEAK" : ""),
+    );
+  }
+
+  // 6e. R8 Scenario D (LIVE): several missing fields become ONE combined
+  // question, and ONE combined reply completes the draft — never a field-by
+  // -field interrogation. Prepare-only.
+  {
+    const r1 = await assistant({ message: "احجز تولوم بكرة فترة 5" });
+    const b1 = r1.json || {};
+    const th = b1.thread_id;
+    const reply1 = String(b1.reply_ar || "");
+    const combined = /باقي فقط:/.test(reply1) && /عدد الضيوف/.test(reply1) && /اسم العميل/.test(reply1) && /رسالة واحدة/.test(reply1);
+    const zero1 = b1.model_calls === 0;
+    const r2 = th ? await assistant({ message: "٤ ضيوف باسم سالم جوال 0500000012 والسعر 450", thread_id: th }) : { json: {} };
+    const b2 = r2.json || {};
+    const prepared = (b2.tool_results || []).find((x) => x.kind === "prepared_action" && x.ok);
+    const rows = prepared && prepared.card && Array.isArray(prepared.card.rows)
+      ? Object.fromEntries(prepared.card.rows.map((x) => [x.k, x.v])) : {};
+    const completed = rows["الضيوف"] === "4" && rows["العميل"] === "سالم" && String(rows["الإجمالي"] || "").includes("450");
+    const zero2 = b2.model_calls === 0;
+    const leak = leaks(r1.text) || leaks(r2.text);
+    record(
+      "combined_missing_fields_once",
+      zero1 && zero2 && combined && Boolean(prepared) && completed && !leak,
+      `combined=${combined},completed=${completed},zero=${zero1 && zero2}` + (leak ? ",LEAK" : ""),
+    );
   }
 
   // 6. setup-status with valid auth: booleans only, staging env, DeepSeek ready.
