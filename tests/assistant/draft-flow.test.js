@@ -963,6 +963,18 @@ describe("edit-by-field selection (التعديل بالاختيار, zero model
     expect(deps._executed[0].payload.args.customer_phone).toBe("0501234567");
   });
 
+  it("edit_field retires the draft's OWN linked action even when the client omits action_id (defense-in-depth)", async () => {
+    const deps = makeDeps();
+    const prep = await prepared(deps);
+    expect(deps._actions.get(prep.action_id).status).toBe("prepared");
+    // The field chip sends NO action_id — the server must still retire the
+    // draft's linked prepared action so a stale «سجل» can't save the pre-edit
+    // slot while the owner is mid-edit.
+    const q = await post(deps, { draft_action: "edit_field", field: "guests", thread_id: "th-1" });
+    expect(q.ok).toBe(true);
+    expect(deps._actions.get(prep.action_id).status).toBe("rejected");
+  });
+
   it("a non-editable field (chalet) or an unknown field is rejected and leaves the draft untouched", async () => {
     const deps = makeDeps();
     const prep = await prepared(deps);

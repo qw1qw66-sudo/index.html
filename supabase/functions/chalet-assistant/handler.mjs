@@ -199,15 +199,21 @@ export async function handleAssistant(req, deps) {
       const field = String(body.field || "");
       const pendingKind = EDITABLE_FIELDS.has(field) ? PENDING_KIND_BY_MISSING[field] : "";
       if (!pendingKind) return json(422, { ok: false, error: "UNKNOWN_EDIT_FIELD" });
-      if (actionId) {
-        const ctx = await deps.getConfirmationContext?.(wsKey, actionId);
-        if (ctx && ctx.status === "prepared") {
-          await deps.finalizeAction?.(wsKey, actionId, { status: "rejected", error_code: "REOPENED_FOR_EDIT" });
-        }
-      }
       const row = draftThread ? await deps.getActiveDraft?.(wsKey, draftThread) : null;
       if (!row || !row.fields) {
         return json(200, { ok: true, reply_ar: "لا يوجد حجز قيد التعديل الآن. اطلب «جهّز حجز جديد» للبدء." });
+      }
+      // Retire any still-prepared action for this draft BEFORE stamping the
+      // pending field — both the one the client named AND the draft's OWN
+      // linked action. «تعديل»/reopen already rejects the card, but retiring
+      // the linked action here too makes edit_field self-sufficient: a client
+      // that skips reopen can't leave a live card that a mid-edit «سجل» would
+      // save (defense-in-depth, mirrors the re-prepare supersede below).
+      for (const rid of new Set([actionId, row.linked_action_id ? String(row.linked_action_id) : ""].filter(Boolean))) {
+        const ctx = await deps.getConfirmationContext?.(wsKey, rid);
+        if (ctx && ctx.status === "prepared") {
+          await deps.finalizeAction?.(wsKey, rid, { status: "rejected", error_code: "REOPENED_FOR_EDIT" });
+        }
       }
       const question = nextQuestionAr(row.fields, [field]) || "اكتب القيمة الجديدة.";
       const nextFields = { ...row.fields, pending_q: { kind: pendingKind, q: String(question).slice(0, 220) } };
