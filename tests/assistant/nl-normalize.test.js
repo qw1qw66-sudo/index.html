@@ -353,4 +353,146 @@ describe('classifyMeridiemWord (AM/PM clarify answers)', () => {
     expect(classifyMeridiemWord('تمام')).toBeNull();
     expect(classifyMeridiemWord('')).toBeNull();
   });
+  it('noon words answer as PM (ظهراً / بعد الظهر)', () => {
+    expect(classifyMeridiemWord('ظهراً')).toBe('PM');
+    expect(classifyMeridiemWord('ظهرا')).toBe('PM');
+    expect(classifyMeridiemWord('الظهر')).toBe('PM');
+    expect(classifyMeridiemWord('بعد الظهر')).toBe('PM');
+  });
+  it('accepts Latin am/pm answers in either case', () => {
+    expect(classifyMeridiemWord('PM')).toBe('PM');
+    expect(classifyMeridiemWord('pm')).toBe('PM');
+    expect(classifyMeridiemWord('AM')).toBe('AM');
+    expect(classifyMeridiemWord('am')).toBe('AM');
+  });
+});
+
+// --- FIXER A regressions (batchA) ---------------------------------------
+
+describe('extractGuestCount — colloquial forms & invalid counts', () => {
+  it('«لـ + number word» with no person word is a headcount', () => {
+    expect(extractGuestCount('لأربعة')).toBe(4);
+    expect(extractGuestCount('لعشرة')).toBe(10);
+    expect(extractGuestCount('لثلاثة')).toBe(3);
+    expect(extractGuestCount('لستة')).toBe(6);
+    expect(extractGuestCount('لخمسة')).toBe(5);
+    expect(extractGuestCount('لاثنين')).toBe(2);
+    expect(extractGuestCount('لأربعة أشخاص')).toBe(4); // trailing person word still fine
+  });
+  it('«فردين»/«فردان» (dual of فرد) is 2', () => {
+    expect(extractGuestCount('فردين')).toBe(2);
+    expect(extractGuestCount('فردان')).toBe(2);
+  });
+  it('a count marker or first-person plural + bare digit is a headcount', () => {
+    expect(extractGuestCount('عدد ٥')).toBe(5);
+    expect(extractGuestCount('العدد ٥')).toBe(5);
+    expect(extractGuestCount('نحن ٦')).toBe(6);
+    expect(extractGuestCount('احنا ٦')).toBe(6);
+  });
+  it('person word THEN a number word (symmetric case)', () => {
+    expect(extractGuestCount('عدد الضيوف ستة')).toBe(6);
+    expect(extractGuestCount('الضيوف ثمانية')).toBe(8);
+    expect(extractGuestCount('خل الضيوف ثمانية')).toBe(8);
+    // digit-first forms that already worked stay working
+    expect(extractGuestCount('عدد الضيوف ١٠ السعر ٣٠٠')).toBe(10);
+  });
+  it('a negative count is invalid — returned as null, never coerced to +N', () => {
+    expect(extractGuestCount('-2 ضيوف')).toBeNull();
+    expect(extractGuestCount('-٢ ضيوف')).toBeNull();
+  });
+});
+
+describe('extractAmount — spoken hundreds & per-unit price', () => {
+  it('two-token spoken hundreds are unit×100, not 100', () => {
+    expect(extractAmount('خمس مية')).toBe(500);
+    expect(extractAmount('خمس مئة')).toBe(500);
+    expect(extractAmount('ثلاث مئة')).toBe(300);
+    expect(extractAmount('سبع مائة')).toBe(700);
+    expect(extractAmount('السعر خمس مئة')).toBe(500);
+    expect(extractAmount('خمس مئة ريال')).toBe(500);
+  });
+  it('ي-spelled single-token hundreds', () => {
+    expect(extractAmount('خمسمية')).toBe(500);
+    expect(extractAmount('ثلاثمية')).toBe(300);
+    expect(extractAmount('اربعمية')).toBe(400);
+    expect(extractAmount('ستمية')).toBe(600);
+    expect(extractAmount('سبعمية')).toBe(700);
+    expect(extractAmount('ثمانمية')).toBe(800);
+    expect(extractAmount('تسعمية')).toBe(900);
+  });
+  it('a «لـ + booking noun» price tail', () => {
+    expect(extractAmount('٤٥٠ للفترة')).toBe(450);
+    expect(extractAmount('٤٥٠ لليوم')).toBe(450);
+    expect(extractAmount('٤٥٠ للحجز')).toBe(450);
+  });
+  it('the truncatable-compound guard still re-asks', () => {
+    expect(extractAmount('الف وخمسمئة ريال')).toBeNull();
+  });
+});
+
+describe('isExplicitFree — extra free wordings', () => {
+  it('recognizes ببلاش / على حسابي / ببلا فلوس / بدون مبلغ', () => {
+    expect(isExplicitFree('ببلاش')).toBe(true);
+    expect(isExplicitFree('بلاش')).toBe(true);
+    expect(isExplicitFree('على حسابي')).toBe(true);
+    expect(isExplicitFree('ببلا فلوس')).toBe(true);
+    expect(isExplicitFree('بدون مبلغ')).toBe(true);
+    // an explicit price is still never "free"
+    expect(isExplicitFree('السعر 500')).toBe(false);
+  });
+});
+
+describe('parseDateExpression — Gulf/relative additions', () => {
+  it('«عقب» is a synonym of «بعد»', () => {
+    expect(parseDateExpression('عقب ٣ ايام', TODAY)).toEqual({ date: '2026-07-15', confidence: 'high' });
+    expect(parseDateExpression('عقب اسبوع', TODAY)).toEqual({ date: '2026-07-19', confidence: 'high' });
+    expect(parseDateExpression('عقب يومين', TODAY)).toEqual({ date: '2026-07-14', confidence: 'high' });
+  });
+  it('accepts the slashed ISO form «2026/8/15»', () => {
+    expect(parseDateExpression('2026/8/15', TODAY)).toEqual({ date: '2026-08-15', confidence: 'high' });
+  });
+  it('relative weekend / next-month references', () => {
+    // TODAY is a Sunday -> coming Thursday is 2026-07-16.
+    expect(parseDateExpression('نهاية الاسبوع', TODAY)).toEqual({ date: '2026-07-16', confidence: 'high' });
+    expect(parseDateExpression('اول الشهر', TODAY)).toEqual({ date: '2026-08-01', confidence: 'high' });
+    expect(parseDateExpression('١٥ الشهر الجاي', TODAY)).toEqual({ date: '2026-08-15', confidence: 'high' });
+    expect(parseDateExpression('١٥ الشهر القادم', TODAY)).toEqual({ date: '2026-08-15', confidence: 'high' });
+  });
+  it('English tomorrow/today (like the English weekday names already supported)', () => {
+    expect(parseDateExpression('tomorrow', TODAY)).toEqual({ date: '2026-07-13', confidence: 'high' });
+    expect(parseDateExpression('today', TODAY)).toEqual({ date: '2026-07-12', confidence: 'high' });
+  });
+});
+
+describe('parseTimeExpression — Najdi «until», spoken fractions, prayer hours', () => {
+  it('«لين» is a range separator', () => {
+    expect(parseTimeExpression('الساعة ٧ لين ٥')).toEqual({ start: '19:00', end: '05:00', wraps_next_day: true, confidence: 'medium' });
+    expect(parseTimeExpression('من ٧ لين ١٢')).not.toBeNull();
+  });
+  it('«ونص»/«وربع»/«وثلث» set the minutes on the matched hour', () => {
+    expect(parseTimeExpression('من ٧ونص مساء الى ٥ صباح')).toEqual({ start: '19:30', end: '05:00', wraps_next_day: true, confidence: 'high' });
+    expect(parseTimeExpression('من ٧ ونص مساء الى ٥ صباح').start).toBe('19:30');
+    expect(parseTimeExpression('من ٧ونصف مساء الى ٥ صباح').start).toBe('19:30');
+    expect(parseTimeExpression('من ٧وربع مساء الى ٥ صباح').start).toBe('19:15');
+    expect(parseTimeExpression('من ٧وثلث مساء الى ٥ صباح').start).toBe('19:20');
+  });
+  it('prayer words as hour tokens inside a من…لـ clause', () => {
+    expect(parseTimeExpression('من المغرب للفجر')).toEqual({ start: '18:00', end: '05:00', wraps_next_day: true, confidence: 'high' });
+  });
+  it('a prayer word right before a digit stays a meridiem marker (no false conversion)', () => {
+    // «الى العصر ٥» = 5 عصراً -> end 17:00; must NOT become «الى 15 5».
+    expect(parseTimeExpression('من ٧ الى العصر ٥')).toEqual({ start: '07:00', end: '17:00', wraps_next_day: false, confidence: 'high' });
+    expect(parseTimeExpression('من 7 الصباح إلى 5 العصر')).toEqual({ start: '07:00', end: '17:00', wraps_next_day: false, confidence: 'high' });
+  });
+});
+
+describe('CONFIRM_PHRASES — extra confirm synonyms', () => {
+  it('«اوكي»/«أوكي»/«ثبته»/«ثبّته» are bare confirmations', () => {
+    expect(isBareConfirmPhrase('اوكي')).toBe(true);
+    expect(isBareConfirmPhrase('أوكي')).toBe(true);
+    expect(isBareConfirmPhrase('ثبته')).toBe(true);
+    expect(isBareConfirmPhrase('ثبّته')).toBe(true);
+    expect(CONFIRM_PHRASES).toContain('اوكي');
+    expect(CONFIRM_PHRASES).toContain('ثبته');
+  });
 });

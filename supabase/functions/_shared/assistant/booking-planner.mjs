@@ -74,8 +74,12 @@ function normalizeLoose(s) {
 // yields a real name wins — a greedy single capture stopped at the earlier
 // «لـ» in «… لـ 10 ضيوف باسم مهره …» (its tail starts with a digit) and the
 // actual name after «باسم» was never reached (live Scenario C).
+// A preceding DIGIT is a valid boundary too: «0501234567باسم سعد» glues the
+// phone's last digit onto «باسم», and without the digit in this class the
+// marker never fired and the name was lost. Multi-word markers («اسم الضيف»,
+// «صاحب الحجز») come before their single-word prefixes so they win the match.
 const NAME_MARKER_RE =
-  /(?:^|[\s،,.;:؛])(?:و|ف)?(?:العميل|الاسم|باسم|بإسم|بأسم|لـ)[\s:،]*/gu;
+  /(?:^|[\s،,.;:؛\d])(?:و|ف)?(?:العميل|اسم الضيف|صاحب الحجز|صاحبه|الاسم|اسمه|الاستاذ|الأستاذ|للاستاذ|للأستاذ|باسم|بإسم|بأسم|لـ)[\s:،]*/gu;
 
 const CURRENCY_TOKEN_RE = /^(?:ريال|ريالا|ريالات|ر\.س|sar|sr)$/;
 
@@ -100,13 +104,34 @@ const NAME_STOP = new Set([
   "حجز", "الحجز", "احجز", "فترة", "الفترة", "شاليه", "الشاليه", "شالية", "الشالية", "شاليات",
   "الوقت", "وقت", "الساعة", "ساعة",
   "في", "من", "الى", "الي", "حتى", "عند", "و",
+  // period ADJECTIVES: owners label the slot «مسائي/صباحي/ليلي/نهاري». The base
+  // nouns مساء/صباح are already stops, but the -ي/-ية adjective forms were not,
+  // so «باسم عبدالله مسائي» over-captured «عبدالله مسائي».
+  "صباحي", "صباحية", "صباحيه", "مسائي", "مسائية", "مسائيه",
+  "ليلي", "ليلية", "ليليه", "نهاري", "نهارية", "نهاريه",
+  // note / instruction words (a note appended after «باسم <name>» must not be
+  // swallowed into the name): «باسم سعد وملاحظة …» -> «سعد».
+  "ملاحظة", "ملاحظه", "وملاحظة", "وملاحظه", "ملحوظة", "ملحوظه", "تنبيه", "اكتب",
+  // booking-STATUS words (tentative / on-request / might-cancel) — never a name.
+  "مؤكد", "مؤكدة", "مؤكده", "مبدئي", "مبدئية", "مبدئيه",
+  "تحت", "الطلب", "احتمال", "يلغى", "ملغى", "ملغي",
+  // deposit / payment words: «باسم علي عربون ١٠٠» -> «علي» (not «علي عربون»).
+  "عربون", "مقدم", "دفع", "دفعة", "دفعه", "سدد",
 ]);
 
 // "العميل علي تجربة" -> "علي تجربة". Capture after a marker until a digit,
 // a currency word, a stop word, sentence punctuation or end (trim ، / و).
 function nameFromSegment(segment) {
   const collected = [];
-  for (const tok of segment.split(/\s+/).filter(Boolean)) {
+  const toks = segment.split(/\s+/).filter(Boolean);
+  // Name CORRECTION «غيّر الاسم الى فهد»: the «الاسم» marker matched, leaving
+  // the tail «الى فهد». «الى/إلى/الي/ل» is a NAME_STOP word, so it would empty
+  // the capture — strip ONE leading correction connector and read the name.
+  if (toks.length) {
+    const lead = normalizeLoose(toks[0]).trim();
+    if (lead === "الى" || lead === "الي" || lead === "ل") toks.shift();
+  }
+  for (const tok of toks) {
     if (/\d/.test(tok)) break;
     const norm = normalizeLoose(tok).trim();
     if (!norm) break;
@@ -208,6 +233,22 @@ function detectPriceAcceptance(raw) {
 }
 
 // ---------------------------------------------------------------------------
+// Deposit / partial-payment detection
+// ---------------------------------------------------------------------------
+
+// A deposit-marked amount — «دفع ٢٠٠ [ريال]», «عربون ١٠٠», «مقدم ١٥٠»,
+// «سدّد ٢٠٠» — is a PARTIAL payment, never the booking total. It is routed to
+// `paid` so it can never overwrite (or become) the grand total.
+const DEPOSIT_AMOUNT_RE =
+  /(?:^|\s)(?:و|ب)?(?:ال)?(?:عربون|مقدم|دفعة|دفعه|دفع|سدد)[^\s\d:=]*\s*[:=]?\s*(\d+)(?!\d)/;
+function extractDepositAmount(raw) {
+  const m = normalizeLoose(raw).match(DEPOSIT_AMOUNT_RE);
+  if (!m) return null;
+  const n = Number(m[1]);
+  return Number.isInteger(n) && n >= 0 ? n : null;
+}
+
+// ---------------------------------------------------------------------------
 // 1) extractFacts — deterministic per-message fact extraction
 // ---------------------------------------------------------------------------
 
@@ -237,7 +278,14 @@ export function extractFacts(message, todayIso) {
     normalizeLoose(raw),
   );
   if (guests !== null) out.fields.guests = guests;
-  if (amount !== null && (hasCurrency || amount !== guests)) {
+  // A deposit-marked amount is a partial payment, not the total: bank it in
+  // `paid` and make sure it is NOT recorded as (or allowed to overwrite) total.
+  const deposit = extractDepositAmount(raw);
+  if (deposit !== null) out.fields.paid = deposit;
+  if (
+    amount !== null && (hasCurrency || amount !== guests) &&
+    !(deposit !== null && amount === deposit)
+  ) {
     out.fields.total = amount;
     out.fields.total_source = "explicit";
   }
@@ -659,6 +707,10 @@ export function buildCardData(draft, opts = {}) {
   const totalLabel = free ? "مجاني" : `${Number.isFinite(totalNum) ? totalNum : 0} ريال`;
   const guests = Number.isInteger(d.guests) ? d.guests : 0;
   const notes = typeof d.notes === "string" && d.notes.trim() ? d.notes.trim() : "لا توجد";
+  // A recorded deposit/partial payment (never the total). Shown only when a
+  // positive amount was banked — the total row above is left untouched.
+  const paidNum = Number(d.paid);
+  const hasPaid = Number.isFinite(paidNum) && paidNum > 0;
   const rows = [
     { k: "العميل", v: isNonEmptyString(d.customer_name) ? d.customer_name.trim() : "—", ltr: false },
     { k: "الجوال", v: masked || "غير مضاف", ltr: Boolean(masked) },
@@ -671,7 +723,8 @@ export function buildCardData(draft, opts = {}) {
     },
     { k: "الضيوف", v: String(guests), ltr: false },
     { k: "الإجمالي", v: totalLabel, ltr: !free },
-    { k: "الملاحظات", v: notes, ltr: false },
   ];
+  if (hasPaid) rows.push({ k: "المدفوع", v: `${paidNum} ريال`, ltr: true });
+  rows.push({ k: "الملاحظات", v: notes, ltr: false });
   return { title: "حجز جديد", rows, guests, total_label: totalLabel };
 }

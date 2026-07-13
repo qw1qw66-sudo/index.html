@@ -92,10 +92,12 @@ function to24(h, mer) {
 // Standalone 1-2 digit hour with optional :mm (never a slice of a longer number).
 const TIME_TOKEN_RE = /(?<!\d)(\d{1,2})(?::(\d{2}))?(?!\d)/g;
 // Numeric date shapes that must never be misread as time ranges. A bare "7-5"
-// stays a time; slashed pairs (15/08) and dash triples (01-01-2020) are dates.
-const DATE_SPAN_RE = /(?<!\d)(?:\d{4}-\d{1,2}-\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]\d{2,4}|\d{1,2}\/\d{1,2})(?!\d)/g;
-// Range separators tried inside the text BETWEEN the two hour tokens.
-const RANGE_SEP_RE = /الى|حتى|(?<![a-z])to(?![a-z])|-/;
+// stays a time; slashed pairs (15/08) and dash/slash triples (01-01-2020,
+// 2026/8/15) are dates.
+const DATE_SPAN_RE = /(?<!\d)(?:\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]\d{2,4}|\d{1,2}\/\d{1,2})(?!\d)/g;
+// Range separators tried inside the text BETWEEN the two hour tokens. «لين»
+// is the Najdi/Gulf «until» («من ٧ لين ٥»).
+const RANGE_SEP_RE = /الى|حتى|لين|(?<![a-z])to(?![a-z])|-/;
 // Lone ل separator («من 7 ل 5») — must be standalone so بالليل/ليل survive.
 const LAM_SEP_RE = /(?:^|\s)(ل)(?=\s|$)/;
 
@@ -124,6 +126,42 @@ function foldTimeHourWords(s) {
     .replace(/(?:^|\s)(?:احد|إحد|احدى|إحدى)\s+عشر(?:ة|ه)?(?=\s|$)/g, (m) => `${m.startsWith(' ') ? ' ' : ''}11`)
     .replace(/(?:^|\s)(?:اثنا|اثنى|اثني)\s+عشر(?:ة|ه)?(?=\s|$)/g, (m) => `${m.startsWith(' ') ? ' ' : ''}12`)
     .replace(TIME_HOUR_WORD_RE, (_m, lead, word) => `${lead}${TIME_HOUR_WORDS[word]}`);
+}
+
+// Spoken half/quarter/third past the hour: «٧ونص»/«٧ ونص»/«٧ونصف» -> «7:30»,
+// «وربع» -> «:15», «وثلث» -> «:20». Applied to the matched hour token only;
+// «نصف» is longest-first so it is not shadowed by «نص».
+function foldHourFractions(s) {
+  return s.replace(/(\d{1,2})\s*و(نصف|نص|ربع|ثلث)(?![ء-ي])/g, (_m, h, frac) => {
+    const min = frac === 'ربع' ? 15 : frac === 'ثلث' ? 20 : 30;
+    return `${h}:${pad2(min)}`;
+  });
+}
+
+// Prayer-time words as hour tokens (approximate KSA clock): فجر≈05, ظهر≈12,
+// عصر≈15, مغرب≈18, عشاء≈20. So «من المغرب للفجر» -> an overnight 18:00→05:00
+// range. Deliberately conservative: only inside a «من … الى/لـ» clause, only
+// when the word sits right after a range preposition, and NEVER when a digit
+// follows it (there the word is a meridiem marker for that digit, e.g.
+// «الى العصر ٥» = 5 عصراً — must stay untouched).
+const PRAYER_HOURS = {
+  'الفجر': 5, 'فجر': 5,
+  'الظهر': 12, 'ظهر': 12,
+  'العصر': 15, 'عصر': 15,
+  'المغرب': 18, 'مغرب': 18,
+  'العشاء': 20, 'عشاء': 20,
+};
+const PRAYER_ALT = Object.keys(PRAYER_HOURS).sort((a, b) => b.length - a.length).join('|');
+const PRAYER_CLAUSE_RE = new RegExp(
+  `(^|\\s)(من|الى|الي|حتى|لين|لل|ل)\\s*(${PRAYER_ALT})(?!\\s*[0-9])(?=\\s|$)`,
+  'g',
+);
+function foldPrayerHours(s) {
+  if (!/(?:^|\s)من(?:\s|$)/.test(s)) return s; // the «من …» range gate
+  return s.replace(PRAYER_CLAUSE_RE, (_m, lead, prep, word) => {
+    const isLam = prep === 'ل' || prep === 'لل';
+    return `${lead}${isLam ? 'ل ' : prep + ' '}${PRAYER_HOURS[word]}`;
+  });
 }
 
 // If a range endpoint is missing, later booking fields must not be borrowed
@@ -160,7 +198,7 @@ function isNonHourContext(before, after) {
 // Parse a TIME RANGE from free text. Range-only: a single lone time -> null.
 export function parseTimeExpression(text) {
   if (typeof text !== 'string' || !text.trim()) return null;
-  const t = foldTimeHourWords(normalizeText(text));
+  const t = foldHourFractions(foldPrayerHours(foldTimeHourWords(normalizeText(text))));
 
   // Collect hour tokens, skipping any that sit inside a date-looking span.
   const spans = [];
@@ -300,10 +338,17 @@ export function classifyMeridiemWord(text) {
   if (typeof text !== 'string' || !text.trim()) return null;
   const t = scrubPunct(normalizeText(text));
   if (/\d/.test(t)) return null;
+  // Latin «pm»/«PM» -> PM, «am»/«AM» -> AM (normalizeText already lowercased).
+  const hasPm = /(?:^|[^a-z])pm(?:$|[^a-z])/.test(t);
+  const hasAm = /(?:^|[^a-z])am(?:$|[^a-z])/.test(t);
+  if (hasPm && hasAm) return null;
+  if (hasPm) return 'PM';
+  if (hasAm) return 'AM';
   const words = t.match(/[ء-ي]+/g) || [];
   let mer = null;
   for (const w of words) {
-    const cur = AM_WORDS.has(w) ? 'AM' : PM_WORDS.has(w) ? 'PM' : null;
+    // Noon words («ظهراً»/«الظهر»/«بعد الظهر») answer the AM/PM clarify as PM.
+    const cur = AM_WORDS.has(w) ? 'AM' : PM_WORDS.has(w) || NOON_WORDS.has(w) ? 'PM' : null;
     if (!cur) continue;
     if (mer && mer !== cur) return null; // contradictory answer
     mer = cur;
@@ -346,11 +391,12 @@ const WEEKDAYS = {
   sunday: 0, monday: 1, tuesday: 2, wednesday: 3,
   thursday: 4, friday: 5, saturday: 6,
 };
-const TODAY_WORDS = new Set(['اليوم', 'الليلة', 'الليله']);
+const TODAY_WORDS = new Set(['اليوم', 'الليلة', 'الليله', 'today']);
 // The alif-ending spellings (بكرا/باكرا — live bug B) are as common on
 // phone keyboards as the taa-marbuta ones; matching is exact-token, so every
-// accepted spelling must be listed explicitly.
-const TOMORROW_WORDS = new Set(['بكرة', 'بكره', 'بكرا', 'باكر', 'باكرا', 'غدا']);
+// accepted spelling must be listed explicitly. «tomorrow» (English) rides the
+// same set — WEEKDAYS already carries the English weekday names.
+const TOMORROW_WORDS = new Set(['بكرة', 'بكره', 'بكرا', 'باكر', 'باكرا', 'غدا', 'tomorrow']);
 const AFTER_WORDS = new Set(['بكرة', 'بكره', 'بكرا', 'غد', 'غدا', 'باكر', 'باكرا']);
 
 // Resolve a natural-language date reference against the caller's todayIso.
@@ -358,8 +404,9 @@ export function parseDateExpression(text, todayIso) {
   if (typeof text !== 'string' || !text.trim()) return null;
   const t = scrubPunct(normalizeText(text));
 
-  // 1) Full numeric forms (highest specificity).
-  let m = t.match(/(?<!\d)(\d{4})-(\d{1,2})-(\d{1,2})(?!\d)/);
+  // 1) Full numeric forms (highest specificity). Accept «-» OR «/» between the
+  // parts so «2026/8/15» parses like «2026-08-15».
+  let m = t.match(/(?<!\d)(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?!\d)/);
   if (m) return finishDate(Number(m[1]), Number(m[2]), Number(m[3]), 'high', todayIso);
   m = t.match(/(?<!\d)(\d{1,2})[-/](\d{1,2})[-/](\d{4})(?!\d)/);
   if (m) return finishDate(Number(m[3]), Number(m[2]), Number(m[1]), 'high', todayIso);
@@ -367,7 +414,8 @@ export function parseDateExpression(text, todayIso) {
   // 2) Keywords (can never resolve to a past date).
   const tokens = t.split(/[^0-9a-zء-ي]+/).filter(Boolean);
   for (let i = 0; i < tokens.length; i += 1) {
-    if (tokens[i] !== 'بعد' || i + 1 >= tokens.length) continue;
+    // «عقب» is the Gulf synonym of «بعد» (after): «عقب ٣ ايام» == «بعد ٣ ايام».
+    if ((tokens[i] !== 'بعد' && tokens[i] !== 'عقب') || i + 1 >= tokens.length) continue;
     const next = tokens[i + 1];
     if (AFTER_WORDS.has(next)) {
       return { date: addDaysIso(todayIso, 2), confidence: 'high' };
@@ -397,6 +445,32 @@ export function parseDateExpression(text, todayIso) {
       return { date: addDaysIso(todayIso, WEEK_UNIT ? n * 7 : n), confidence: 'high' };
     }
   }
+
+  // «نهاية الاسبوع» -> the coming Thursday (KSA weekend start). Same
+  // next-occurrence math as a weekday name (counts today).
+  if (/نهاي[ةه] الاسبوع|اخر الاسبوع/.test(t)) {
+    const [ty, tm, td] = todayIso.split('-').map(Number);
+    const todayDow = new Date(Date.UTC(ty, tm - 1, td)).getUTCDay();
+    const delta = (4 - todayDow + 7) % 7; // Thursday = 4
+    return { date: addDaysIso(todayIso, delta), confidence: 'high' };
+  }
+  // «اول الشهر»/«بداية الشهر» -> the 1st of NEXT month (this month's 1st is
+  // almost always past); «١٥ الشهر الجاي»/«الشهر القادم» -> that day next month.
+  {
+    const [y, mo] = todayIso.split('-').map(Number);
+    const ny = mo === 12 ? y + 1 : y;
+    const nmo = mo === 12 ? 1 : mo + 1;
+    if (/(?:اول|بداي[ةه]) الشهر/.test(t)) {
+      return finishDate(ny, nmo, 1, 'high', todayIso);
+    }
+    const nextMonthDay = t.match(
+      /(?<!\d)(\d{1,2})(?!\d)\s+(?:من\s+)?الشهر\s+(?:الجاي|الجايه|القادم|القادمة|القادمه|الجديد)/,
+    );
+    if (nextMonthDay) {
+      return finishDate(ny, nmo, Number(nextMonthDay[1]), 'high', todayIso);
+    }
+  }
+
   // «بكرة بالليل» stays tomorrow — the night word never shifts the date.
   if (tokens.some((w) => TOMORROW_WORDS.has(w))) {
     return { date: addDaysIso(todayIso, 1), confidence: 'high' };
@@ -470,18 +544,36 @@ export function extractGuestCount(text) {
   const t = scrubPunct(normalizeText(text));
   const inRange = (n) => (Number.isInteger(n) && n >= 1 && n <= 200 ? n : null);
 
-  // Dual forms: لشخصين / شخصين / نفرين -> 2 ; «شخص واحد» -> 1.
-  if (/(?:^|\s)(?:لل?)?(?:شخصين|شخصان|نفرين)(?=\s|$)/.test(t)) return 2;
+  // Dual forms: لشخصين / شخصين / نفرين / فردين / فردان -> 2 ; «شخص واحد» -> 1.
+  if (/(?:^|\s)(?:لل?)?(?:شخصين|شخصان|نفرين|فردين|فردان)(?=\s|$)/.test(t)) return 2;
   if (/(?:^|\s)ل?شخص واحد(?=\s|$)/.test(t)) return 1;
 
   // Digits next to a person word (either order, e.g. «٤ أشخاص», "guests 4").
-  let m = t.match(new RegExp(`(?<!\\d)(\\d{1,3})(?!\\d)\\s*${PERSON_WORDS}`));
+  // A leading «-» is an invalid (negative) count: the lookbehind rejects a
+  // signed digit so «-٢ ضيوف» is re-asked, never silently coerced to +2.
+  let m = t.match(new RegExp(`(?<![\\d-])(\\d{1,3})(?!\\d)\\s*${PERSON_WORDS}`));
   if (!m) m = t.match(new RegExp(`${PERSON_WORDS}\\s*(\\d{1,3})(?!\\d)`));
   if (m) return inRange(Number(m[1]));
 
-  // Arabic number word next to a person word, incl. the attached «لـ» ("for")
+  // Arabic number word THEN a person word, incl. the attached «لـ» ("for")
   // prefix: «اربعة اشخاص», «لأربعة أشخاص», «لاربعه ضيوف».
   m = t.match(new RegExp(`(?:^|\\s)ل?(${NUM_WORD_ALTS})\\s+${PERSON_WORDS}`));
+  if (m) return NUM_WORDS[m[1]];
+
+  // Person word THEN an Arabic number word (the symmetric case):
+  // «عدد الضيوف ستة» -> 6, «الضيوف ثمانية» -> 8.
+  m = t.match(new RegExp(`(?:^|\\s)(?:ال)?(?:${PERSON_WORDS})\\s+(${NUM_WORD_ALTS})(?=\\s|$)`));
+  if (m) return NUM_WORDS[m[1]];
+
+  // A count marker («عدد»/«العدد») or a first-person-plural pronoun
+  // («نحن»/«احنا») right before a bare digit is a headcount even with no
+  // person word: «عدد ٥» -> 5, «نحن ٦» -> 6, «احنا ٦» -> 6.
+  m = t.match(/(?:^|\s)(?:ال)?(?:عدد|نحن|احنا|إحنا|حنا)\s+(\d{1,3})(?!\d)/);
+  if (m) return inRange(Number(m[1]));
+
+  // Colloquial «لـ + number word» with NO trailing person word («for four»):
+  // «لأربعة» -> 4, «لعشرة» -> 10, «لثلاثة» -> 3, «لستة» -> 6.
+  m = t.match(new RegExp(`(?:^|\\s)ل(${NUM_WORD_ALTS})(?=\\s|$)`));
   if (m) return NUM_WORDS[m[1]];
 
   // Whole message is just a number word or a small bare number.
@@ -495,13 +587,13 @@ export function extractGuestCount(text) {
 const MONEY_WORDS = {
   'مئة': 100, 'مائة': 100, 'مية': 100, 'ميه': 100,
   'مئتين': 200, 'مئتان': 200, 'مائتين': 200, 'ميتين': 200,
-  'ثلاثمئة': 300, 'ثلاثمائة': 300,
-  'اربعمئة': 400, 'اربعمائة': 400,
-  'خمسمئة': 500, 'خمسمائة': 500,
-  'ستمئة': 600, 'ستمائة': 600,
-  'سبعمئة': 700, 'سبعمائة': 700,
-  'ثمانمئة': 800, 'ثمانمائة': 800, 'ثمنمئة': 800,
-  'تسعمئة': 900, 'تسعمائة': 900,
+  'ثلاثمئة': 300, 'ثلاثمائة': 300, 'ثلاثمية': 300,
+  'اربعمئة': 400, 'اربعمائة': 400, 'اربعمية': 400,
+  'خمسمئة': 500, 'خمسمائة': 500, 'خمسمية': 500,
+  'ستمئة': 600, 'ستمائة': 600, 'ستمية': 600,
+  'سبعمئة': 700, 'سبعمائة': 700, 'سبعمية': 700,
+  'ثمانمئة': 800, 'ثمانمائة': 800, 'ثمنمئة': 800, 'ثمنمية': 800, 'ثمانمية': 800,
+  'تسعمئة': 900, 'تسعمائة': 900, 'تسعمية': 900,
   'الف': 1000,
 };
 const CURRENCY_RE = '(?:ريالات|ريالا|ريال|ر\\.س|sar(?![a-z])|sr(?![a-z]))';
@@ -529,6 +621,21 @@ export function extractAmount(text) {
   // Digits + currency, attached or spaced («٥٠٠ ريال», "500ريال", "500 sar").
   const m = t.match(new RegExp(`(?<![\\d.])(\\d+(?:\\.\\d+)?)\\s*${CURRENCY_RE}`));
   if (m) return Number(m[1]);
+
+  // A price with a «لـ + booking noun» tail states the amount "for the
+  // period/day/booking": «٤٥٠ للفترة» / «٤٥٠ لليوم» / «٤٥٠ للحجز» -> 450.
+  const perUnit = t.match(/(?<![\d.])(\d+(?:\.\d+)?)\s*لل?(?:فترة|يوم|حجز|ليلة|ليله|يله)(?=\s|$)/);
+  if (perUnit) return Number(perUnit[1]);
+
+  // Two-token spoken hundreds «خمس مئة» / «ثلاث مية» -> 500 / 300. This MUST run
+  // BEFORE the single-word loop below — otherwise that loop returns مئة/مية=100
+  // on the SECOND token and the leading unit is silently dropped (a 3–9x
+  // undercharge banked straight onto the card).
+  const pair = t.match(/(?:^|\s)ب?(ثلاث|اربع|خمس|ست|سبع|ثمان|تسع)\s+(مئة|مائة|مية|ميه)(?=\s|$)/);
+  if (pair) {
+    const UNITS = { 'ثلاث': 3, 'اربع': 4, 'خمس': 5, 'ست': 6, 'سبع': 7, 'ثمان': 8, 'تسع': 9 };
+    return UNITS[pair[1]] * 100;
+  }
 
   // Hundred-words with optional و/ب prefixes («بمئة ريال» -> 100, «بخمسمئة» -> 500).
   const words = scrubPunct(t).split(/\s+/).filter(Boolean);
@@ -563,13 +670,6 @@ export function extractAmount(text) {
       }
     }
   }
-  // Two-token form «خمس مئة» -> 500.
-  const pair = t.match(/(?:^|\s)ب?(ثلاث|اربع|خمس|ست|سبع|ثمان|تسع)\s+(مئة|مائة)(?=\s|$)/);
-  if (pair) {
-    const UNITS = { 'ثلاث': 3, 'اربع': 4, 'خمس': 5, 'ست': 6, 'سبع': 7, 'ثمان': 8, 'تسع': 9 };
-    return UNITS[pair[1]] * 100;
-  }
-
   // Whole message is just the number -> accept without a currency word.
   const bare = scrubPunct(t).trim();
   if (/^\d+(\.\d+)?$/.test(bare)) return Number(bare);
@@ -580,8 +680,8 @@ export function extractAmount(text) {
 export function isExplicitFree(text) {
   if (typeof text !== 'string') return false;
   const t = scrubPunct(normalizeText(text));
-  if (/(?:^|\s)(?:مجاني|مجانا|مجانية|مجانيه)(?=\s|$)/.test(t)) return true;
-  if (/بدون سعر|بلا سعر|صفر ريال|الاجمالي صفر/.test(t)) return true;
+  if (/(?:^|\s)(?:مجاني|مجانا|مجانية|مجانيه|ببلاش|بلاش)(?=\s|$)/.test(t)) return true;
+  if (/بدون سعر|بدون مبلغ|بلا سعر|بلا فلوس|صفر ريال|الاجمالي صفر|على حساب[يى]/.test(t)) return true;
   return t.trim() === 'صفر';
 }
 
@@ -592,6 +692,7 @@ export function isExplicitFree(text) {
 export const CONFIRM_PHRASES = [
   'سجل', 'سجّل', 'أكد', 'أكّد', 'نعم', 'تمام', 'نفذ', 'نفّذ',
   'احفظ', 'حفظ', 'اعتمد', 'موافق', 'ok', 'يس', 'ايوه', 'اجل', 'أجل',
+  'اوكي', 'أوكي', 'ثبته', 'ثبّته',
 ];
 const CONFIRM_SET = new Set(CONFIRM_PHRASES.map((p) => normalizeText(p)));
 // Neutral fillers that may ride along («سجل الحجز», «اعتمد الان»).

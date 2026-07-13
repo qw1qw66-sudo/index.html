@@ -672,3 +672,182 @@ describe("live transcript corpus (owner-reported conversations, zero model calls
     expect(deps._modelCalls).toHaveLength(0);
   });
 });
+
+// Workspace mirroring the audit harness: a numbered-sibling chalet + two
+// SAME-TIME day periods, so the ambiguity / numbered-pick / capacity fixes are
+// exercised against real records (never the flat fixtureDoc).
+function richFixtureDoc() {
+  return {
+    chalets: [
+      {
+        id: "tulum", name: "شاليه تولوم", capacity: 20, deleted_at: null,
+        periods: [
+          { id: "am", label: "صباحي", start: "07:00", end: "12:00", active: true, sort: 1, weekday_price: 300, weekend_price: 450 },
+          { id: "pm", label: "مسائي", start: "19:00", end: "05:00", active: true, sort: 2, weekday_price: 500, weekend_price: 700 },
+          { id: "f5", label: "فترة 5", start: "13:00", end: "17:00", active: true, sort: 3, weekday_price: 450, weekend_price: 450 },
+          { id: "f6", label: "الفترة 6", start: "13:00", end: "17:00", active: true, sort: 4, weekday_price: 400, weekend_price: 400 },
+        ],
+      },
+      {
+        id: "tulum2", name: "شاليه تولوم 2", capacity: 10, deleted_at: null,
+        periods: [{ id: "t2pm", label: "مسائي", start: "19:00", end: "05:00", active: true, sort: 1, weekday_price: 350, weekend_price: 500 }],
+      },
+      {
+        id: "sky", name: "شاليه سكاي", capacity: 8, deleted_at: null,
+        periods: [
+          { id: "s-am", label: "صباحي", start: "08:00", end: "12:00", active: true, sort: 1, weekday_price: 300, weekend_price: 500 },
+          { id: "s-pm", label: "مسائي", start: "19:00", end: "05:00", active: true, sort: 2, weekday_price: 350, weekend_price: 500 },
+        ],
+      },
+    ],
+    bookings: [],
+  };
+}
+const cardOf = (res) => (res.tool_results || []).find((x) => x.kind === "prepared_action");
+
+describe("batch-B dispatch/resolution/reply fixes (owner-reported, zero model calls)", () => {
+  it("tashkeel on the booking verb «اَحجُز تُولوم بُكرة» reaches the pipeline (not the model)", async () => {
+    const deps = makeDeps({ doc: richFixtureDoc() });
+    const r = await chat(deps, "اَحجُز تُولوم بُكرة");
+    expect(r.model_calls).toBe(0);
+    expect(deps._modelCalls).toHaveLength(0);
+    expect(deps._drafts.get("th-1").fields.chalet_id).toBe("tulum");
+  });
+
+  it("polite «ممكن تحجزلي تولوم» and «ابغى منك حجز تولوم» open the pipeline and bind the chalet", async () => {
+    for (const msg of ["ممكن تحجزلي تولوم", "ابغى منك حجز تولوم"]) {
+      const deps = makeDeps({ doc: richFixtureDoc() });
+      const r = await chat(deps, msg);
+      expect(r.model_calls).toBe(0);
+      expect(r.reply_ar).not.toContain("لا توجد بيانات"); // was misrouted to a lookup
+      expect(deps._drafts.get("th-1").fields.chalet_id).toBe("tulum");
+    }
+  });
+
+  it("phone glued to the price (latin AND arabic-indic) stores the REAL number, never a fabrication", async () => {
+    for (const msg of [
+      "احجز تولوم بكرة فترة 5 لأربعة أشخاص باسم سعد بمبلغ 450 0501234567",
+      "احجز تولوم بكرة فترة 5 لأربعة أشخاص باسم سعد بمبلغ ٤٥٠ ٠٥٠١٢٣٤٥٦٧",
+      "احجز تولوم بكرة فترة 5 لأربعة أشخاص باسم سعد بمبلغ 450 00966501234567",
+    ]) {
+      const deps = makeDeps({ doc: richFixtureDoc() });
+      const r = await chat(deps, msg);
+      expect(r.model_calls).toBe(0);
+      expect(deps._drafts.get("th-1").private.customer_phone).toBe("0501234567");
+      const card = cardOf(r);
+      expect(card.card.rows.find((x) => x.k === "الجوال").v).toBe("05••••4567");
+    }
+  });
+
+  it("«تولوم 2» named mid-sentence binds شاليه تولوم 2 (longest unique match), not CHALET_AMBIGUOUS", async () => {
+    const deps = makeDeps({ doc: richFixtureDoc() });
+    const r = await chat(deps, "احجز تولوم 2 بكرة مسائي لشخصين بمبلغ 350 باسم سعد");
+    expect(r.model_calls).toBe(0);
+    expect(r.reply_ar).not.toContain("أكثر من شاليه");
+    const f = deps._drafts.get("th-1").fields;
+    expect(f.chalet_id).toBe("tulum2");
+    expect(cardOf(r).card.rows.find((x) => x.k === "الشاليه").v).toBe("شاليه تولوم 2");
+  });
+
+  it("letter-repeat elongation «تووولوم» collapses and binds the chalet", async () => {
+    const deps = makeDeps({ doc: richFixtureDoc() });
+    const r = await chat(deps, "احجز تووولوم بكرة");
+    expect(r.model_calls).toBe(0);
+    expect(deps._drafts.get("th-1").fields.chalet_id).toBe("tulum");
+    expect(r.reply_ar).not.toContain("اسم الشاليه");
+  });
+
+  it("a guest digit glued to the name «شالية تولوم ٢ ضيوف» binds تولوم (not تولوم 2) with guests=2", async () => {
+    const deps = makeDeps({ doc: richFixtureDoc() });
+    await chat(deps, "ابغى احجز");
+    const r = await chat(deps, "باسم محمد بعد يومين شالية تولوم ٢ ضيوف مسائي ٤٠٠ ريال", "th-1");
+    expect(r.model_calls).toBe(0);
+    const f = deps._drafts.get("th-1").fields;
+    expect(f.chalet_id).toBe("tulum");
+    expect(f.guests).toBe(2);
+    expect(r.reply_ar).not.toContain("لأي شاليه");
+  });
+
+  it("an unknown chalet inside a booking command lists the REAL registered names", async () => {
+    const deps = makeDeps({ doc: richFixtureDoc() });
+    const r = await chat(deps, "احجز قصر الياسمين بكرة مسائي لشخصين بمبلغ 350 باسم سعد");
+    expect(r.model_calls).toBe(0);
+    expect(r.reply_ar).toContain("الشاليهات المسجلة");
+    expect(r.reply_ar).toContain("شاليه تولوم");
+    expect(r.reply_ar).not.toBe("لأي شاليه تريد الحجز؟");
+  });
+
+  it("«الخيار الثاني/الأول/الثالث» ordinal picks bind the numbered option and card", async () => {
+    const doc = richFixtureDoc();
+    doc.bookings.push({ id: "bk-x", customer_name: "قائم", chalet_id: "tulum", booking_date: TODAY, period_id: "pm", guests: 5, total: 500, paid: 0, status: "confirmed", deleted_at: null });
+    const deps = makeDeps({ doc });
+    await chat(deps, "احجز شاليه تولوم اليوم من ٧ مساء الى ٥ صباحا باسم محمد جوال ٠٥٥١٢٣٤٥٦٧ عدد الضيوف ٨ بسعر ٦٠٠");
+    const r = await chat(deps, "الخيار الثاني", "th-1");
+    expect(r.model_calls).toBe(0);
+    expect(cardOf(r)).toBeTruthy(); // an option was bound → card, not a re-list
+    expect(deps._drafts.get("th-1").fields.guests).toBe(8); // explicit headcount kept
+  });
+
+  it("picking a chalet NOT in the conflict list re-emits the FULL options (no «لم أفهم», option 3 present)", async () => {
+    const doc = richFixtureDoc();
+    doc.bookings.push({ id: "bk-x", customer_name: "قائم", chalet_id: "tulum", booking_date: TODAY, period_id: "pm", guests: 5, total: 500, paid: 0, status: "confirmed", deleted_at: null });
+    const deps = makeDeps({ doc });
+    await chat(deps, "احجز شاليه تولوم اليوم من ٧ مساء الى ٥ صباحا باسم محمد جوال ٠٥٥١٢٣٤٥٦٧ عدد الضيوف ٨ بسعر ٦٠٠");
+    const r = await chat(deps, "شاليه سكاي", "th-1");
+    expect(r.model_calls).toBe(0);
+    expect(r.reply_ar).not.toContain("لم أفهم");
+    expect(r.reply_ar).toMatch(/\n3\. /); // the full list, option 3 not truncated away
+    expect(cardOf(r)).toBeFalsy(); // nothing bound
+    expect(deps._drafts.get("th-1").fields.chalet_id).toBe("tulum"); // NOT swapped to sky
+  });
+
+  it("a same-time period picked by the SPOKEN number «خمسه» never fabricates guests", async () => {
+    const deps = makeDeps({ doc: richFixtureDoc() });
+    await chat(deps, "احجز تولوم بكرة من ١ الى ٥ العصر"); // 13:00–17:00 matches فترة 5 AND الفترة 6
+    const r = await chat(deps, "خمسه", "th-1");
+    expect(r.model_calls).toBe(0);
+    const f = deps._drafts.get("th-1").fields;
+    expect(f.period_label).toBe("فترة 5");
+    expect(f.guests).toBeUndefined(); // «خمسه» selected the period, it is NOT 5 guests
+  });
+
+  it("a PURE chalet correction «لا الشاليه سكاي» swaps the chalet and re-asks the period", async () => {
+    const deps = makeDeps({ doc: richFixtureDoc() });
+    await chat(deps, `احجز تولوم بتاريخ ${addDays(TODAY, 3)} فترة 5 لأربعة أشخاص باسم سعد بمبلغ 450 جوال 0501234567`);
+    const r = await chat(deps, "لا الشاليه سكاي", "th-1");
+    expect(r.model_calls).toBe(0);
+    const f = deps._drafts.get("th-1").fields;
+    expect(f.chalet_id).toBe("sky");
+    expect(f.period_id).toBeUndefined(); // the tulum-only فترة 5 was unbound
+    expect(f.customer_name).toBe("سعد"); // the rest survives
+    expect(r.reply_ar).not.toContain("بيانات الحجز مكتملة");
+  });
+
+  it("colloquial cancel «خلاص الغيه» closes the draft; the next «احجز …» starts fresh", async () => {
+    const deps = makeDeps({ doc: richFixtureDoc() });
+    await chat(deps, "احجز تولوم بكرة");
+    const r = await chat(deps, "خلاص الغيه", "th-1");
+    expect(r.reply_ar).toContain("تم الإلغاء");
+    expect(r.reply_ar).not.toContain("لم أجد هذه الفترة");
+    const r3 = await chat(deps, "احجز سكاي بكرة", "th-1");
+    expect(deps._drafts.get("th-1").fields.chalet_id).toBe("sky"); // NOT the abandoned tulum
+    expect(r3.model_calls).toBe(0);
+  });
+
+  it("over-capacity guests are caught before the card with a clear capacity message", async () => {
+    const deps = makeDeps({ doc: richFixtureDoc() });
+    await chat(deps, "احجز تولوم بكرة صباحي باسم علي بمبلغ 300");
+    const r = await chat(deps, "٥٠ ضيف", "th-1");
+    expect(r.model_calls).toBe(0);
+    expect(r.reply_ar).toContain("يتجاوز سعة الشاليه");
+    expect(cardOf(r)).toBeFalsy(); // never carded
+  });
+
+  it("tatweel inside a period word «مسـاء» still resolves the period", async () => {
+    const deps = makeDeps({ doc: richFixtureDoc() });
+    const r = await chat(deps, "احجز تولوم بكرة مسـاء لاربعة اشخاص باسم سعد بمبلغ 450");
+    expect(r.model_calls).toBe(0);
+    expect(deps._drafts.get("th-1").fields.period_id).toBe("pm");
+    expect(cardOf(r)).toBeTruthy();
+  });
+});

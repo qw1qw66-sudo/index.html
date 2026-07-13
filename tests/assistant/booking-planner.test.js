@@ -477,3 +477,93 @@ describe('date errors and model merging', () => {
     expect(merged.period_label).toBeUndefined();
   });
 });
+
+// --- FIXER A regressions (batchA) ---------------------------------------
+
+describe('extractCustomerName — new markers and over-capture boundaries', () => {
+  const name = (msg) => extractFacts(msg, TODAY).fields.customer_name || '';
+
+  it('recognizes natural name markers', () => {
+    expect(name('اسمه خالد')).toBe('خالد');
+    expect(name('اسم الضيف خالد')).toBe('خالد');
+    expect(name('صاحب الحجز سعد')).toBe('سعد');
+    expect(name('صاحبه محمد')).toBe('محمد');
+    expect(name('للاستاذ محمد')).toBe('محمد');
+    expect(name('للأستاذ محمد')).toBe('محمد');
+    expect(name('الأستاذ محمد')).toBe('محمد');
+  });
+
+  it('stops the name at period ADJECTIVES, notes, status and deposit words', () => {
+    expect(name('باسم عبدالله مسائي ٥ ضيوف ٤٠٠ ريال')).toBe('عبدالله');
+    expect(name('باسم خالد صباحي ٣٠٠ ريال')).toBe('خالد');
+    expect(name('باسم سعود ليلي ٥٠٠ ريال')).toBe('سعود');
+    expect(name('باسم محمد نهاري ٤٠٠')).toBe('محمد');
+    expect(name('باسم سعد وملاحظة انهم متأخرين')).toBe('سعد');
+    expect(name('باسم سعد تنبيه يبون مسبح')).toBe('سعد');
+    expect(name('باسم سعد مؤكد')).toBe('سعد');
+    expect(name('باسم سعد تحت الطلب')).toBe('سعد');
+    expect(name('باسم سعد احتمال يلغى')).toBe('سعد');
+    expect(name('باسم علي عربون ١٠٠')).toBe('علي');
+    // controls: legitimate stops still work; base «مساء» already stopped
+    expect(name('باسم نورة شالية تولوم')).toBe('نورة');
+    expect(name('باسم عبدالله مساء ٤٠٠')).toBe('عبدالله');
+    expect(name('باسم محمد بمبلغ 500')).toBe('محمد');
+  });
+
+  it('a name correction «الاسم الى فهد» strips the connector and reads فهد', () => {
+    expect(name('غيّر الاسم فهد')).toBe('فهد');
+    expect(name('غيّر الاسم الى فهد')).toBe('فهد');
+    expect(name('غيّر الاسم إلى فهد')).toBe('فهد');
+    expect(name('غيّر الاسم الي فهد')).toBe('فهد');
+  });
+
+  it('a marker glued to trailing phone digits still captures the name', () => {
+    expect(name('احجز تولوم بكرة فترة 5 لاربعة اشخاص 0501234567باسم سعد بمبلغ 450')).toBe('سعد');
+    expect(name('احجز تولوم بكرة فترة ٥ لاربعة اشخاص ٠٥٠١٢٣٤٥٦٧باسم سعد بمبلغ ٤٥٠')).toBe('سعد');
+    expect(name('0501234567 باسم سعد')).toBe('سعد'); // space control unchanged
+  });
+});
+
+describe('extractFacts — deposit routing (paid, never total)', () => {
+  it('a deposit-marked amount goes to paid and never becomes the total', () => {
+    for (const [msg, amt] of [['دفع ٢٠٠ ريال', 200], ['عربون ١٠٠ ريال', 100], ['مقدم ١٥٠ ريال', 150], ['عربون ١٠٠', 100]]) {
+      const f = extractFacts(msg, TODAY);
+      expect(f.fields.paid).toBe(amt);
+      expect(f.fields.total).toBeUndefined();
+      expect(f.fields.total_source).toBeUndefined();
+    }
+  });
+  it('a deposit never overwrites an established explicit total', () => {
+    const base = mergeDraft({}, extractFacts('بمبلغ 450', TODAY));
+    expect(base.total).toBe(450);
+    const merged = mergeDraft(base, extractFacts('دفع ٢٠٠ ريال', TODAY));
+    expect(merged.total).toBe(450); // untouched
+    expect(merged.paid).toBe(200);
+  });
+  it('a normal amount is still the total (no deposit marker)', () => {
+    const f = extractFacts('بمبلغ 450', TODAY);
+    expect(f.fields.total).toBe(450);
+    expect(f.fields.paid).toBeUndefined();
+  });
+});
+
+describe('buildCardData — optional deposit row', () => {
+  const base = {
+    customer_name: 'علي', chalet_name: 'سكاي', booking_date: '2026-07-13',
+    guests: 4, total: 500, total_source: 'explicit', notes: '',
+  };
+  it('omits the deposit row when no paid amount is present (order unchanged)', () => {
+    const card = buildCardData(base);
+    expect(card.rows.map((r) => r.k)).toEqual([
+      'العميل', 'الجوال', 'الشاليه', 'التاريخ', 'الفترة', 'الضيوف', 'الإجمالي', 'الملاحظات',
+    ]);
+  });
+  it('adds «المدفوع» after «الإجمالي» when a positive deposit is banked', () => {
+    const card = buildCardData({ ...base, paid: 200 });
+    expect(card.rows.map((r) => r.k)).toEqual([
+      'العميل', 'الجوال', 'الشاليه', 'التاريخ', 'الفترة', 'الضيوف', 'الإجمالي', 'المدفوع', 'الملاحظات',
+    ]);
+    expect(card.rows[7]).toMatchObject({ k: 'المدفوع', v: '200 ريال', ltr: true });
+    expect(card.total_label).toBe('500 ريال'); // total untouched by the deposit
+  });
+});
