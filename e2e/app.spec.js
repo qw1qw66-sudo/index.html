@@ -705,6 +705,38 @@ test('التعديل بالاختيار: reopen shows field chips; tapping one a
   await expect(page.locator('#assistantActions .action-card')).toHaveCount(1);
 });
 
+test('العميل المعروف: a returning-customer phone chip appears (masked) and applies by tap', async ({ page }) => {
+  await mockRpc(page);
+  await page.route('**/functions/v1/chalet-assistant', async (route) => {
+    const body = JSON.parse(route.request().postData() || '{}');
+    if (typeof body.message === 'string' && body.message.includes('الجوال المحفوظ')) {
+      // The server attached the saved phone; re-prepared card, no more offer.
+      return route.fulfill({ contentType: 'application/json', body: JSON.stringify(BOOKING_CARD_BODY) });
+    }
+    if (body.message) {
+      // Initial booking: card + returning-customer offer (MASKED phone only).
+      return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ...BOOKING_CARD_BODY, customer_phone_suggestion: { name: 'خالد', masked_phone: '05••••8888' } }) });
+    }
+    return route.fulfill({ contentType: 'application/json', body: JSON.stringify(BOOKING_CARD_BODY) });
+  });
+  await page.goto('/');
+  await create(page);
+  await page.locator('[data-tab="assistant"]').click();
+  await page.locator('#assistantInput').fill('احجز تولوم باسم خالد');
+  await page.locator('[data-action="assistant-send"]').click();
+  await expect(page.locator('#assistantActions .action-card')).toHaveCount(1);
+  // The masked-phone chip appears; the raw number is never present in the DOM.
+  const chip = page.locator('#assistantLog .chat-phone-suggest button');
+  await expect(chip).toHaveCount(1);
+  await expect(chip).toContainText('05••••8888');
+  await expect(page.locator('#assistantLog')).not.toContainText('0559998888');
+  // Tapping sends the fixed sentence; the chip clears and a fresh card arrives.
+  await chip.click();
+  await expect(page.locator('#assistantLog .chat-msg.chat-user').last()).toContainText('الجوال المحفوظ');
+  await expect(page.locator('#assistantLog .chat-phone-suggest')).toHaveCount(0);
+  await expect(page.locator('#assistantActions .action-card')).toHaveCount(1);
+});
+
 test('pending booking card is recovered after a reload (rotated token, nothing in storage)', async ({ page }) => {
   await mockRpc(page);
   await page.route('**/functions/v1/chalet-setup-status', (route) =>
