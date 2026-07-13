@@ -21,10 +21,10 @@
 
 import { CHALET_SYSTEM_PROMPT, STRICT_JSON_INSTRUCTION } from "../_shared/assistant/system-prompt.mjs";
 import { evaluatePolicy } from "../_shared/assistant/policy.mjs";
-import { renderMemoriesForPrompt, customerFactFromBooking, memoryDedupeKey } from "../_shared/assistant/memory.mjs";
+import { renderMemoriesForPrompt, customerFactFromBooking, memoryDedupeKey, TYPE_LABEL_AR } from "../_shared/assistant/memory.mjs";
 import { normalizeToolCall, TOOL_REGISTRY, buildToolCatalogText } from "../_shared/assistant/tools.mjs";
 import { prepareConfirmation, reissueConfirmation, hashToken, hashPayload } from "../_shared/assistant/confirmation.mjs";
-import { redactText, redactObject } from "../_shared/assistant/redact.mjs";
+import { redactText, redactObject, hasUnredactedPhone } from "../_shared/assistant/redact.mjs";
 import { riyadhToday, availabilityCheck, availabilityFailureAr } from "../_shared/assistant/availability.mjs";
 import { isBareConfirmPhrase, formatDateDisplay, addDaysIso, classifyMeridiemWord, parseTimeExpression, foldDigits } from "../_shared/assistant/nl-normalize.mjs";
 import { normalizePeriodLookup, resolveChaletReference } from "../_shared/assistant/booking-resolution.mjs";
@@ -238,6 +238,47 @@ export async function handleAssistant(req, deps) {
     if (!secret) return json(503, { ok: false, error: "ASSISTANT_CONFIRM_SECRET_MISSING" });
     const pending = await rotateLatestPending(deps, ctxBase);
     return json(200, { ok: true, pending: pending || null });
+  }
+
+  // ---- Branch A5: owner memory management (list / promote / reject) ----
+  // The owner sees what the assistant learned and approves/rejects each item.
+  // The list is RE-REDACTED here (listMemories does not redact at read time) and
+  // rows whose summary still contains a phone are dropped — the browser, like the
+  // model, never receives a raw phone. Workspace-scoped via the resolved wsKey.
+  if (body.memory_action) {
+    const action = String(body.memory_action);
+    if (action === "list") {
+      const rows = (typeof deps.listMemories === "function" ? await deps.listMemories(wsKey) : []) || [];
+      const memories = [];
+      for (const m of rows) {
+        const st = String(m.status || "");
+        if (st !== "active" && st !== "proposed") continue; // only the manageable states
+        const raw = m.content_json && m.content_json.summary_ar ? String(m.content_json.summary_ar) : "";
+        const safe = redactText(raw).trim();
+        if (!safe || hasUnredactedPhone(safe)) continue; // fail-closed: never surface a phone
+        memories.push({
+          id: String(m.id || ""),
+          memory_type: String(m.memory_type || "fact"),
+          type_label: TYPE_LABEL_AR[m.memory_type] || "معلومة",
+          status: st,
+          enforcement_level: String(m.enforcement_level || "advisory"),
+          summary_ar: safe.slice(0, 300),
+          created_at: m.created_at || null,
+        });
+      }
+      return json(200, { ok: true, memories });
+    }
+    const memId = body.memory_id ? String(body.memory_id) : "";
+    if (!memId) return json(422, { ok: false, error: "MEMORY_ID_REQUIRED" });
+    if (action === "promote") {
+      const r = typeof deps.promoteMemory === "function" ? await deps.promoteMemory(wsKey, memId) : { ok: false, error: "UNSUPPORTED" };
+      return json(r && r.ok ? 200 : 422, r && r.ok ? { ok: true } : { ok: false, error: (r && r.error) || "PROMOTE_FAILED" });
+    }
+    if (action === "reject") {
+      const r = typeof deps.rejectMemory === "function" ? await deps.rejectMemory(wsKey, memId) : { ok: false, error: "UNSUPPORTED" };
+      return json(r && r.ok ? 200 : 422, r && r.ok ? { ok: true } : { ok: false, error: (r && r.error) || "REJECT_FAILED" });
+    }
+    return json(422, { ok: false, error: "UNKNOWN_MEMORY_ACTION" });
   }
 
   // ---- Branch B: chat turn (two-stage model loop) ----
