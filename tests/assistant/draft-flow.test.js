@@ -1072,4 +1072,29 @@ describe("known-customer saved-phone suggestion (returning customer, zero model 
     expect((r.tool_results || []).some((x) => x.kind === "prepared_action")).toBe(true); // still books
     expect(r.customer_phone_suggestion).toBeUndefined(); // just no phone guess
   });
+
+  it("a NEGATED or questioning message never attaches the saved phone", async () => {
+    const deps = makeDeps({ doc: docWithReturningCustomer() });
+    await chat(deps, BOOK); // card ready for known «خالد», phone offered
+    // «لا تضيف الرقم المحفوظ» (don't add it) must NOT attach anything.
+    await chat(deps, "لا تضيف الرقم المحفوظ", "th-1");
+    expect(deps._drafts.get("th-1").private.customer_phone).toBeUndefined();
+  });
+
+  it("a same-turn rename attaches the NEW customer's phone, never the previous one", async () => {
+    const doc = docWithReturningCustomer(); // «خالد» → 0559998888
+    doc.bookings.push({
+      id: "prev-saad", customer_name: "سعد", customer_phone: "0557776666",
+      chalet_id: "sky", booking_date: addDays(TODAY, -12), period_id: "s-pm",
+      guests: 2, total: 350, paid: 0, status: "confirmed", deleted_at: null,
+    });
+    const deps = makeDeps({ doc });
+    await chat(deps, BOOK); // draft is for «خالد»
+    // The owner renames to «سعد» AND asks for the saved phone in ONE message:
+    // it must attach سعد's number, not خالد's stale one.
+    await chat(deps, "أضف الجوال المحفوظ باسم سعد", "th-1");
+    expect(deps._drafts.get("th-1").fields.customer_name).toBe("سعد");
+    expect(deps._drafts.get("th-1").private.customer_phone).toBe("0557776666");
+    expect(deps._drafts.get("th-1").private.customer_phone).not.toBe("0559998888");
+  });
 });

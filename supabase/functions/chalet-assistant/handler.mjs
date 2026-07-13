@@ -1436,9 +1436,13 @@ const EDIT_FIELD_ORDER = ["booking_date", "period", "guests", "total", "customer
 const EDITABLE_FIELDS = new Set(EDIT_FIELD_ORDER);
 
 // The «أضف الجوال المحفوظ» chip (known returning customer) sends this fixed
-// sentence; the pipeline applies the customer's UNIQUE saved phone server-side.
-// Also matches close manual variants the owner might type.
-const WANTS_SAVED_PHONE_RE = /(?:اضف|أضف|ضيف|حط|استخدم)\s+.*(?:الجوال|الرقم|الهاتف)\s+.*(?:المحفوظ|السابق)|(?:الجوال|الرقم)\s+المحفوظ/;
+// POSITIVE imperative; close manual variants also match. Verbs are boundary
+// -anchored and must be followed by whitespace, so they never fire inside an
+// inflected word («تضيف»/«أضفت»), and there is NO bare-noun alternative — a mere
+// «الرقم المحفوظ» inside a question must not trigger.
+const WANTS_SAVED_PHONE_RE = /(?:^|\s)(?:أضف|اضف|ضيّف|حط|استخدم)\s+.*?(?:الجوال|الرقم|الهاتف)\s+.*?(?:المحفوظ|السابق)/;
+// …and a NEGATED request («لا تضيف الرقم المحفوظ») must attach nothing.
+const NEGATED_SAVED_PHONE_RE = /(?:^|\s)(?:لا|ما|مو|مب|بدون|بلا)\s+(?:تضيف|نضيف|أضف|اضف|ضيف|حط|استخدم)/;
 
 // One chip per editable field, each carrying the CURRENT value as a hint (the
 // prepared card leaves the screen on «تعديل», so the chip is the only place the
@@ -1675,12 +1679,13 @@ async function runBookingPipeline(deps, ctx, { threadId, rawMessage, message, pr
   // closed-guided-mode no-op guard treats it as a real turn instead of swallowing
   // it. Collision-safe; the raw number stays server-side (masked to the owner,
   // never to the model). Absent if the owner already gave a phone this turn.
-  if (
-    row && !(facts.private && facts.private.customer_phone) &&
-    WANTS_SAVED_PHONE_RE.test(String(message || "")) &&
-    row.fields && row.fields.customer_name
-  ) {
-    const savedPhone = knownCustomerPhone(doc0, row.fields.customer_name);
+  const msgStr = String(message || "");
+  const wantsSavedPhone = WANTS_SAVED_PHONE_RE.test(msgStr) && !NEGATED_SAVED_PHONE_RE.test(msgStr);
+  // Use THIS turn's name when the same message also renames the customer, so we
+  // never attach the previous customer's phone under a new name.
+  const nameForPhone = (facts.fields && facts.fields.customer_name) || (row && row.fields && row.fields.customer_name) || "";
+  if (row && wantsSavedPhone && nameForPhone && !(facts.private && facts.private.customer_phone)) {
+    const savedPhone = knownCustomerPhone(doc0, nameForPhone);
     if (savedPhone) facts.private = { ...(facts.private || {}), customer_phone: savedPhone };
   }
   const factSignal = Boolean(
