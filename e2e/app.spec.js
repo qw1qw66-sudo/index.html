@@ -1136,3 +1136,25 @@ test('period normalization preserves period 7 and does not activate five fake du
   await expect(page.locator('.period-card')).toHaveCount(6);
   await expect(page.locator('[data-period-field="active"]:checked')).toHaveCount(1);
 });
+
+test('expenses tab: add an expense, list it, and see net in the report', async ({ page }) => {
+  await mockRpc(page);
+  await page.goto('/');
+  await create(page);
+  // Add an operational expense (no bookings exist → report shows net = -expenses).
+  await page.locator('[data-tab="expenses"]').click();
+  const todayIso = new Date().toISOString().slice(0, 10);
+  await page.locator('#expenseDate').fill(todayIso);
+  await page.locator('#expenseCategory').selectOption('صيانة');
+  await page.locator('#expenseAmount').fill('150');
+  await page.locator('#expenseNote').fill('تجربة');
+  await page.locator('[data-action="save-expense"]').click();
+  await expect(page.locator('#expensesList')).toContainText('صيانة');
+  await expect(page.locator('#expensesList')).toContainText('تجربة');
+  await expect(page.locator('#expensesMonthTotal')).toContainText('150');
+  // The report surfaces المصاريف and الصافي (income − expenses), even with no bookings.
+  await page.locator('[data-tab="reports"]').click();
+  await page.locator('[data-action="run-report"]').click();
+  await expect(page.locator('#reportBox')).toContainText('المصاريف');
+  await expect(page.locator('#reportBox')).toContainText('الصافي');
+});
