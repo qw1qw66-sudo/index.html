@@ -17,8 +17,35 @@ function foldDigitsLocal(s) {
 // Matched against the digit-folded copy; over-matching a long digit run only
 // over-redacts, which is the safe direction for PII.
 const SEP = "[\\s\\-]?";
-const PHONE_SRC =
+
+// (a) KSA MOBILE — 05XXXXXXXX, optional +966/00966/966 prefix, inner separators.
+const MOBILE_SRC =
   "(?<!\\d)(?:\\+?966|00966)?" + SEP + "0?" + SEP + "5(?:" + SEP + "\\d){8}(?!\\d)";
+
+// (b) KSA LANDLINE — trunk 0 + area code (011/012/013/014/016/017) + 6-7 digit
+// subscriber: a standalone 9-10 digit run starting «01» whose 3rd digit is a
+// real area code (1-4,6,7 — never 010/015/018/019). «هاتفه 0112345678» leaked
+// through the mobile-only matcher and reached the model verbatim.
+const LANDLINE_SRC = "(?<!\\d)01[1-467]\\d{6,7}(?!\\d)";
+
+// (c) INTERNATIONAL — a «00»- or «+»-led 9-15 digit run, standalone.
+// «جواله 00201002003004», «+201002003004». A +966 KSA mobile is already
+// covered by (a); this masks every other country code the customer might send.
+const INTL_SRC = "(?<!\\d)(?:00|\\+)\\d{9,15}(?!\\d)";
+
+// (d) FUSED MOBILE — a raw 05XXXXXXXX (10 digits) glued INSIDE a longer digit
+// run, e.g. the price+phone fusion «الاجمالي 4500501234567» that the anchored
+// shapes above skip because the mobile sits mid-run, not on a digit boundary.
+// Mirrors the R10 extractor's embedded-mobile shape (booking-planner.mjs) but
+// masks only the 05-prefixed 10-digit sub-span, so a coincidental long number
+// is not wholly mangled. Unanchored on purpose — it is meant to fire mid-run.
+const FUSED_MOBILE_SRC = "05\\d{8}";
+
+// Order matters: the anchored standalone shapes claim a match at a digit
+// boundary first; the unanchored fused-mobile shape is the last resort for a
+// mobile that has been concatenated onto adjacent (price/date) digits.
+const PHONE_SRC =
+  MOBILE_SRC + "|" + LANDLINE_SRC + "|" + INTL_SRC + "|" + FUSED_MOBILE_SRC;
 // Built from fragments so this source itself contains no literal secret token
 // (keeps repo-wide secret scanners from flagging the redactor).
 const SECRETISH_RE = new RegExp(

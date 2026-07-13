@@ -149,10 +149,17 @@ export function derivePaymentState({
   hasPendingOrder,
   lastOrderStatus,
 }) {
-  if (refundedHalalas > 0 && netPaidHalalas === 0 && grossPaidHalalas > 0) return "refunded";
-  if (refundedHalalas > 0 && netPaidHalalas > 0) return "partially_refunded";
-  if (totalHalalas > 0 && netPaidHalalas >= totalHalalas) return "paid";
-  if (netPaidHalalas > 0) return "partially_paid";
+  // DORMANT PATH (E-P5-1): an over-refund (succeeded refunds exceeding payments)
+  // makes the FAITHFUL ledger net go below zero. The stored entries stay
+  // faithful, but the DERIVED state must clamp the effective net at 0 — a
+  // negative net must never fall through the "refunded" branch (net===0) into an
+  // inflating state. With the clamp a fully-(over)refunded booking reads
+  // "refunded", not "unpaid"/"paid".
+  const net = Math.max(0, Number(netPaidHalalas) || 0);
+  if (refundedHalalas > 0 && net === 0 && grossPaidHalalas > 0) return "refunded";
+  if (refundedHalalas > 0 && net > 0) return "partially_refunded";
+  if (totalHalalas > 0 && net >= totalHalalas) return "paid";
+  if (net > 0) return "partially_paid";
   if (hasPendingOrder) return "pending";
   if (lastOrderStatus === "failed") return "failed";
   if (lastOrderStatus === "expired") return "expired";
@@ -200,7 +207,11 @@ export function validateCreateSession({
   const totalHalalas = conv.halalas;
   if (totalHalalas <= 0) return { ok: false, error: "BOOKING_TOTAL_NOT_PAYABLE" };
 
-  const net = Number(netPaidHalalas) || 0;
+  // Clamp the effective net-paid at 0 (E-P5-1): a stored over-refund makes the
+  // faithful net negative, and `total - net` would then INFLATE remaining above
+  // the booking total (e.g. total 90000, net -90000 → 180000, a 2x
+  // over-collection window). The clamp keeps remaining <= total.
+  const net = Math.max(0, Number(netPaidHalalas) || 0);
   const remaining = Math.max(0, totalHalalas - net);
   if (remaining <= 0) return { ok: false, error: "NOTHING_REMAINING" };
 
@@ -249,7 +260,10 @@ export function validateManualPayment({
   if (bookingIsCancelled(booking)) return { ok: false, error: "BOOKING_CANCELLED" };
   const conv = riyalsNumberToHalalas(Number(booking.total));
   if (!conv.ok) return { ok: false, error: "BOOKING_TOTAL_INVALID" };
-  const remaining = Math.max(0, conv.halalas - (Number(netPaidHalalas) || 0));
+  // Clamp the effective net-paid at 0 (E-P5-1): a stored over-refund (negative
+  // net) must not inflate `remaining` above the total and widen the
+  // over-collection guard below.
+  const remaining = Math.max(0, conv.halalas - Math.max(0, Number(netPaidHalalas) || 0));
   if (amountHalalas > remaining && !allowOverCollection) {
     return { ok: false, error: "AMOUNT_EXCEEDS_REMAINING", remainingHalalas: remaining };
   }

@@ -300,8 +300,11 @@ export async function handleAssistant(req, deps) {
       const modelIncoming = {
         fields: {},
         modelFields: {
-          ...(typeof bf.customer_name === "string" && bf.customer_name ? { customer_name: bf.customer_name } : {}),
-          ...(typeof bf.notes === "string" && bf.notes ? { notes: bf.notes } : {}),
+          // Redact BEFORE merge, exactly like chalet_text/period_text below: a
+          // phone the model echoes into customer_name/notes must never enter the
+          // draft/card unmasked (C-P9-3).
+          ...(typeof bf.customer_name === "string" && bf.customer_name ? { customer_name: redactText(bf.customer_name) } : {}),
+          ...(typeof bf.notes === "string" && bf.notes ? { notes: redactText(bf.notes) } : {}),
         },
         private: {},
       };
@@ -846,6 +849,14 @@ function deterministicReadIntent(message, todayIso) {
     /(اليوم|لليوم|هذا اليوم)/.test(text) &&
     !WRITEISH_RE.test(text);
   if (asksTodayBookings) return { name: "get_today_bookings", arguments: {} };
+  // «كم/عدد حجز/حجوزات … اليوم؟» — a COUNT of today's bookings, answered from the
+  // workspace so it never opens a create draft or needs the model (A-P0-4).
+  // Genuine booking COMMANDS already returned above via the hasBookingIntent
+  // guard; «ما هي حجوزات اليوم؟» (no كم/عدد) still rides the model smoke path.
+  const asksCountToday =
+    /(?:كم|عدد)/.test(text) && /(?:حجز|حجوزات|الحجوزات)/.test(text) &&
+    /(?:اليوم|لليوم|هذا اليوم)/.test(text) && !WRITEISH_RE.test(text);
+  if (asksCountToday) return { name: "get_today_bookings", arguments: {} };
   const writeish = WRITEISH_RE.test(text);
   if (writeish) return null;
   // Tomorrow's bookings / availability — same zero-model guarantee (§15).
@@ -955,8 +966,22 @@ function withPrivateBookingFacts(call, facts) {
 // polite 2nd-person/dative verbs («تحجزلي»، «سجلي»، «جهزلي»، «ثبتلي») and a
 // loosened «ابي/ابغى/بغيت … حجز» that tolerates a couple of inserted words
 // («ابغى منك حجز») so the pair no longer has to be strictly adjacent.
-const BOOKING_INTENT_RE =
-  /(احجز|احجزلي|تحجزلي|تحجز لي|سجلي|جهزلي|ثبتلي|جهز حجز|جهزلي حجز|حجز جديد|سوي حجز|اعمل حجز|رتب حجز|سجل حجز|سجل لي حجز|(?:ابي|ابغى|بغيت|ابغا)\s+(?:\S+\s+){0,2}حجز)/;
+// STRONG create stems — always a create («احجز»، «حجز جديد»، «سجل حجز» …).
+const BOOKING_INTENT_STRONG_RE =
+  /(احجز|احجزلي|تحجزلي|تحجز لي|سجلي|جهزلي|ثبتلي|جهز حجز|جهزلي حجز|حجز جديد|سوي حجز|اعمل حجز|رتب حجز|سجل حجز|سجل لي حجز)/;
+// LOOSE stem — «ابي/ابغى/بغيت/ابغا … حجز» (up to two words may sit between). It
+// is a create ONLY when the turn is not actually a READ or an EDIT question;
+// otherwise «ابغى اعرف كم حجز عندي» and «بغيت اعدل حجز احمد» were hijacked into a
+// brand-new create draft (A-P0-4).
+const BOOKING_INTENT_LOOSE_RE = /(?:ابي|ابغى|بغيت|ابغا)\s+(?:\S+\s+){0,2}حجز/;
+// A READ question ABOUT bookings — «كم/عدد … حجز/حجوزات» or a see/know verb
+// paired with a count word. Anchored to «حجز/حجوزات» as the counted object so a
+// create sentence's «عدد الضيوف» is never misread as a count-of-bookings query.
+const BOOKING_READ_QUESTION_RE =
+  /(?:كم|عدد)\s+(?:\S+\s+){0,2}(?:ال)?حجوزات|كم\s+(?:\S+\s+){0,1}(?:ال)?حجز(?![ء-ي])|(?:اعرف|اعلم|اشوف|اعطني|اعطيني|ورني|وريني)\s+(?:كم|عدد)/;
+// An EDIT request for an EXISTING booking — «عدّل/غيّر/حدّث/تعديل … حجز».
+const BOOKING_EDIT_INTENT_RE =
+  /(?:^|\s)(?:اعدل|عدل|عدّل|تعديل|حدّث|حدث)(?:\s|$)|(?:غير|غيّر|تغيير)\s+(?:\S+\s+){0,2}(?:ال)?حجز/;
 
 // Diacritics/tatweel + hamza-alef folding for INTENT and period-label matching.
 // redactText only masks phones; a fully-voweled «اَحجُز» or a tatweel «مسـاء»
@@ -965,8 +990,18 @@ const BOOKING_INTENT_RE =
 function stripTashkeelTatweel(s) {
   return String(s || "").replace(/[ً-ْٰـ]/g, "");
 }
+// A READ or EDIT phrasing about bookings — used to keep the loose create stem
+// from swallowing a lookup/change question, and by deterministicReadIntent.
+function isBookingReadOrEditQuestion(folded) {
+  return BOOKING_READ_QUESTION_RE.test(folded) || BOOKING_EDIT_INTENT_RE.test(folded);
+}
 function hasBookingIntent(message) {
-  return BOOKING_INTENT_RE.test(stripTashkeelTatweel(message).replace(/[أإآٱ]/g, "ا"));
+  const folded = stripTashkeelTatweel(message).replace(/[أإآٱ]/g, "ا");
+  if (BOOKING_INTENT_STRONG_RE.test(folded)) return true;
+  if (!BOOKING_INTENT_LOOSE_RE.test(folded)) return false;
+  // A loose «ابي/ابغى … حجز» that is really a READ/EDIT question is NOT a create.
+  if (isBookingReadOrEditQuestion(folded)) return false;
+  return true;
 }
 
 // Wording that clearly TRIES to state a date (tomorrow-family words, weekday
@@ -993,6 +1028,9 @@ function bookingCardFromArgs(confirmTool, args) {
     guests: args.guests,
     total: args.total,
     total_source: args.total_is_free ? "free" : "explicit",
+    // Render «المدفوع» on the card when a deposit is present (buildCardData
+    // shows the row only for paid > 0).
+    paid: args.paid,
     notes: args.notes,
   };
   try {
@@ -1197,6 +1235,20 @@ const PRAYER_PERIOD_RE = /^(?:ال)?(?:فجر|مغرب|عشاء|عصر|ظهر|ض
 // registered list instead of the generic «لأي شاليه تريد الحجز؟».
 const CHALET_NAMED_RE = /(?:^|\s)(?:شاليه|شالية|الشاليه|الشالية|شاليهات|قصر|منتجع|منتجعات|استراحة)/u;
 
+// A READ question that merely NAMES a chalet («كم سعر شاليه سكاي؟»، «هل سكاي
+// متاح؟») must never be read as a chalet-swap correction on the open draft
+// (A-P2-4). A leading question word, or a trailing «؟» alongside a
+// price/availability word, marks the turn as a question — a real swap uses a
+// correction context instead («لا الشاليه سكاي»، «بدل تولوم سكاي»).
+const CHALET_READ_Q_LEAD_RE = /^\s*(?:كم|ما|هل|وش|شنو|شو|كيف|متى|ايش|أيش|وين|اين)(?:\s|$)/;
+const CHALET_READ_Q_PRICEISH_RE = /(?:سعر|السعر|بكم|متاح|متاحة|متوفر|متوفرة|فاضي|فاضية)/;
+function isChaletReadQuestion(message) {
+  const s = stripTashkeelTatweel(String(message || "")).replace(/[أإآٱ]/g, "ا").trim();
+  if (CHALET_READ_Q_LEAD_RE.test(s)) return true;
+  if (/؟\s*$/.test(s) && CHALET_READ_Q_PRICEISH_RE.test(s)) return true;
+  return false;
+}
+
 // Short period wording (اسم فترة أو وصفها) worth handing to the resolver.
 // The bare «مساء» forms are listed explicitly: the «مسائي» stem uses ئ
 // (U+0626) while «مساء» ends in the standalone hamza ء (U+0621) — without
@@ -1265,8 +1317,11 @@ function contextualChaletAnswer(raw) {
 // period_text tiers («فترة 3» is already caught by extractPeriodText).
 // Wording that clearly belongs to ANOTHER field (dates, phones, prices,
 // guests) is never a period label — «بعد يومين» must stay a date answer.
+// «بعد» is a DATE opener («بعد يومين»/«بعد بكرة») EXCEPT when a prayer/time word
+// follows it — «بعد المغرب»/«بعد العشاء»/«بعد الظهر» are period phrases and must
+// pass through to contextualPeriodAnswer (A-P1-3).
 const PERIOD_ANSWER_BLOCK_RE =
-  /(?:^|\s)(?:اليوم|بكرة|بكره|باكر|باكرا|غدا|غد|بعد|تاريخ|بتاريخ|يوم|يومين|اسبوع|أسبوع|جوال|هاتف|رقم|سعر|السعر|بسعر|مبلغ|بمبلغ|المبلغ|باسم|العميل|ضيوف|ضيف|شخص|اشخاص|عدد)(?=\s|$)/;
+  /(?:^|\s)(?:اليوم|بكرة|بكره|باكر|باكرا|غدا|غد|بعد(?!\s+(?:ال)?(?:مغرب|عشاء|فجر|ظهر|عصر))|تاريخ|بتاريخ|يوم|يومين|اسبوع|أسبوع|جوال|هاتف|رقم|سعر|السعر|بسعر|مبلغ|بمبلغ|المبلغ|باسم|العميل|ضيوف|ضيف|شخص|اشخاص|عدد)(?=\s|$)/;
 function contextualPeriodAnswer(raw) {
   const s = String(raw || "").trim().replace(/[.!؟،,;؛:]+$/g, "").trim();
   if (!s || s.length > 30 || s.split(/\s+/).length > 3) return "";
@@ -1362,6 +1417,33 @@ async function runBookingPipeline(deps, ctx, { threadId, rawMessage, message, pr
 
   // Typed cancellation always works mid-draft (the guided fallback offers it).
   if (row && CANCEL_DRAFT_RE.test(String(message || "").replace(/[\u064b-\u065f\u0670]/g, ""))) {
+    const cancelClean = String(message || "").replace(/[\u064b-\u065f\u0670]/g, "").replace(/[أإآٱ]/g, "ا");
+    // While a numbered PICK is pending, a SOFT close («ما ابي»/«توقف»/«بطل»
+    // WITHOUT «الحجز/الطلب/المسودة» and WITHOUT an explicit إلغاء/كنسل stem) is
+    // hesitation about the OPTIONS, not a teardown of the whole booking —
+    // re-offer the list / re-ask rather than destroy the draft (A-P1-2). An
+    // explicit «الغِ الحجز»/«كنسل»/«الغاء الحجز» still cancels.
+    const isExplicitCancel = /(?:الغ|كنسل|cancel|الحجز|الطلب|المسودة)/.test(cancelClean);
+    if (pendingQ && pendingQ.kind === "pick" && !isExplicitCancel) {
+      const alts = row.fields && Array.isArray(row.fields.alternatives) ? row.fields.alternatives : [];
+      if (alts.length) {
+        return {
+          ok: true,
+          reply_ar: alternativesReplyAr(alts, "لم ألغِ الحجز. اختر رقماً من الخيارات، أو اكتب «الغِ الحجز» لإلغائه:"),
+          tool_results: [],
+          next_actions: alts.map((a, i) => ({ pick: i + 1, chalet_name: a.chalet_name, date: a.date, start: a.start, end: a.end, price: a.price ?? null })),
+        };
+      }
+      const missing0 = missingFields(row.fields || {});
+      const pendingText = (pendingQ && pendingQ.q) || (missing0.length ? nextQuestionAr(row.fields || {}, missing0) : "");
+      return {
+        ok: true,
+        reply_ar: pendingText
+          ? `ما زلت أنتظر اختيارك:\n${pendingText}\nاكتب «الغِ الحجز» لإلغاء هذا الحجز.`
+          : "اختر رقماً من الخيارات المعروضة، أو اكتب «الغِ الحجز» لإلغائه.",
+        tool_results: [],
+      };
+    }
     try { await deps.closeDraft?.(ctx.wsKey, threadId, "cancelled"); } catch { /* non-fatal */ }
     if (row.linked_action_id) {
       try {
@@ -1468,9 +1550,13 @@ async function runBookingPipeline(deps, ctx, { threadId, rawMessage, message, pr
   // answer still cannot clobber a good earlier hint (R9).
   // (Not while a numbered PICK is pending: there «شاليه سكاي» means "that option
   // isn't in the list", handled by the pick-fallback — not a chalet swap.)
+  // A READ question that merely NAMES another chalet («كم سعر شاليه سكاي؟») is
+  // not a swap correction — it must not silently re-point the open draft to that
+  // chalet (A-P2-4). A genuine swap carries a correction context («لا الشاليه
+  // سكاي»، «بدل تولوم سكاي»), never a leading question word or a price/availability «؟».
   const curChaletId = row && row.fields ? String(row.fields.chalet_id || "") : "";
   let chaletSwapSignal = false;
-  if (row && curChaletId && doc0 && !(pendingQ && pendingQ.kind === "pick") && /شاليه|شالية/.test(message)) {
+  if (row && curChaletId && doc0 && !(pendingQ && pendingQ.kind === "pick") && !isChaletReadQuestion(message) && /شاليه|شالية/.test(message)) {
     const swap = resolveChaletReference(doc0, { chalet_name: redactText(rawMessage || "").slice(0, 200) });
     if (swap.ok && String(swap.chalet.id) !== curChaletId) chaletSwapSignal = true;
   }
@@ -1610,8 +1696,9 @@ async function runBookingPipeline(deps, ctx, { threadId, rawMessage, message, pr
     delete fields.period_label;
     delete fields.period_label_hint;
   }
-  // A chalet correction by name rebinds too (and its periods with it).
-  if (fields.chalet_id && /شاليه/.test(message) && doc0) {
+  // A chalet correction by name rebinds too (and its periods with it) — but a
+  // READ question that names a chalet is never a correction (A-P2-4).
+  if (fields.chalet_id && /شاليه/.test(message) && doc0 && !isChaletReadQuestion(message)) {
     const swap = resolveChaletReference(doc0, { chalet_name: safeMessage });
     if (swap.ok && String(swap.chalet.id) !== String(fields.chalet_id)) {
       fields.chalet_id = String(swap.chalet.id);
@@ -1856,6 +1943,10 @@ async function runBookingPipeline(deps, ctx, { threadId, rawMessage, message, pr
     guests: fields.guests,
     total: fields.total,
     total_is_free: fields.total_source === "free" ? true : undefined,
+    // The owner's stated deposit («عربون N») was captured by the planner into
+    // fields.paid — carry it through to the confirmation args (and thus the
+    // saved booking). A deposit NEVER substitutes for the total.
+    ...(Number(fields.paid) > 0 ? { paid: Number(fields.paid) } : {}),
     notes: fields.notes || undefined,
   };
   const norm = normalizeToolCall({ name: "prepare_booking_create", arguments: args });

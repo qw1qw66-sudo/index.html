@@ -292,9 +292,20 @@ export function parseTimeExpression(text) {
     };
     const [oS, oE] = build(opp);
     const [sS, sE] = build(same);
+    // An afternoon/evening START with a bare END that reads coherently ASCENDING
+    // in the same meridiem is a SAME-DAY slot, not an overnight one:
+    // «من 3 عصرا الى 7» = 15:00→19:00, «من 1 ظهرا الى 5» = 13:00→17:00. A real
+    // overnight «من 7 مساء الى 5 صباحا» carries an AM marker on the end, so it
+    // resolves in the both-explicit branch above and never reaches here; and
+    // «من 7 مساء الى 5» (same-PM = 17:00 < 19:00 is false) still falls through to
+    // the overnight reading below (AW-P6-1).
+    const preferSameDayPm =
+      startMarked && markedMer === 'PM' && total(sS, smin) < total(sE, emin);
     const oppWrapsEvening =
       total(oE, emin) <= total(oS, smin) && total(oS, smin) >= 12 * 60;
-    if (oppWrapsEvening) {
+    if (preferSameDayPm) {
+      [startH, endH] = [sS, sE];
+    } else if (oppWrapsEvening) {
       [startH, endH] = [oS, oE];
     } else if (total(sS, smin) < total(sE, emin)) {
       [startH, endH] = [sS, sE];
@@ -398,6 +409,11 @@ const TODAY_WORDS = new Set(['اليوم', 'الليلة', 'الليله', 'toda
 // same set — WEEKDAYS already carries the English weekday names.
 const TOMORROW_WORDS = new Set(['بكرة', 'بكره', 'بكرا', 'باكر', 'باكرا', 'غدا', 'tomorrow']);
 const AFTER_WORDS = new Set(['بكرة', 'بكره', 'بكرا', 'غد', 'غدا', 'باكر', 'باكرا']);
+// «القادم/الجاي/الجايه/القادمة» right after a weekday name forces the NEXT
+// occurrence strictly in the future (+7 when today already IS that weekday).
+const NEXT_WEEKDAY_WORDS = new Set([
+  'القادم', 'القادمة', 'القادمه', 'الجاي', 'الجايه', 'الجديد', 'القادمين',
+]);
 
 // Resolve a natural-language date reference against the caller's todayIso.
 export function parseDateExpression(text, todayIso) {
@@ -423,7 +439,18 @@ export function parseDateExpression(text, todayIso) {
     // Relative day/week offsets: «بعد يومين», «بعد ٣ أيام», «بعد أسبوع» —
     // the live Scenario-A opener used «بعد يومين» and the null parse turned a
     // complete booking message into an interrogation.
-    if (next === 'يوم') return { date: addDaysIso(todayIso, 1), confidence: 'high' };
+    if (next === 'يوم') {
+      // «بعد يوم <weekday>» («بعد يوم الجمعة») = that weekday's next occurrence,
+      // not merely tomorrow — resolve the weekday before the +1 fallback
+      // (A-P1-5).
+      const dayName = tokens[i + 2];
+      if (dayName && Object.prototype.hasOwnProperty.call(WEEKDAYS, dayName)) {
+        const [wy, wm, wd] = todayIso.split('-').map(Number);
+        const dow = new Date(Date.UTC(wy, wm - 1, wd)).getUTCDay();
+        return { date: addDaysIso(todayIso, (WEEKDAYS[dayName] - dow + 7) % 7), confidence: 'high' };
+      }
+      return { date: addDaysIso(todayIso, 1), confidence: 'high' };
+    }
     if (next === 'يومين') return { date: addDaysIso(todayIso, 2), confidence: 'high' };
     if (next === 'اسبوع' || next === 'الاسبوع') {
       return { date: addDaysIso(todayIso, 7), confidence: 'high' };
@@ -478,11 +505,15 @@ export function parseDateExpression(text, todayIso) {
   if (tokens.some((w) => TODAY_WORDS.has(w))) {
     return { date: todayIso, confidence: 'high' };
   }
-  for (const w of tokens) {
+  for (let wi = 0; wi < tokens.length; wi += 1) {
+    const w = tokens[wi];
     if (Object.prototype.hasOwnProperty.call(WEEKDAYS, w)) {
       const [ty, tm, td] = todayIso.split('-').map(Number);
       const todayDow = new Date(Date.UTC(ty, tm - 1, td)).getUTCDay();
-      const delta = (WEEKDAYS[w] - todayDow + 7) % 7; // 0 = today counts
+      let delta = (WEEKDAYS[w] - todayDow + 7) % 7; // 0 = today counts
+      // «الخميس القادم/الجاي» always means the NEXT one — +7 when today is it
+      // (AW-P7-1). Only bumps the same-day case; other days keep next-occurrence.
+      if (delta === 0 && NEXT_WEEKDAY_WORDS.has(tokens[wi + 1])) delta = 7;
       return { date: addDaysIso(todayIso, delta), confidence: 'high' };
     }
   }
@@ -544,9 +575,18 @@ export function extractGuestCount(text) {
   const t = scrubPunct(normalizeText(text));
   const inRange = (n) => (Number.isInteger(n) && n >= 1 && n <= 200 ? n : null);
 
-  // Dual forms: لشخصين / شخصين / نفرين / فردين / فردان -> 2 ; «شخص واحد» -> 1.
-  if (/(?:^|\s)(?:لل?)?(?:شخصين|شخصان|نفرين|فردين|فردان)(?=\s|$)/.test(t)) return 2;
+  // Dual forms: لشخصين / شخصين / نفرين / فردين / فردان / ضيفين / ضيفان -> 2 ;
+  // «شخص واحد» -> 1. «ضيفين/ضيفان» (dual of ضيف) was missing (live AW-P4-1).
+  if (/(?:^|\s)(?:لل?)?(?:شخصين|شخصان|نفرين|فردين|فردان|ضيفين|ضيفان)(?=\s|$)/.test(t)) return 2;
   if (/(?:^|\s)ل?شخص واحد(?=\s|$)/.test(t)) return 1;
+
+  // A guest RANGE «3-5 ضيوف» / «٣-٥ ضيوف»: plan for the MAX so the capacity
+  // check stays conservative — the larger party is the binding one. The
+  // digit+person rule below rejects the hyphen (negative-count guard), so the
+  // range must be caught here first (A-P2-3).
+  let rng = t.match(new RegExp(`(?<![\\d-])(\\d{1,3})\\s*-\\s*(\\d{1,3})(?!\\d)\\s*${PERSON_WORDS}`));
+  if (!rng) rng = t.match(new RegExp(`${PERSON_WORDS}\\s*(\\d{1,3})\\s*-\\s*(\\d{1,3})(?!\\d)`));
+  if (rng) return inRange(Math.max(Number(rng[1]), Number(rng[2])));
 
   // Digits next to a person word (either order, e.g. «٤ أشخاص», "guests 4").
   // A leading «-» is an invalid (negative) count: the lookbehind rejects a
@@ -569,12 +609,28 @@ export function extractGuestCount(text) {
   // («نحن»/«احنا») right before a bare digit is a headcount even with no
   // person word: «عدد ٥» -> 5, «نحن ٦» -> 6, «احنا ٦» -> 6.
   m = t.match(/(?:^|\s)(?:ال)?(?:عدد|نحن|احنا|إحنا|حنا)\s+(\d{1,3})(?!\d)/);
-  if (m) return inRange(Number(m[1]));
+  if (m) {
+    // «عدد ٣ ليالي / ٣ ايام / ٣ فترة» counts NIGHTS/periods, not guests: only
+    // treat «عدد <digit>» as a headcount when no nights/period noun follows
+    // (A-P1-4).
+    const afterNum = t.slice(m.index + m[0].length);
+    if (!/^\s*(?:ليالي|ليال|ليلة|ليله|ايام|يوم|يوما|فترة|فتره)(?=\s|$)/.test(afterNum)) {
+      return inRange(Number(m[1]));
+    }
+  }
 
   // Colloquial «لـ + number word» with NO trailing person word («for four»):
   // «لأربعة» -> 4, «لعشرة» -> 10, «لثلاثة» -> 3, «لستة» -> 6.
   m = t.match(new RegExp(`(?:^|\\s)ل(${NUM_WORD_ALTS})(?=\\s|$)`));
-  if (m) return NUM_WORDS[m[1]];
+  if (m) {
+    // A «من <رقم/كلمة> … لـN» phrase is the tail of a TIME/PRICE range
+    // («الوقت من سبعة لخمسة»), never a headcount. Skip when a «من <number>»
+    // opens the phrase before the «لـN» (A-P0-2). «لأربعة» ALONE still counts.
+    const beforeLam = t.slice(0, m.index);
+    if (!new RegExp(`(?:^|\\s)من\\s+(?:\\d+|${NUM_WORD_ALTS})(?=\\s|$)`).test(beforeLam)) {
+      return NUM_WORDS[m[1]];
+    }
+  }
 
   // Whole message is just a number word or a small bare number.
   const bare = t.trim();
@@ -608,6 +664,35 @@ export function extractAmount(text) {
   // «1,500 ريال» records a third of the price (500).
   const t = normalizeText(text).replace(/٫/g, '.').replace(/(?<=\d)[,٬](?=\d)/g, '');
 
+  // A Saudi mobile number is NEVER a price. «0501234567» (10 digits, «05…»),
+  // the 9-digit national «5…» form, and the «966…»/«00966…» country-code
+  // forms must not be banked as the total — guard BOTH the currency-adjacent
+  // and the bare whole-message readings below (AW-P1-1 / A-P2-5).
+  const isPhoneDigits = (d) =>
+    /^05\d{8}$/.test(d) || /^5\d{8}$/.test(d) || /^9665\d{8}$/.test(d) || /^009665\d{8}$/.test(d);
+
+  // A PER-PERSON figure («500 ريال للفرد», «٥٠٠ للشخص») is NOT the grand total;
+  // silently banking it would undercharge, so re-ask by returning null (AW-P5-1).
+  if (new RegExp(
+    `(?<![\\d.])\\d+(?:\\.\\d+)?\\s*(?:${CURRENCY_RE})?\\s*لل?(?:فرد|شخص|نفر|راس)(?=\\s|$)`,
+  ).test(t)) {
+    return null;
+  }
+
+  // «N الف/الاف» = N×1000 and the dual «الفين/الفان» = 2000. Runs BEFORE the
+  // marker/currency rules so «الاجمالي 3 الف» is 3000 (not the lone 3 the
+  // marker would otherwise grab) and «3 الف»/«ثلاث الاف» are 3000, not 1000.
+  // The bare single-word «الف»→1000 and compound «الف وخمسمئة»→null paths below
+  // are untouched — they need no preceding count (AW-P2-1).
+  if (/(?:^|\s)(?:و?ب?)?الف(?:ين|ان)(?=\s|$)/.test(t)) return 2000;
+  const thousands = t.match(
+    new RegExp(`(?<![\\d.])(\\d{1,4}|${NUM_WORD_ALTS})\\s*(?:الاف|الف)(?=\\s|$)`),
+  );
+  if (thousands) {
+    const unit = /^\d+$/.test(thousands[1]) ? Number(thousands[1]) : NUM_WORDS[thousands[1]];
+    if (unit) return unit * 1000;
+  }
+
   // An explicit money marker is sufficient even when the owner omits the
   // currency word: «السعر ٣٠٠», «المبلغ: 500». The marker keeps phone, guest
   // count and time digits from ever being mistaken for money. Attached و/ب
@@ -619,12 +704,16 @@ export function extractAmount(text) {
   if (marked) return Number(marked[1]);
 
   // Digits + currency, attached or spaced («٥٠٠ ريال», "500ريال", "500 sar").
+  // A phone glued to «ريال» («0501234567 ريال») is skipped — never a price.
   const m = t.match(new RegExp(`(?<![\\d.])(\\d+(?:\\.\\d+)?)\\s*${CURRENCY_RE}`));
-  if (m) return Number(m[1]);
+  if (m && !isPhoneDigits(m[1])) return Number(m[1]);
 
-  // A price with a «لـ + booking noun» tail states the amount "for the
-  // period/day/booking": «٤٥٠ للفترة» / «٤٥٠ لليوم» / «٤٥٠ للحجز» -> 450.
-  const perUnit = t.match(/(?<![\d.])(\d+(?:\.\d+)?)\s*لل?(?:فترة|يوم|حجز|ليلة|ليله|يله)(?=\s|$)/);
+  // A price with a «لـل + booking noun» tail states the amount "for the
+  // period/day/booking": «٤٥٠ للفترة» / «٤٥٠ لليوم» / «٤٥٠ للحجز» / «٤٥٠ لليلة»
+  // -> 450. The DOUBLE-lam «لل» (لِ+الـ = "per the") is REQUIRED so a bare
+  // NIGHTS count «7 ليله» / «3 ليالي» is not misread as a price via the
+  // word-initial lam (A-P0-3). Nouns are the bare form that follows «لل».
+  const perUnit = t.match(/(?<![\d.])(\d+(?:\.\d+)?)\s*لل(?:فترة|فتره|يوم|حجز|يلة|يله)(?=\s|$)/);
   if (perUnit) return Number(perUnit[1]);
 
   // Two-token spoken hundreds «خمس مئة» / «ثلاث مية» -> 500 / 300. This MUST run
@@ -670,9 +759,10 @@ export function extractAmount(text) {
       }
     }
   }
-  // Whole message is just the number -> accept without a currency word.
+  // Whole message is just the number -> accept without a currency word, unless
+  // it is a bare Saudi mobile («0501234567», «00966501234567») — never a price.
   const bare = scrubPunct(t).trim();
-  if (/^\d+(\.\d+)?$/.test(bare)) return Number(bare);
+  if (/^\d+(\.\d+)?$/.test(bare) && !isPhoneDigits(bare)) return Number(bare);
   return null;
 }
 
@@ -680,6 +770,12 @@ export function extractAmount(text) {
 export function isExplicitFree(text) {
   if (typeof text !== 'string') return false;
   const t = scrubPunct(normalizeText(text));
+  // A negation particle right before the free word flips its meaning
+  // («مو ببلاش», «مب ببلاش», «مش مجاني» = NOT free) — never treat those as free
+  // (A-P1-6). Longest particles first so «ماهو» wins over «ما».
+  if (/(?:^|\s)(?:ماهو|مهو|مش|مو|مب|ما)\s+(?:مجاني|مجانا|مجانية|مجانيه|ببلاش|بلاش)(?=\s|$)/.test(t)) {
+    return false;
+  }
   if (/(?:^|\s)(?:مجاني|مجانا|مجانية|مجانيه|ببلاش|بلاش)(?=\s|$)/.test(t)) return true;
   if (/بدون سعر|بدون مبلغ|بلا سعر|بلا فلوس|صفر ريال|الاجمالي صفر|على حساب[يى]/.test(t)) return true;
   return t.trim() === 'صفر';
