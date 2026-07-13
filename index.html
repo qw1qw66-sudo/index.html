@@ -139,6 +139,9 @@
         border-color: var(--g2);
         box-shadow: 0 0 0 3px var(--g-soft);
       }
+      .booking-search-row {
+        margin: 10px 0 4px;
+      }
       textarea {
         min-height: 88px;
         resize: vertical;
@@ -962,6 +965,13 @@
                   + حجز جديد
                 </button>
               </div>
+            </div>
+            <div class="booking-search-row">
+              <input
+                id="bookingSearch"
+                type="search"
+                placeholder="ابحث بالاسم أو الشاليه أو التاريخ"
+              />
             </div>
             <div id="bookingList"></div>
             <details id="bookingsPastSection" class="section-details">
@@ -3257,37 +3267,63 @@
               )
               .join("") || '<div class="empty">لا توجد شاليهات</div>';
         }
-        function renderBookings() {
-          parkBookingEditor();
-          parkVoucherPanel();
+        // A booking matches the search query when the query is a substring of
+        // its customer name, chalet name, ISO or display date, or the last 4
+        // digits of the phone. Empty query matches everything.
+        function bookingMatches(b, q) {
+          if (!q) return true;
+          const hay = [
+            b.customer_name || "",
+            chaletName(b.chalet_id) || "",
+            b.booking_date || "",
+            formatDateDisplay(b.booking_date) || "",
+            String(b.customer_phone || "").slice(-4),
+          ]
+            .join(" ")
+            .toLowerCase();
+          return hay.includes(q);
+        }
+        // Renders the upcoming/past/cancelled lists honoring the search box.
+        // Split out from renderBookings so live-search re-renders WITHOUT
+        // parking (hiding) an open booking editor.
+        function renderBookingLists() {
+          const q = ($("bookingSearch") ? $("bookingSearch").value : "")
+            .trim()
+            .toLowerCase();
+          const emptyMsg = (base) => (q ? "لا نتائج مطابقة للبحث" : base);
+          const upcoming = activeBookings()
+            .filter((b) => b.status !== "cancelled" && b.booking_date >= today() && bookingMatches(b, q))
+            .slice()
+            .sort((a, b) => a.booking_date.localeCompare(b.booking_date));
           $("bookingList").innerHTML =
-            activeBookings()
-              .filter((b) => b.status !== "cancelled" && b.booking_date >= today())
-              .slice()
-              .sort((a, b) => a.booking_date.localeCompare(b.booking_date))
-              .map((b) => bookingCard(b, "upcoming"))
-              .join("") || '<div class="empty">لا توجد حجوزات</div>';
+            upcoming.map((b) => bookingCard(b, "upcoming")).join("") ||
+            '<div class="empty">' + emptyMsg("لا توجد حجوزات") + "</div>";
           const past = activeBookings()
-            .filter((b) => b.status !== "cancelled" && b.booking_date < today())
+            .filter((b) => b.status !== "cancelled" && b.booking_date < today() && bookingMatches(b, q))
             .slice()
             .sort((a, b) => b.booking_date.localeCompare(a.booking_date));
           $("bookingPastList").innerHTML =
             past.map((b) => bookingCard(b, "past")).join("") ||
-            '<div class="empty">لا توجد حجوزات قديمة</div>';
+            '<div class="empty">' + emptyMsg("لا توجد حجوزات قديمة") + "</div>";
           $("bookingsPastSection").querySelector("summary").textContent =
             "الحجوزات القديمة (" + past.length + ")";
           // Cancelled bookings live in their OWN reachable section — otherwise
           // a mistakenly-cancelled booking vanished from every list and could
           // never be re-opened, re-confirmed, or deleted.
           const cancelled = activeBookings()
-            .filter((b) => b.status === "cancelled")
+            .filter((b) => b.status === "cancelled" && bookingMatches(b, q))
             .slice()
             .sort((a, b) => b.booking_date.localeCompare(a.booking_date));
           $("bookingCancelledList").innerHTML =
             cancelled.map((b) => bookingCard(b, "past")).join("") ||
-            '<div class="empty">لا توجد حجوزات ملغاة</div>';
+            '<div class="empty">' + emptyMsg("لا توجد حجوزات ملغاة") + "</div>";
           $("bookingsCancelledSection").querySelector("summary").textContent =
             "الحجوزات الملغاة (" + cancelled.length + ")";
+        }
+        function renderBookings() {
+          parkBookingEditor();
+          parkVoucherPanel();
+          renderBookingLists();
         }
         function parkBookingEditor() {
           const editor = $("bookingEditor");
@@ -5555,6 +5591,7 @@
           });
           $("reportMonth").addEventListener("change", () => runReport(false));
           $("reportChalet").addEventListener("change", () => runReport(false));
+          $("bookingSearch").addEventListener("input", renderBookingLists);
           const assistantInputEl = $("assistantInput");
           if (assistantInputEl)
             assistantInputEl.addEventListener("keydown", (e) => {
