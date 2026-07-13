@@ -1517,11 +1517,20 @@ async function runBookingPipeline(deps, ctx, { threadId, rawMessage, message, pr
         })),
       };
     }
-    // While a numbered PICK is pending, any UNRECOGNIZED reply (a chalet that
-    // isn't in the list, a re-typed conflicted name, gibberish) must re-emit the
-    // FULL options — never «لم أفهم», and never the 220-char-truncated pending
-    // echo that silently dropped option 3.
-    if (pendingQ && pendingQ.kind === "pick" && storedAlts.length) {
+    // While a numbered PICK is pending, a reply that NAMES an option the list
+    // doesn't contain (a real chalet not shown, a re-typed conflicted name, an
+    // explicit «شاليه/فترة» reference) re-emits the FULL options — never «لم
+    // أفهم», and never the 220-char-truncated pending echo that dropped option
+    // 3. Pure gibberish is NOT an option attempt, so it still gets the guided
+    // «لم أفهم ردّك» fallback below (which always advertises «الغِ الحجز»).
+    const looksLikeOption =
+      /(?:^|\s)(?:شاليه|شالية|الشاليه|فترة|الفترة)(?=\s|$)/.test(message) ||
+      /(صباحي|صباحية|مسائي|مسائية|ليلي|ليلية|نهاري|نهارية)(?=\s|$)/.test(message) ||
+      storedAlts.some((a) =>
+        (a.chalet_name && message.includes(String(a.chalet_name))) ||
+        (a.period_label && message.includes(String(a.period_label)))
+      );
+    if (pendingQ && pendingQ.kind === "pick" && storedAlts.length && looksLikeOption) {
       return {
         ok: true,
         reply_ar: alternativesReplyAr(storedAlts, "هذا الخيار ليس ضمن القائمة المعروضة. اختر رقماً من الخيارات:"),
