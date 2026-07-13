@@ -1158,3 +1158,24 @@ test('expenses tab: add an expense, list it, and see net in the report', async (
   await expect(page.locator('#reportBox')).toContainText('المصاريف');
   await expect(page.locator('#reportBox')).toContainText('الصافي');
 });
+
+test('bookings search filters the list live by customer name', async ({ page }) => {
+  await mockRpc(page);
+  await page.goto('/');
+  await create(page);
+  await createChaletWithSixPeriods(page);
+  await page.locator('[data-tab="bookings"]').click();
+  await page.locator('[data-action="new-booking"]').click();
+  await page.locator('#bookingCustomerName').fill('علي المطيري');
+  await page.locator('#bookingDate').fill(FUTURE_DATE);
+  await page.locator('#bookingTotal').fill('500');
+  await page.locator('[data-action="save-booking"]').click();
+  await expect(page.locator('#bookingList')).toContainText('علي المطيري');
+  // A matching query keeps the booking; a non-matching one shows the empty state.
+  await page.locator('#bookingSearch').fill('علي');
+  await expect(page.locator('#bookingList')).toContainText('علي المطيري');
+  await page.locator('#bookingSearch').fill('زياد');
+  await expect(page.locator('#bookingList')).toContainText('لا نتائج مطابقة للبحث');
+  await page.locator('#bookingSearch').fill('');
+  await expect(page.locator('#bookingList')).toContainText('علي المطيري');
+});
