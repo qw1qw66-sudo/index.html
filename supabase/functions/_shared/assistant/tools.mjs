@@ -124,6 +124,9 @@ function bookingSchema(create, update) {
     // «الحجز مجاني») — the executor rejects unintended zero prices.
     total: { type: "number", min: 0, required: !!create },
     total_is_free: { type: "boolean" },
+    // The owner's stated deposit («عربون N»). Optional on both create and
+    // update; a deposit never substitutes for the total.
+    paid: { type: "number", min: 0 },
     notes: { type: "string", maxLen: 1000 },
   };
   // New bookings may use human names. The server resolves them against the

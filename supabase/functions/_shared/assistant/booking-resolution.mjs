@@ -110,11 +110,22 @@ function uniqueNameMatch(items, query, valueOf, normalize) {
   const exact = indexed.filter((x) => x.key && x.key === wanted);
   if (exact.length === 1) return { status: "ok", item: exact[0].item };
   if (exact.length > 1) return { status: "ambiguous", matches: exact.map((x) => x.item) };
-  // A cautious convenience match handles short owner phrasing such as
-  // "تولوم" vs "منتجع تولوم". It is accepted only when exactly one real
-  // record matches, so the server never guesses between two chalets/periods.
+  // A cautious convenience match handles short owner phrasing and a chalet named
+  // INSIDE a longer sentence. It is accepted only when exactly one real record
+  // matches. TWO dangerous shapes are excluded so the server never binds the
+  // WRONG chalet (A-P1-9):
+  //   • a query that STARTS WITH a shorter registered name and then diverges
+  //     («نور القمر» over «نور» — the owner named something the record lacks);
+  //   • a query that is only a mid-token SUBSTRING of a longer name («شمس»
+  //     inside «نور الشمس») — never a real reference.
+  // So a partial binds only as a clean LEADING PREFIX of the record
+  // («تولوم»→«تولوم 2»), or where the record name appears EMBEDDED past the
+  // start of the query (a chalet named mid-sentence, «احجز …تولوم… بكرة»).
   const partial = wanted.length >= 3
-    ? indexed.filter((x) => x.key && (x.key.includes(wanted) || wanted.includes(x.key)))
+    ? indexed.filter((x) => x.key && (
+        x.key.startsWith(wanted) ||                            // query is a leading prefix of the record
+        (wanted.includes(x.key) && !wanted.startsWith(x.key))  // record embedded past the query's start
+      ))
     : [];
   if (partial.length === 1) return { status: "ok", item: partial[0].item };
   if (partial.length > 1) {
@@ -123,7 +134,7 @@ function uniqueNameMatch(items, query, valueOf, normalize) {
     // prefix/substring of it («تولوم 2» necessarily also contains «تولوم»), bind
     // the longer one instead of failing ambiguous. Two genuinely distinct names
     // (neither a substring of the other) still stay ambiguous.
-    const contained = partial.filter((x) => wanted.includes(x.key));
+    const contained = partial.filter((x) => wanted.includes(x.key) && !wanted.startsWith(x.key));
     if (contained.length) {
       const longest = contained.reduce((a, b) => (b.key.length > a.key.length ? b : a));
       if (contained.every((x) => longest.key.includes(x.key))) {

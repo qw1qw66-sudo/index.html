@@ -242,7 +242,9 @@ async function bookingCreate(wsKey, pin, args, deps) {
     // below (INVALID_GUESTS / INVALID_TOTAL) instead of becoming 1 / 0.
     guests: Number(args.guests),
     total: Number(args.total),
-    paid: 0,
+    // The owner's stated deposit («عربون N») rides through as args.paid; a
+    // missing/invalid value stays 0. validateResultingBooking checks "paid".
+    paid: Number(args.paid) || 0,
     status: "confirmed",
     notes: String(args.notes || "").trim(),
     remaining_status: "",
