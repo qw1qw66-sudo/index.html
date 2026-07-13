@@ -3373,13 +3373,31 @@
         function periodsOverlap(a, b) {
           if (!a.start || !a.end || !b.start || !b.end) return false;
           const base = "2000-01-01T";
-          const aStart = new Date(base + a.start + ":00").getTime();
-          let aEnd = new Date(base + a.end + ":00").getTime();
-          if (aEnd <= aStart) aEnd += 86400000;
-          const bStart = new Date(base + b.start + ":00").getTime();
-          let bEnd = new Date(base + b.end + ":00").getTime();
-          if (bEnd <= bStart) bEnd += 86400000;
-          return aStart < bEnd && aEnd > bStart;
+          // Advisory editor twin of the booking engine (intervalFor /
+          // availability.mjs applyNightAnchor): fold end<=start into a wrap
+          // (+1 day) AND shift a non-wrapping pre-06:00 slot into the night of
+          // its date (both ends +1 day). Without the night-anchor the «فترات
+          // متداخلة» banner under-reports night-anchored template collisions
+          // (e.g. 19:00–05:00 vs 00:00–05:00). Advisory only — never blocks saves.
+          const anchor = (start, end) => {
+            const st = padTimeHHmm(start),
+              en = padTimeHHmm(end);
+            if (!st || !en) return null;
+            let s = new Date(base + st + ":00").getTime();
+            let e = new Date(base + en + ":00").getTime();
+            if (!isFinite(s) || !isFinite(e)) return null;
+            if (e <= s) {
+              e += 86400000; // wraps past midnight
+            } else if (Number(st.slice(0, 2)) < NIGHT_ANCHOR_HOUR) {
+              s += 86400000; // post-midnight slot: the night of this date
+              e += 86400000;
+            }
+            return { s, e };
+          };
+          const ai = anchor(a.start, a.end),
+            bi = anchor(b.start, b.end);
+          if (!ai || !bi) return false;
+          return ai.s < bi.e && ai.e > bi.s;
         }
         function hasOverlappingActivePeriods(periods) {
           const actives = (periods || []).filter((p) => p.active);
@@ -3460,6 +3478,23 @@
               updated_at: now(),
             };
           if (!c.name) return feedback("اسم الشاليه مطلوب", "bad");
+          // Period-time integrity at the SAVE source (mirrors availability.mjs
+          // padTimeHHmm + the SQL time cast). Only slots with time content are
+          // checked; blank editor slots are ignored.
+          for (const p of c.periods) {
+            const hasStart = String(p.start || "").trim() !== "",
+              hasEnd = String(p.end || "").trim() !== "";
+            if (!hasStart && !hasEnd) continue; // blank slot — not a real period
+            // D-P14-1: an out-of-range time (hour>23 / minute>59, e.g. "25:70")
+            // would make the SQL cast raise and abort the conflict query.
+            if ((hasStart && !padTimeHHmm(p.start)) || (hasEnd && !padTimeHHmm(p.end)))
+              return feedback("صيغة الوقت غير صحيحة", "bad");
+            // D-P6-1: a zero-length period (start===end) hard-blocks bookings via
+            // AVAILABILITY_UNPROVABLE. Refuse it at the source so it can never be
+            // created (already-saved ones are grandfathered as a 24h interval).
+            if (hasStart && hasEnd && padTimeHHmm(p.start) === padTimeHHmm(p.end))
+              return feedback("وقت البداية والنهاية لا يمكن أن يكونا متطابقين", "bad");
+          }
           if (old) Object.assign(old, c);
           else state.chalets.push(c);
           $("chaletEditor").classList.add("hidden");

@@ -79,12 +79,24 @@ export function applyNightAnchor(start, end, startHour) {
 // (unknown time can never prove availability).
 export function periodInterval(period, dateIso) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(dateIso))) return null;
-  const t = validatePeriodTimes(period);
-  if (!t.ok) return null;
-  const s = new Date(`${dateIso}T${t.start}:00Z`).getTime();
-  const e = new Date(`${dateIso}T${t.end}:00Z`).getTime();
+  const start = normalizeTimeHHmm(period?.start);
+  const end = normalizeTimeHHmm(period?.end);
+  // Missing/malformed times can never prove availability — fail CLOSED (null).
+  if (!start || !end) return null;
+  // A grandfathered ZERO-LENGTH period (start===end) is deliberately NOT treated
+  // as unprovable here. The SQL save-guard (migration 0008) and index.html
+  // intervalFor both fold end<=start into a wrap (+1 day) — i.e. a full 24h
+  // interval [T .. T+1day] — and applyNightAnchor does the same in its e<=s
+  // branch. So we let it run instead of returning null: an already-saved
+  // zero-length period then blocks ONLY its real 24h night (matching SQL) rather
+  // than fail-closing every booking on the chalet with `unknown_interval`.
+  // Creating a NEW zero-length period is still refused up front (index.html
+  // saveChalet + the stricter validatePeriodTimes used by isPeriodBookable /
+  // availablePeriodsOn), so this branch only ever grandfathers legacy data.
+  const s = new Date(`${dateIso}T${start}:00Z`).getTime();
+  const e = new Date(`${dateIso}T${end}:00Z`).getTime();
   if (!isFinite(s) || !isFinite(e)) return null;
-  return applyNightAnchor(s, e, Number(t.start.slice(0, 2)));
+  return applyNightAnchor(s, e, Number(start.slice(0, 2)));
 }
 
 export function intervalsOverlap(a, b) {

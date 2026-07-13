@@ -78,8 +78,11 @@ function normalizeLoose(s) {
 // phone's last digit onto «باسم», and without the digit in this class the
 // marker never fired and the name was lost. Multi-word markers («اسم الضيف»,
 // «صاحب الحجز») come before their single-word prefixes so they win the match.
+// The marker word is CAPTURED (group 1) so extractCustomerName can tell an
+// EXPLICIT «باسم»-class marker from the weak preposition «لـ», and can skip an
+// «اسمه/صاحبه» that actually names a chalet (preceded by «شاليه»).
 const NAME_MARKER_RE =
-  /(?:^|[\s،,.;:؛\d])(?:و|ف)?(?:العميل|اسم الضيف|صاحب الحجز|صاحبه|الاسم|اسمه|الاستاذ|الأستاذ|للاستاذ|للأستاذ|باسم|بإسم|بأسم|لـ)[\s:،]*/gu;
+  /(?:^|[\s،,.;:؛\d])(?:و|ف)?(العميل|اسم الضيف|صاحب الحجز|صاحبه|الاسم|اسمه|الاستاذ|الأستاذ|للاستاذ|للأستاذ|باسم|بإسم|بأسم|لـ)[\s:،]*/gu;
 
 const CURRENCY_TOKEN_RE = /^(?:ريال|ريالا|ريالات|ر\.س|sar|sr)$/;
 
@@ -98,6 +101,12 @@ const NAME_STOP = new Set([
   "جوال", "جواله", "الجوال", "رقم", "رقمه", "هاتف", "هاتفه", "تلفون", "تليفون", "موبايل", "واتس", "واتساب", "phone", "mobile",
   // counts / money
   "شخص", "شخصين", "اشخاص", "ضيف", "ضيوف", "نفر", "انفار", "فرد", "افراد", "عدد",
+  // spelled number-words + duals in a trailing GUEST phrase must not pollute the
+  // name: «باسم محمد لاربعة اشخاص» -> «محمد», «باسم محمد ضيفين» -> «محمد». The
+  // «لـ»-prefixed forms keep no tatweel so the «لـ» name-marker never fires here.
+  "واحد", "اثنين", "ثلاثة", "اربعة", "خمسة", "ستة", "سبعة", "ثمانية", "تسعة", "عشرة",
+  "لواحد", "لاثنين", "لثلاثة", "لاربعة", "لخمسة", "لستة", "لسبعة", "لثمانية", "لتسعة", "لعشرة",
+  "ضيفين", "نفرين", "فردين",
   "سعر", "السعر", "بسعر", "مبلغ", "بمبلغ", "المبلغ", "اجمالي", "الاجمالي", "مجانا", "مجاني",
   // booking vocabulary / connectors («شالية» is the common taa-marbuta
   // spelling; «الوقت/الساعة» open a time clause — live IMG_6702 wording)
@@ -119,9 +128,36 @@ const NAME_STOP = new Set([
   "عربون", "مقدم", "دفع", "دفعة", "دفعه", "سدد",
 ]);
 
+// «صباح»/«مساء» are in NAME_STOP as time words, but they are ALSO real given
+// names. This SOFT-STOP set is allowed as the name's FIRST token when it follows
+// an EXPLICIT «باسم»-class marker («باسم صباح» -> «صباح»). A bare «صباح» with no
+// marker is still not a name, and the ADJECTIVE forms «صباحي/مسائي» stay in
+// NAME_STOP as hard stops («باسم عبدالله مسائي» -> «عبدالله»).
+const SOFT_STOP = new Set(["صباح", "مساء"]);
+
+// A glued «و<marker>» starts a NEW name clause, so it TERMINATES the current
+// capture: «اسمه سكاي والعميل احمد» stops the «اسمه» capture at «والعميل».
+const GLUED_MARKER_STOP = new Set([
+  "العميل", "اسمه", "صاحبه", "الاسم", "باسم", "الاستاذ",
+]);
+
+// Chalet nouns: «اسمه/صاحبه» right after one names the CHALET, not the customer.
+const CHALET_MARKER_WORDS = new Set(["الشاليه", "شاليه", "شالية", "الشالية"]);
+
+// Leading honorifics stripped from the captured name: «باسم الاستاذة فاطمة» ->
+// «فاطمة», «باسم الدكتورة نورة» -> «نورة», «باسم الاستاذ محمد» -> «محمد». Stored
+// in the loose normal form (hamza folded; taa-marbuta and haa spellings both).
+const HONORIFICS = new Set([
+  "الاستاذ", "الاستاذة", "الاستاذه",
+  "الدكتور", "الدكتورة", "الدكتوره",
+  "الشيخ", "الشيخة", "الشيخه",
+  "د", "دكتور", "دكتورة", "استاذ", "استاذة", "استاذه",
+]);
+
 // "العميل علي تجربة" -> "علي تجربة". Capture after a marker until a digit,
 // a currency word, a stop word, sentence punctuation or end (trim ، / و).
-function nameFromSegment(segment) {
+function nameFromSegment(segment, opts = {}) {
+  const explicit = opts.explicit === true;
   const collected = [];
   const toks = segment.split(/\s+/).filter(Boolean);
   // Name CORRECTION «غيّر الاسم الى فهد»: the «الاسم» marker matched, leaving
@@ -135,8 +171,20 @@ function nameFromSegment(segment) {
     if (/\d/.test(tok)) break;
     const norm = normalizeLoose(tok).trim();
     if (!norm) break;
-    // A leading و glued to a stop word («وجواله») also ends the capture.
-    const bare = norm.length > 1 && norm.startsWith("و") ? norm.slice(1) : norm;
+    // A leading و glued to a token ends or redirects the capture: «وجواله»
+    // (glued stop word) OR «والعميل» (glued NAME marker starting a new clause).
+    const gluedWaw = norm.length > 1 && norm.startsWith("و");
+    const bare = gluedWaw ? norm.slice(1) : norm;
+    if (gluedWaw && GLUED_MARKER_STOP.has(bare)) break;
+    // Leading honorific («الاستاذة فاطمة», «د. نورة», «الاستاذ محمد») is a title,
+    // not the name — skip it while nothing is collected yet.
+    if (!collected.length && (HONORIFICS.has(norm) || HONORIFICS.has(bare))) continue;
+    // «صباح»/«مساء» are real given names as the FIRST captured token after an
+    // EXPLICIT «باسم»-class marker; elsewhere they stay hard stops (time words).
+    if (!collected.length && explicit && (SOFT_STOP.has(norm) || SOFT_STOP.has(bare))) {
+      collected.push(tok);
+      continue;
+    }
     if (CURRENCY_TOKEN_RE.test(bare) || NAME_STOP.has(norm) || NAME_STOP.has(bare)) break;
     collected.push(tok);
     if (collected.length >= 5) break; // names are short; never swallow a sentence
@@ -147,9 +195,21 @@ function nameFromSegment(segment) {
 function extractCustomerName(folded) {
   const s = String(folded || "");
   for (const m of s.matchAll(NAME_MARKER_RE)) {
+    const marker = m[1] || "";
+    // «اسمه/صاحبه» right after a chalet noun («الشاليه اسمه سكاي») names the
+    // CHALET, not the customer — skip this marker so a later «العميل»/«باسم»
+    // still captures the real customer name.
+    if (marker === "اسمه" || marker === "صاحبه") {
+      const before = normalizeLoose(s.slice(0, m.index)).trim();
+      const prevWord = before.split(/\s+/).pop() || "";
+      if (CHALET_MARKER_WORDS.has(prevWord)) continue;
+    }
+    // «لـ» is the weak preposition marker; only «باسم»-class markers are EXPLICIT
+    // and may keep a SOFT-STOP («صباح»/«مساء») as the name's first token.
+    const explicit = marker !== "لـ";
     // Sentence punctuation ends the name outright.
     const tail = s.slice(m.index + m[0].length);
-    const name = nameFromSegment(tail.split(/[،,.;؛!؟?\n]/)[0]);
+    const name = nameFromSegment(tail.split(/[،,.;؛!؟?\n]/)[0], { explicit });
     if (name) return name;
   }
   return "";
