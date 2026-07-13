@@ -136,6 +136,53 @@ function makeDeps() {
         .eq("workspace_key", wsKey).eq("status", "active");
       return data ?? [];
     },
+    // Persist a memory row (already shaped/redacted by memory.mjs). When the row
+    // carries a content_json.key, any prior ACTIVE row with the same key is
+    // superseded first so a repeat customer updates instead of duplicating.
+    async proposeMemory(wsKey: string, row: Record<string, unknown>) {
+      const content = (row.content_json as Record<string, unknown>) || {};
+      const key = typeof content.key === "string" ? content.key : "";
+      if (key) {
+        await supabase.from("assistant_memory")
+          .update({ status: "superseded" })
+          .eq("workspace_key", wsKey).eq("status", "active")
+          .filter("content_json->>key", "eq", key);
+      }
+      const { data, error } = await supabase.from("assistant_memory").insert({
+        workspace_key: wsKey,
+        memory_type: row.memory_type ?? "fact",
+        status: row.status ?? "proposed",
+        content_json: content,
+        source_type: row.source_type ?? "model",
+        source_reference: row.source_reference ?? null,
+        enforcement_level: row.enforcement_level ?? "advisory",
+      }).select("id").single();
+      if (error || !data) return { ok: false, error: "MEMORY_WRITE_FAILED" };
+      return { ok: true, id: data.id };
+    },
+    async listMemories(wsKey: string, opts?: { status?: string }) {
+      let q = supabase.from("assistant_memory")
+        .select("id, memory_type, status, enforcement_level, content_json, source_type, created_at")
+        .eq("workspace_key", wsKey);
+      if (opts?.status) q = q.eq("status", opts.status);
+      const { data } = await q.order("created_at", { ascending: false }).limit(100);
+      return data ?? [];
+    },
+    async promoteMemory(wsKey: string, memoryId: string) {
+      const { data } = await supabase.rpc("assistant_promote_memory", {
+        p_workspace_key: wsKey, p_memory_id: memoryId,
+      }).single();
+      return data ?? { ok: false, error: "PROMOTE_FAILED" };
+    },
+    async rejectMemory(wsKey: string, memoryId: string) {
+      const { data, error } = await supabase.from("assistant_memory")
+        .update({ status: "rejected" })
+        .eq("workspace_key", wsKey).eq("id", memoryId)
+        .in("status", ["proposed", "active"]).select("id");
+      if (error) return { ok: false, error: "REJECT_FAILED" };
+      if (!data || data.length !== 1) return { ok: false, error: "MEMORY_NOT_FOUND" };
+      return { ok: true };
+    },
 
     // ---- thread lifecycle (workspace-scoped) ----
     async createThread(wsKey: string, title: string) {

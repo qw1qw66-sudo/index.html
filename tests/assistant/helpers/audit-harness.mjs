@@ -68,11 +68,23 @@ function makeDeps(doc) {
   const actions = new Map();
   let seq = 0;
   const executed = [];
+  const memories = [];
+  let memSeq = 0;
   return {
-    env: ENV, _modelCalls: modelCalls, _drafts: drafts, _executed: executed, _doc: doc,
+    env: ENV, _modelCalls: modelCalls, _drafts: drafts, _executed: executed, _doc: doc, _memories: memories,
     async auth(k, p) { return k === WS && p === "123456" ? { ok: true, workspace_key: WS } : { ok: false, error_code: "X" }; },
     async callModel(a) { modelCalls.push(a); return { ok: false, error: "DEEPSEEK_UNREACHABLE" }; },
-    async activeMemories() { return []; },
+    async activeMemories() { return memories.filter((m) => m.status === "active"); },
+    async proposeMemory(_k, row) {
+      const key = row && row.content_json && row.content_json.key;
+      if (key) for (const m of memories) if (m.status === "active" && m.content_json && m.content_json.key === key) m.status = "superseded";
+      const id = "mem-" + (++memSeq);
+      memories.push({ id, memory_type: row.memory_type || "fact", status: row.status || "proposed", content_json: row.content_json || {}, enforcement_level: row.enforcement_level || "advisory", source_type: row.source_type || "model", source_reference: row.source_reference || null });
+      return { ok: true, id };
+    },
+    async listMemories(_k, opts) { return memories.filter((m) => !opts || !opts.status || m.status === opts.status); },
+    async promoteMemory(_k, id) { const m = memories.find((x) => x.id === id); if (!m) return { ok: false, error: "MEMORY_NOT_FOUND" }; if (m.status !== "proposed") return { ok: false, error: "MEMORY_NOT_PROPOSED" }; m.status = "active"; return { ok: true }; },
+    async rejectMemory(_k, id) { const m = memories.find((x) => x.id === id); if (!m) return { ok: false, error: "MEMORY_NOT_FOUND" }; m.status = "rejected"; return { ok: true }; },
     async loadHistory() { return []; },
     async appendMessages() {},
     async getWorkspaceRevision() { return "r1"; },

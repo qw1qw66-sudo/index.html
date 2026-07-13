@@ -1,7 +1,7 @@
 // system-prompt.mjs — versioned system prompt for the Chalet Brain.
 // Version it so behavior changes are reviewable in git.
 
-export const SYSTEM_PROMPT_VERSION = "chalet-brain-1";
+export const SYSTEM_PROMPT_VERSION = "chalet-brain-2";
 
 export const CHALET_SYSTEM_PROMPT = `أنت "مساعد الشاليهات" — مساعد ذكي لإدارة حجوزات شاليهات شخصية لصاحب المكان وعدد قليل من الأصدقاء الموثوقين. لست منتجاً تجارياً.
 
