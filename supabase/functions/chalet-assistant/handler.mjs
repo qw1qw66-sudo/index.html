@@ -1433,10 +1433,21 @@ async function runBookingPipeline(deps, ctx, { threadId, rawMessage, message, pr
   // The chalet hint the resolver sees is a REDACTED copy of the message —
   // fields jsonb is model-visible by design and must never carry a raw phone.
   const safeMessage = redactText(rawMessage || "").slice(0, 200);
-  // The chalet hint comes from a NEW booking sentence — or from the owner's
-  // ANSWER to our own chalet question (live IMG_6703: «تولوم» must bind).
-  if (!fields.chalet_id && (intent || !row || chaletAnswer) && safeMessage) {
-    fields.chalet_text = chaletAnswer ? redactText(chaletAnswer).slice(0, 200) : safeMessage;
+  // The chalet hint the resolver scans. A NEW booking sentence or the owner's
+  // direct ANSWER to our chalet question (live IMG_6703: «تولوم» must bind)
+  // always sets it. A substantive ANSWER turn that carries other facts may
+  // ALSO name the chalet in passing — «الحجز باسم محمد التاريخ بعد ٣ ايام
+  // شالية تولوم عدد الضيوف ٥» is too long for the short-answer path yet clearly
+  // names it (live IMG_6721). But such a turn refreshes the hint ONLY when it
+  // actually resolves to a chalet — otherwise a chalet-less answer («مساء» to
+  // the AM/PM question) would clobber a good earlier hint and strand the draft.
+  if (!fields.chalet_id && safeMessage) {
+    const thisHint = chaletAnswer ? redactText(chaletAnswer).slice(0, 200) : safeMessage;
+    if (intent || !row || chaletAnswer) {
+      fields.chalet_text = thisHint;
+    } else if (factSignal && doc0 && resolveChaletReference(doc0, { chalet_name: thisHint }).ok) {
+      fields.chalet_text = thisHint;
+    }
   }
   const dateChanged = Boolean(facts.fields && facts.fields.booking_date);
   if (timeText) {

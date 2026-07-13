@@ -82,8 +82,11 @@ const CURRENCY_TOKEN_RE = /^(?:ريال|ريالا|ريالات|ر\.س|sar|sr)$/
 // Tokens that can never be part of a captured name (dates, times, phone
 // words, counts, booking vocabulary). Compared against the loose normal form.
 const NAME_STOP = new Set([
-  // date words + weekdays
-  "اليوم", "الليلة", "الليله", "بكرة", "بكره", "باكر", "غدا", "غد", "بعد", "يوم", "بتاريخ", "تاريخ",
+  // date words + weekdays («التاريخ» is the field LABEL the owner writes
+  // before the date — «باسم محمد التاريخ بعد ٣ ايام» must stop at «التاريخ»,
+  // live IMG_6721; without it the name over-captured «محمد التاريخ»)
+  "اليوم", "الليلة", "الليله", "بكرة", "بكره", "باكر", "باكرا", "بكرا", "غدا", "غد", "بعد",
+  "يوم", "يومين", "ايام", "اسبوع", "الاسبوع", "اسبوعين", "بتاريخ", "تاريخ", "التاريخ",
   "الاحد", "الاثنين", "الثلاثاء", "الاربعاء", "الخميس", "الجمعة", "الجمعه", "السبت",
   // time words
   "مساء", "مساءا", "صباحا", "صباح", "الصبح", "ظهرا", "الظهر", "عصرا", "العصر", "بالليل", "ليلا", "ليل",
