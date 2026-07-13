@@ -4845,6 +4845,8 @@
             return assistantDraftAction("reopen", sourceEl.dataset.actionId || "");
           if (a === "assistant-cancel-draft" && sourceEl)
             return assistantDraftAction("cancel", sourceEl.dataset.actionId || "");
+          if (a === "assistant-edit-field" && sourceEl)
+            return assistantDraftAction("edit_field", "", sourceEl.dataset.field || "");
         }
         // ========================= JS: assistant (Chalet Brain) =========================
         // Talks ONLY to the server-side chalet-assistant Edge Function. The
@@ -4965,6 +4967,42 @@
                 esc(digit + " — " + String(a.chalet_name || "")) +
                 " — " + when + " — " + times + price +
                 "</button>"
+              );
+            })
+            .join("");
+          log.appendChild(row);
+          log.scrollTop = log.scrollHeight;
+        }
+        // «التعديل بالاختيار»: after «تعديل», one chip per editable field (with
+        // its current value as a hint). Tapping tells the server WHICH field to
+        // change; the assistant then asks only for that field's new value. Own
+        // class so it clears independently of the numbered pick chips.
+        function clearEditFieldChips() {
+          const log = $("assistantLog");
+          if (log) log.querySelectorAll(".chat-edit-fields").forEach((el) => el.remove());
+        }
+        function renderEditFieldChips(list) {
+          const log = $("assistantLog");
+          if (!log) return;
+          clearEditFieldChips();
+          const items = Array.isArray(list) ? list : [];
+          if (!items.length) return;
+          const row = document.createElement("div");
+          row.className = "chat-suggest chat-edit-fields";
+          row.setAttribute("role", "group");
+          row.setAttribute("aria-label", "اختر الحقل الذي تريد تعديله");
+          row.innerHTML = items
+            .map((it) => {
+              const field = String((it && it.field) || "");
+              if (!field) return "";
+              const label = esc(String((it && it.label) || field));
+              const val = it && it.value
+                ? ' <span class="ltr">(' + esc(String(it.value)) + ")</span>"
+                : "";
+              return (
+                '<button class="tiny" type="button" data-action="assistant-edit-field" data-field="' +
+                esc(field) +
+                '">' + label + val + "</button>"
               );
             })
             .join("");
@@ -5221,6 +5259,8 @@
           }
           assistantBusy = true;
           $("assistantSendButton").disabled = true;
+          // A typed message supersedes any open «تعديل بالاختيار» chips.
+          clearEditFieldChips();
           setAssistantConn("جارٍ التفكير", "");
           try {
             const body = await assistantCall({ message });
@@ -5474,23 +5514,33 @@
         }
         // تعديل / إلغاء on the card: the server reopens the draft (fields kept)
         // or cancels it. The card leaves the screen only on server success.
-        async function assistantDraftAction(kind, actionId) {
+        async function assistantDraftAction(kind, actionId, field) {
           try {
             const body = await assistantCall({
               draft_action: kind,
               action_id: actionId || undefined,
+              field: field || undefined,
             });
             if (body.ok) {
               if (kind === "cancel") {
                 $("assistantActions").innerHTML = "";
                 delete assistantTokens[actionId];
+                clearEditFieldChips();
                 assistantAppend("bot", body.reply_ar || "تم الإلغاء، لم يُحفظ شيء.");
+              } else if (kind === "edit_field") {
+                // The owner picked a field to change: the assistant now asks
+                // only for its new value. The reopened card is already gone; a
+                // fresh one arrives after the owner sends the new value.
+                clearEditFieldChips();
+                assistantAppend("bot", body.reply_ar || "اكتب القيمة الجديدة.");
               } else {
-                // The old card's action is retired server-side — its save
-                // button must go with it; a fresh card arrives after the edit.
+                // reopen: the old card's action is retired server-side — its
+                // save button goes with it; the owner edits BY SELECTION via
+                // the field chips (or by typing), then a fresh card arrives.
                 $("assistantActions").innerHTML = "";
                 delete assistantTokens[actionId];
                 assistantAppend("bot", body.reply_ar || "تمام — ماذا تريد تعديله؟ اكتب التغيير فقط.");
+                renderEditFieldChips(body.edit_fields);
               }
             } else {
               assistantAppend("bot", assistantSafeError(body));

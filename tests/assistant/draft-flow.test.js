@@ -868,3 +868,111 @@ describe("answer matrix: every pending question accepts its bare answer", () => 
     for (const k of kinds) expect(PENDING_ANSWER_KINDS.has(k)).toBe(true);
   });
 });
+
+// «التعديل بالاختيار»: after «تعديل» the owner picks a FIELD by chip; the
+// assistant asks only for that field's new value, the answer rides the same
+// single-field parser the collection flow uses, and the completed draft
+// re-prepares a fresh card — all with ZERO model calls, phone kept private.
+describe("edit-by-field selection (التعديل بالاختيار, zero model calls)", () => {
+  const COMPLETE = "احجز تولوم بكرة صباحي 4 ضيوف باسم تجربة جواله 0501234567 بمبلغ 300";
+
+  async function prepared(deps) {
+    const t = await chat(deps, COMPLETE);
+    expect(t.model_calls).toBe(0);
+    const prep = (t.tool_results || []).find((x) => x.kind === "prepared_action");
+    expect(prep).toBeTruthy();
+    return prep;
+  }
+
+  it("reopen surfaces one chip per editable field, each with its current value, phone-free", async () => {
+    const deps = makeDeps();
+    const prep = await prepared(deps);
+    const r = await post(deps, { draft_action: "reopen", action_id: prep.action_id, thread_id: "th-1" });
+    expect(r.ok).toBe(true);
+    expect(Array.isArray(r.edit_fields)).toBe(true);
+    expect(r.edit_fields.map((c) => c.field)).toEqual(["booking_date", "period", "guests", "total", "customer_name"]);
+    const byField = Object.fromEntries(r.edit_fields.map((c) => [c.field, c]));
+    expect(byField.guests.value).toBe("4");
+    expect(byField.total.value).toBe("300");
+    expect(byField.customer_name.value).toBe("تجربة");
+    expect(byField.period.value).toContain("صباحي");
+    // reopen retires the prepared action — nothing was ever saved.
+    expect(deps._actions.get(prep.action_id).status).toBe("rejected");
+    // The customer phone NEVER appears in the chips (privacy).
+    expect(JSON.stringify(r.edit_fields)).not.toContain("0501234567");
+  });
+
+  it("edit_field(guests) asks only for guests, sets a registered pending kind, keeps the phone, and a bare numeral updates it", async () => {
+    const deps = makeDeps();
+    const prep = await prepared(deps);
+    await post(deps, { draft_action: "reopen", action_id: prep.action_id, thread_id: "th-1" });
+    const q = await post(deps, { draft_action: "edit_field", field: "guests", action_id: prep.action_id, thread_id: "th-1" });
+    expect(q.ok).toBe(true);
+    expect(q.editing_field).toBe("guests");
+    expect(q.reply_ar).toContain("الضيوف");
+    const pq = deps._drafts.get("th-1").fields.pending_q;
+    expect(pq.kind).toBe("guests");
+    expect(PENDING_ANSWER_KINDS.has(pq.kind)).toBe(true);
+    // Setting the pending question must NOT wipe the stored phone.
+    expect(deps._drafts.get("th-1").private.customer_phone).toBe("0501234567");
+    // The owner types just the new value; a fresh card re-prepares.
+    const r = await chat(deps, "٦", "th-1");
+    expect(r.model_calls).toBe(0);
+    expect(deps._drafts.get("th-1").fields.guests).toBe(6);
+    const prep2 = (r.tool_results || []).find((x) => x.kind === "prepared_action");
+    expect(prep2).toBeTruthy();
+    expect(prep2.action_id).not.toBe(prep.action_id);
+  });
+
+  it("edit_field(total) routes a bare numeral to the PRICE, never the guest count", async () => {
+    const deps = makeDeps();
+    const prep = await prepared(deps);
+    await post(deps, { draft_action: "edit_field", field: "total", action_id: prep.action_id, thread_id: "th-1" });
+    await chat(deps, "٥٠٠", "th-1");
+    const f = deps._drafts.get("th-1").fields;
+    expect(f.total).toBe(500);
+    expect(f.guests).toBe(4); // unchanged by the price edit
+  });
+
+  it("edit_field(customer_name) replaces just the name", async () => {
+    const deps = makeDeps();
+    const prep = await prepared(deps);
+    await post(deps, { draft_action: "edit_field", field: "customer_name", action_id: prep.action_id, thread_id: "th-1" });
+    await chat(deps, "خالد", "th-1");
+    expect(deps._drafts.get("th-1").fields.customer_name).toBe("خالد");
+  });
+
+  it("edit_field(booking_date) replaces just the date", async () => {
+    const deps = makeDeps();
+    const prep = await prepared(deps);
+    await post(deps, { draft_action: "edit_field", field: "booking_date", action_id: prep.action_id, thread_id: "th-1" });
+    await chat(deps, "بعد بكرة", "th-1");
+    expect(deps._drafts.get("th-1").fields.booking_date).toBe(addDays(TODAY, 2));
+  });
+
+  it("an edited field flows end-to-end: edit → answer → confirm → saved (guests 4→6, phone carried through)", async () => {
+    const deps = makeDeps();
+    const prep = await prepared(deps);
+    await post(deps, { draft_action: "edit_field", field: "guests", action_id: prep.action_id, thread_id: "th-1" });
+    const r = await chat(deps, "٦", "th-1");
+    const prep2 = (r.tool_results || []).find((x) => x.kind === "prepared_action");
+    const okc = await post(deps, { invoke_tool: { name: "confirm_booking_create", arguments: { action_id: prep2.action_id, confirmation_token: prep2.confirmation_token } } });
+    expect(okc.ok).toBe(true);
+    expect(deps._executed).toHaveLength(1);
+    expect(deps._doc.bookings[0].guests).toBe(6);
+    expect(deps._executed[0].payload.args.customer_phone).toBe("0501234567");
+  });
+
+  it("a non-editable field (chalet) or an unknown field is rejected and leaves the draft untouched", async () => {
+    const deps = makeDeps();
+    const prep = await prepared(deps);
+    const before = JSON.stringify(deps._drafts.get("th-1").fields);
+    const r1 = await post(deps, { draft_action: "edit_field", field: "chalet", action_id: prep.action_id, thread_id: "th-1" });
+    expect(r1.ok).toBe(false);
+    const r2 = await post(deps, { draft_action: "edit_field", field: "bogus", action_id: prep.action_id, thread_id: "th-1" });
+    expect(r2.ok).toBe(false);
+    // The prepared action and the draft are unchanged (rejected before any write).
+    expect(deps._actions.get(prep.action_id).status).toBe("prepared");
+    expect(JSON.stringify(deps._drafts.get("th-1").fields)).toBe(before);
+  });
+});

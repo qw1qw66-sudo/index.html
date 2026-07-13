@@ -174,14 +174,47 @@ export async function handleAssistant(req, deps) {
     }
     if (kind === "reopen") {
       // «تعديل»: the prepared action is retired; the draft stays ACTIVE with
-      // all its fields so the owner only states the change.
+      // all its fields so the owner only states the change. We ALSO surface a
+      // chip per editable field so the owner can edit BY SELECTION (اختيار) —
+      // tapping a chip routes back through draft_action:"edit_field".
       if (actionId) {
         const ctx = await deps.getConfirmationContext?.(wsKey, actionId);
         if (ctx && ctx.status === "prepared") {
           await deps.finalizeAction?.(wsKey, actionId, { status: "rejected", error_code: "REOPENED_FOR_EDIT" });
         }
       }
-      return json(200, { ok: true, reply_ar: "تمام — ماذا تريد تعديله؟ اكتب التغيير فقط (مثلاً: «الضيوف ستة» أو «التاريخ بعد بكرة»)." });
+      const reopenRow = draftThread ? await deps.getActiveDraft?.(wsKey, draftThread) : null;
+      return json(200, {
+        ok: true,
+        reply_ar: "تمام — اختر الحقل الذي تريد تعديله، أو اكتب التغيير مباشرةً (مثلاً: «الضيوف ستة» أو «التاريخ بعد بكرة»).",
+        edit_fields: editFieldChips(reopenRow && reopenRow.fields ? reopenRow.fields : {}),
+      });
+    }
+    if (kind === "edit_field") {
+      // Owner tapped a field chip: retire any still-prepared action (defensive
+      // — «تعديل»/reopen usually already did), mark the chosen field as the
+      // pending question, and ask ONLY for its new value. The next typed reply
+      // rides the existing single-field parser for that pending_q kind, then
+      // the completed draft re-prepares a fresh card.
+      const field = String(body.field || "");
+      const pendingKind = EDITABLE_FIELDS.has(field) ? PENDING_KIND_BY_MISSING[field] : "";
+      if (!pendingKind) return json(422, { ok: false, error: "UNKNOWN_EDIT_FIELD" });
+      if (actionId) {
+        const ctx = await deps.getConfirmationContext?.(wsKey, actionId);
+        if (ctx && ctx.status === "prepared") {
+          await deps.finalizeAction?.(wsKey, actionId, { status: "rejected", error_code: "REOPENED_FOR_EDIT" });
+        }
+      }
+      const row = draftThread ? await deps.getActiveDraft?.(wsKey, draftThread) : null;
+      if (!row || !row.fields) {
+        return json(200, { ok: true, reply_ar: "لا يوجد حجز قيد التعديل الآن. اطلب «جهّز حجز جديد» للبدء." });
+      }
+      const question = nextQuestionAr(row.fields, [field]) || "اكتب القيمة الجديدة.";
+      const nextFields = { ...row.fields, pending_q: { kind: pendingKind, q: String(question).slice(0, 220) } };
+      // privateFields=null preserves the stored phone; linkedActionId omitted
+      // preserves the draft's link — we only stamp the pending question here.
+      await deps.upsertDraft?.(wsKey, draftThread, nextFields, null);
+      return json(200, { ok: true, reply_ar: question, editing_field: field });
     }
     if (kind === "get") {
       const d = draftThread ? await deps.getActiveDraft?.(wsKey, draftThread) : null;
@@ -1377,6 +1410,46 @@ const PENDING_KIND_BY_MISSING = {
   total: "total",
   customer_name: "customer_name",
 };
+
+// «التعديل بالاختيار»: fields the owner can change by TAPPING a chip on the
+// prepared card's «تعديل», instead of typing the whole correction. Each maps
+// to an EXISTING pending_q kind (via PENDING_KIND_BY_MISSING), so the owner's
+// next reply is answered by the very same single-field parser the collection
+// flow already uses — no new answer path, PENDING_ANSWER_KINDS untouched.
+// «chalet» is intentionally excluded: changing it re-resolves period+price, so
+// it stays a free-form edit (the owner just types the new chalet).
+const EDIT_FIELD_LABELS_AR = {
+  booking_date: "التاريخ",
+  period: "الفترة",
+  guests: "الضيوف",
+  total: "السعر",
+  customer_name: "العميل",
+};
+const EDIT_FIELD_ORDER = ["booking_date", "period", "guests", "total", "customer_name"];
+const EDITABLE_FIELDS = new Set(EDIT_FIELD_ORDER);
+
+// One chip per editable field, each carrying the CURRENT value as a hint (the
+// prepared card leaves the screen on «تعديل», so the chip is the only place the
+// owner still sees what a field holds). Read-only — never mutates the draft.
+function editFieldChips(fields) {
+  const f = fields && typeof fields === "object" ? fields : {};
+  return EDIT_FIELD_ORDER.map((field) => {
+    let value = null;
+    if (field === "booking_date" && f.booking_date) {
+      value = formatDateDisplay(String(f.booking_date)) || String(f.booking_date);
+    } else if (field === "period" && f.period_label) {
+      value = String(f.period_label);
+    } else if (field === "guests" && Number.isInteger(f.guests)) {
+      value = String(f.guests);
+    } else if (field === "total") {
+      if (f.total_source === "free") value = "مجاني";
+      else if (Number.isFinite(Number(f.total)) && Number(f.total) > 0) value = String(f.total);
+    } else if (field === "customer_name" && f.customer_name) {
+      value = String(f.customer_name);
+    }
+    return { field, label: EDIT_FIELD_LABELS_AR[field], value };
+  });
+}
 
 const CONFLICT_HEAD_AR = "هذه الفترة محجوزة بالفعل. لم يتم حفظ الحجز.";
 // head: a richer first line when the caller has one (e.g. WHICH booking
