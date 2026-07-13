@@ -1192,6 +1192,47 @@
           </div>
           <div id="voucherPanelParking" class="hidden"></div>
         </section>
+        <!-- ========================= HTML: expenses tab ========================= -->
+        <section id="tab-expenses" class="view">
+          <div class="card editor">
+            <h3 id="expenseEditorTitle">إضافة مصروف</h3>
+            <input id="expenseId" type="hidden" />
+            <div class="grid">
+              <div>
+                <label>التاريخ</label><input id="expenseDate" type="date" />
+              </div>
+              <div>
+                <label>النوع</label><select id="expenseCategory"></select>
+              </div>
+            </div>
+            <div class="grid">
+              <div>
+                <label>المبلغ (ريال)</label
+                ><input id="expenseAmount" type="text" inputmode="decimal" class="ltr" />
+              </div>
+              <div>
+                <label>الشاليه (اختياري)</label
+                ><select id="expenseChaletId"></select>
+              </div>
+            </div>
+            <div>
+              <label>ملاحظة (اختياري)</label><input id="expenseNote" />
+            </div>
+            <div class="actions">
+              <button class="primary" data-action="save-expense">حفظ المصروف</button>
+              <button class="secondary" data-action="cancel-expense">إلغاء</button>
+            </div>
+          </div>
+          <div class="card">
+            <div class="actions between">
+              <h3>سجل المصاريف</h3>
+              <div class="muted">
+                مصاريف الشهر: <b id="expensesMonthTotal">0</b> ر.س
+              </div>
+            </div>
+            <div id="expensesList"></div>
+          </div>
+        </section>
         <!-- ========================= HTML: reports tab ========================= -->
         <section id="tab-reports" class="view">
           <div class="card">
@@ -1595,6 +1636,8 @@
               <span class="icon">⌘</span><span>الشاليهات</span></button
             ><button class="tab-button" data-tab="reports">
               <span class="icon">▦</span><span>التقارير</span></button
+            ><button class="tab-button" data-tab="expenses">
+              <span class="icon">¤</span><span>المصاريف</span></button
             ><button class="tab-button" data-tab="assistant">
               <span class="icon">✦</span><span>المساعد</span></button
             ><button class="tab-button" data-tab="settings">
@@ -1714,6 +1757,9 @@
           "هل أنت متأكد من حذف هذا الحجز؟ لا يمكن التراجع عن الحذف إلا من النسخ الاحتياطية.";
         const DELETE_CHALET_WARNING =
           "حذف الشاليه قد يؤثر على حجوزاته المرتبطة. هل أنت متأكد من حذف الشاليه؟ سيتم إخفاء العنصر من النظام وقد يؤثر على التقارير والتصدير.";
+        const DELETE_EXPENSE_WARNING =
+          "هل أنت متأكد من حذف هذا المصروف؟ لا يمكن التراجع عن الحذف إلا من النسخ الاحتياطية.";
+        const EXPENSE_CATEGORIES = ["كهرباء", "ماء", "صيانة", "مستلزمات", "رواتب", "أخرى"];
         // ========================= JS: utility helpers =========================
         function emptyData() {
           return {
@@ -1721,6 +1767,7 @@
             settings: { facility_name: "", tag: "", holidays: [] },
             chalets: [],
             bookings: [],
+            expenses: [],
           };
         }
         function canonicalEmptyDataModel() {
@@ -2355,6 +2402,19 @@
                 updated_at: b.updated_at || now(),
               }))
             : [];
+          out.expenses = Array.isArray(src.expenses)
+            ? src.expenses.map((e) => ({
+                id: String(e.id || uid()),
+                date: String(e.date || ""),
+                category: String(e.category || "أخرى"),
+                amount: Number(e.amount || 0),
+                note: String(e.note || ""),
+                chalet_id: String(e.chalet_id || ""),
+                deleted_at: e.deleted_at || null,
+                created_at: e.created_at || now(),
+                updated_at: e.updated_at || now(),
+              }))
+            : [];
           return out;
         }
         function activeChalets() {
@@ -2370,6 +2430,9 @@
         }
         function activeBookings() {
           return state.bookings.filter((b) => !b.deleted_at);
+        }
+        function activeExpenses() {
+          return state.expenses.filter((e) => !e.deleted_at);
         }
         function getChalet(id) {
           return state.chalets.find((c) => c.id === id && !c.deleted_at);
@@ -3037,8 +3100,10 @@
           renderChalets();
           renderBookings();
           renderReports();
+          renderExpenses();
           renderSettings();
           fillBookingSelects();
+          fillExpenseSelects();
         }
         function bookingCard(b, kind) {
           const dateBadgeClass = kind === "past" ? "bad" : "ok";
@@ -3846,6 +3911,136 @@
           $("bookingEditor").classList.add("hidden");
           feedback("تم الإلغاء");
         }
+        // ========================= JS: expenses logic =========================
+        function fillExpenseSelects() {
+          const catSel = $("expenseCategory");
+          if (catSel) {
+            const oldCat = catSel.value;
+            catSel.innerHTML = EXPENSE_CATEGORIES.map(
+              (c) => '<option value="' + esc(c) + '">' + esc(c) + "</option>",
+            ).join("");
+            if (oldCat && EXPENSE_CATEGORIES.includes(oldCat)) catSel.value = oldCat;
+          }
+          const chSel = $("expenseChaletId");
+          if (chSel) {
+            const oldCh = chSel.value;
+            const chalets = activeChalets();
+            chSel.innerHTML =
+              '<option value="">— غير مرتبط —</option>' +
+              chalets
+                .map(
+                  (c) => '<option value="' + esc(c.id) + '">' + esc(c.name) + "</option>",
+                )
+                .join("");
+            if (oldCh && chalets.some((c) => c.id === oldCh)) chSel.value = oldCh;
+          }
+        }
+        function expenseCard(e) {
+          const chalet = e.chalet_id ? esc(chaletName(e.chalet_id)) : "غير مرتبط بشاليه";
+          const note = e.note ? " · " + esc(e.note) : "";
+          return (
+            '<div class="item" data-expense-card-id="' +
+            esc(e.id) +
+            '"><div class="actions between"><div><b>' +
+            esc(e.category || "أخرى") +
+            '</b><div class="muted"><span class="ltr">' +
+            esc(formatDateDisplay(e.date)) +
+            "</span> · " +
+            chalet +
+            note +
+            '</div></div><b class="ltr">' +
+            money(e.amount) +
+            " ر.س</b></div>" +
+            '<div class="actions"><button class="secondary tiny" data-action="edit-expense" data-id="' +
+            esc(e.id) +
+            '">تعديل</button><button class="danger tiny" data-action="soft-delete-expense" data-id="' +
+            esc(e.id) +
+            '">حذف</button></div></div>'
+          );
+        }
+        function renderExpenses() {
+          if ($("expenseDate") && !$("expenseDate").value) $("expenseDate").value = today();
+          const list = activeExpenses()
+            .slice()
+            .sort((a, b) => String(b.date).localeCompare(String(a.date)));
+          const m = monthNow();
+          const monthTotal = list
+            .filter((e) => e.date && e.date.slice(0, 7) === m)
+            .reduce((s, e) => s + (+e.amount || 0), 0);
+          if ($("expensesMonthTotal"))
+            $("expensesMonthTotal").textContent = money(monthTotal);
+          if ($("expensesList"))
+            $("expensesList").innerHTML =
+              list.map((e) => expenseCard(e)).join("") ||
+              '<div class="empty">لا توجد مصاريف</div>';
+        }
+        function resetExpenseForm() {
+          $("expenseId").value = "";
+          $("expenseAmount").value = "";
+          $("expenseNote").value = "";
+          $("expenseChaletId").value = "";
+          $("expenseDate").value = today();
+          $("expenseEditorTitle").textContent = "إضافة مصروف";
+        }
+        function saveExpense() {
+          const id = $("expenseId").value || uid(),
+            old = state.expenses.find((x) => x.id === id),
+            e = {
+              id,
+              date: $("expenseDate").value,
+              category: $("expenseCategory").value || "أخرى",
+              amount: parseMoneyInput($("expenseAmount").value),
+              note: $("expenseNote").value.trim(),
+              chalet_id: $("expenseChaletId").value || "",
+              deleted_at: null,
+              created_at: old ? old.created_at : now(),
+              updated_at: now(),
+            };
+          if (!e.date) return feedback("التاريخ مطلوب", "bad");
+          if (!validIsoCalendarDate(e.date))
+            return feedback("التاريخ غير صالح.", "bad");
+          if (!isFinite(e.amount) || e.amount <= 0)
+            return feedback("أدخل مبلغاً صحيحاً أكبر من صفر.", "bad");
+          if (old) {
+            Object.assign(old, e);
+            log("[OK] Expense updated", { id: e.id });
+          } else {
+            state.expenses.push(e);
+            log("[OK] Expense created", { id: e.id });
+          }
+          setDirty(true, "save expense");
+          renderAll();
+          resetExpenseForm();
+          feedback("تمت إضافة المصروف", "good");
+        }
+        function editExpense(id) {
+          const e = state.expenses.find((x) => x.id === id);
+          if (!e) return;
+          showTab("expenses");
+          fillExpenseSelects();
+          $("expenseId").value = e.id;
+          $("expenseDate").value = e.date;
+          $("expenseCategory").value = e.category || "أخرى";
+          $("expenseAmount").value = String(e.amount || "");
+          $("expenseNote").value = e.note || "";
+          $("expenseChaletId").value = e.chalet_id || "";
+          $("expenseEditorTitle").textContent = "تعديل مصروف";
+        }
+        function softDeleteExpense(id) {
+          const e = state.expenses.find((x) => x.id === id);
+          if (!e) return;
+          if (!confirm(DELETE_EXPENSE_WARNING)) return;
+          e.deleted_at = now();
+          e.updated_at = now();
+          setDirty(true, "soft delete expense");
+          renderAll();
+          resetExpenseForm();
+          feedback("تم حذف المصروف محليًا", "good");
+        }
+        function cancelExpense() {
+          resetExpenseForm();
+          feedback("تم الإلغاء");
+        }
         // ========================= JS: settings logic =========================
         function saveSettings() {
           state.settings.facility_name = $("settingFacilityName").value.trim();
@@ -4402,7 +4597,34 @@
                 b.booking_date.slice(0, 7) === m &&
                 (!chId || b.chalet_id === chId),
             );
+          const monthExpenses = activeExpenses()
+            .filter(
+              (e) =>
+                e.date &&
+                e.date.slice(0, 7) === m &&
+                (!chId || e.chalet_id === chId),
+            )
+            .reduce((s, e) => s + (+e.amount || 0), 0);
           if (!list.length) {
+            if (monthExpenses > 0) {
+              currentReportText =
+                "تقرير شهر " +
+                m +
+                "\nلا توجد حجوزات في هذا الشهر.\nالمصاريف: " +
+                money(monthExpenses) +
+                "\nالصافي (الإجمالي − المصاريف): " +
+                money(-monthExpenses);
+              $("reportBox").innerHTML =
+                '<div class="grid3"><div class="item"><div class="muted">الإجمالي</div><div class="stat">' +
+                money(0) +
+                '</div></div><div class="item"><div class="muted">المصاريف</div><div class="stat">' +
+                money(monthExpenses) +
+                '</div></div><div class="item"><div class="muted">الصافي</div><div class="stat">' +
+                money(-monthExpenses) +
+                "</div></div></div>";
+              if (showMsg) feedback("تم إنشاء التقرير", "good");
+              return;
+            }
             currentReportText = "البيانات غير كافية لحكم دقيق.";
             $("reportBox").innerHTML =
               '<div class="empty">' + currentReportText + "</div>";
@@ -4450,6 +4672,8 @@
             "مستلم عند العامل: " + money(remTotals.worker_received),
             "تم تحويله/تسويته: " + money(remTotals.transferred),
             "يحتاج مراجعة: " + money(remTotals.unreviewed),
+            "المصاريف: " + money(monthExpenses),
+            "الصافي (الإجمالي − المصاريف): " + money(total - monthExpenses),
           ].join("\n");
           $("reportBox").innerHTML =
             '<div class="grid3"><div class="item"><div class="muted">العدد</div><div class="stat">' +
@@ -4468,6 +4692,10 @@
             money(remTotals.transferred) +
             '</div></div><div class="item"><div class="muted">يحتاج مراجعة</div><div class="stat">' +
             money(remTotals.unreviewed) +
+            '</div></div></div><div class="grid3"><div class="item"><div class="muted">المصاريف</div><div class="stat">' +
+            money(monthExpenses) +
+            '</div></div><div class="item"><div class="muted">الصافي (الإجمالي − المصاريف)</div><div class="stat">' +
+            money(total - monthExpenses) +
             "</div></div></div>";
           if (showMsg) feedback("تم إنشاء التقرير", "good");
         }
@@ -4524,6 +4752,10 @@
           if (a === "cancel-booking") return cancelBooking();
           if (a === "delete-booking")
             return softDeleteBooking($("bookingId").value);
+          if (a === "save-expense") return saveExpense();
+          if (a === "edit-expense") return editExpense(id);
+          if (a === "soft-delete-expense") return softDeleteExpense(id);
+          if (a === "cancel-expense") return cancelExpense();
           if (a === "voucher") return showVoucher(id, sourceEl);
           if (a === "copy-voucher") return copyVoucher();
           if (a === "send-whatsapp-voucher") return sendVoucherToWhatsapp();

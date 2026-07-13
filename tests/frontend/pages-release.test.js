@@ -256,11 +256,12 @@ describe("Pages artifact", () => {
     expect(existsSync("404.html")).toBe(true);
   });
 
-  it("contains the assistant tab, setup card and six-tab navigation", () => {
+  it("contains the assistant tab, setup card and seven-tab navigation", () => {
     expect(dist).toContain('id="tab-assistant"');
+    expect(dist).toContain('id="tab-expenses"');
     expect(dist).toContain('id="setupCard"');
     const tabs = [...dist.matchAll(/<button class="tab-button[^"]*" data-tab="([a-z]+)"/g)].map((m) => m[1]);
-    expect(tabs).toEqual(["home", "bookings", "chalets", "reports", "assistant", "settings"]);
+    expect(tabs).toEqual(["home", "bookings", "chalets", "reports", "expenses", "assistant", "settings"]);
   });
 
   it("carries the injected main-<sha> version and no leftover placeholder", () => {
