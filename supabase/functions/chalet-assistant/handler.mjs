@@ -21,6 +21,7 @@
 
 import { CHALET_SYSTEM_PROMPT, STRICT_JSON_INSTRUCTION } from "../_shared/assistant/system-prompt.mjs";
 import { evaluatePolicy } from "../_shared/assistant/policy.mjs";
+import { renderMemoriesForPrompt, customerFactFromBooking, memoryDedupeKey } from "../_shared/assistant/memory.mjs";
 import { normalizeToolCall, TOOL_REGISTRY, buildToolCatalogText } from "../_shared/assistant/tools.mjs";
 import { prepareConfirmation, reissueConfirmation, hashToken, hashPayload } from "../_shared/assistant/confirmation.mjs";
 import { redactText, redactObject } from "../_shared/assistant/redact.mjs";
@@ -272,7 +273,12 @@ export async function handleAssistant(req, deps) {
 
   // The model sees the REAL tool catalog (read + prepare tools only — never a
   // confirmation) so it can only ever name a tool that exists.
-  const systemPrompt = CHALET_SYSTEM_PROMPT + "\n\n" + buildToolCatalogText() + "\n\n" + STRICT_JSON_INSTRUCTION + "\n\n" + BOOKING_FIELDS_INSTRUCTION;
+  // Active, owner-promoted memory is injected as CONTEXT (phone-free, never
+  // authority — the policy gate still enforces any hard-block separately). Only
+  // reaches the MODEL path here; the deterministic pipeline above is untouched.
+  const memoryBlock = renderMemoriesForPrompt(activeMemories);
+  const systemPrompt = CHALET_SYSTEM_PROMPT + "\n\n" + buildToolCatalogText() + "\n\n" + STRICT_JSON_INSTRUCTION + "\n\n" + BOOKING_FIELDS_INSTRUCTION +
+    (memoryBlock ? "\n\n" + memoryBlock : "");
 
   // Stage 1: the model may request tools. Transient provider failures are
   // retried (3 attempts) before giving up.
@@ -730,6 +736,25 @@ async function runConfirmedExecution(deps, { wsKey, pin, actionId, ctx, raw, rec
   // turns and re-prepares a conflict against the owner's own new booking.
   if (exec.ok && name === "confirm_booking_create" && ctx.thread_id) {
     try { await deps.closeDraft?.(wsKey, ctx.thread_id, "completed"); } catch { /* non-fatal */ }
+  }
+  // Learn from a confirmed booking: propose a PHONE-FREE customer preference
+  // («العميل X — آخر حجز …») so the assistant remembers repeat customers. The
+  // fact is keyed per-customer so a re-booking supersedes the old one rather
+  // than piling duplicates. Non-fatal and guarded: memory never blocks a save,
+  // and a deps without proposeMemory (older wiring) simply skips it. The phone
+  // is NEVER stored here — it already lives on the booking row.
+  if (exec.ok && name === "confirm_booking_create" && typeof deps.proposeMemory === "function") {
+    try {
+      const args = (ctx.normalized_payload && ctx.normalized_payload.args) || {};
+      const fact = customerFactFromBooking({ ...args, booking_id: exec.result_reference || "" });
+      if (fact) {
+        // Pipeline-sourced fact from an owner-confirmed booking is safe to
+        // activate directly (it is phone-free context, not authority).
+        fact.status = "active";
+        fact.content_json = { ...(fact.content_json || {}), key: memoryDedupeKey(fact) };
+        await deps.proposeMemory(wsKey, fact);
+      }
+    } catch { /* memory is best-effort; never affects the booking result */ }
   }
   // A confirm-time availability failure (the slot got taken between prepare
   // and confirm, or a data-quality block) must NOT dead-end: attach the
