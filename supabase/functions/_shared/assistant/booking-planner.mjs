@@ -275,6 +275,34 @@ export function maskPhone(phone) {
   return s.slice(0, 2) + "•".repeat(s.length - 6) + s.slice(-4);
 }
 
+// A customer is "known" when a prior booking used the SAME name AND carried a
+// phone. We return that phone ONLY when it is UNAMBIGUOUS — exactly one
+// distinct phone across all of this name's prior bookings — so a name shared by
+// two different people (a collision) never auto-attaches the wrong number.
+// The raw value stays server-side; the caller masks it (maskPhone) for the
+// owner and never sends it to the client or the model.
+function normalizeCustomerName(s) {
+  return String(s ?? "")
+    .replace(/[ً-ٰٟ]/g, "") // tashkeel
+    .replace(/[أإآٱ]/g, "ا") // unify alef
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+export function knownCustomerPhone(doc, name) {
+  const want = normalizeCustomerName(name);
+  if (!want) return "";
+  const bookings = doc && Array.isArray(doc.bookings) ? doc.bookings : [];
+  const phones = new Set();
+  for (const b of bookings) {
+    if (!b || b.deleted_at || b.status === "cancelled") continue;
+    if (normalizeCustomerName(b.customer_name) !== want) continue;
+    const phone = String(b.customer_phone || "").trim();
+    if (phone) phones.add(phone);
+  }
+  return phones.size === 1 ? [...phones][0] : "";
+}
+
 // ---------------------------------------------------------------------------
 // Suggested-price acceptance detection
 // ---------------------------------------------------------------------------

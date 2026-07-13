@@ -38,6 +38,7 @@ import {
   findAlternatives,
   buildCardData,
   maskPhone,
+  knownCustomerPhone,
 } from "../_shared/assistant/booking-planner.mjs";
 
 // The model gets at most TWO calls per turn (request tools -> ground the reply
@@ -1434,6 +1435,15 @@ const EDIT_FIELD_LABELS_AR = {
 const EDIT_FIELD_ORDER = ["booking_date", "period", "guests", "total", "customer_name"];
 const EDITABLE_FIELDS = new Set(EDIT_FIELD_ORDER);
 
+// The «أضف الجوال المحفوظ» chip (known returning customer) sends this fixed
+// POSITIVE imperative; close manual variants also match. Verbs are boundary
+// -anchored and must be followed by whitespace, so they never fire inside an
+// inflected word («تضيف»/«أضفت»), and there is NO bare-noun alternative — a mere
+// «الرقم المحفوظ» inside a question must not trigger.
+const WANTS_SAVED_PHONE_RE = /(?:^|\s)(?:أضف|اضف|ضيّف|حط|استخدم)\s+.*?(?:الجوال|الرقم|الهاتف)\s+.*?(?:المحفوظ|السابق)/;
+// …and a NEGATED request («لا تضيف الرقم المحفوظ») must attach nothing.
+const NEGATED_SAVED_PHONE_RE = /(?:^|\s)(?:لا|ما|مو|مب|بدون|بلا)\s+(?:تضيف|نضيف|أضف|اضف|ضيف|حط|استخدم)/;
+
 // One chip per editable field, each carrying the CURRENT value as a hint (the
 // prepared card leaves the screen on «تعديل», so the chip is the only place the
 // owner still sees what a field holds). Read-only — never mutates the draft.
@@ -1664,6 +1674,20 @@ async function runBookingPipeline(deps, ctx, { threadId, rawMessage, message, pr
     const swap = resolveChaletReference(doc0, { chalet_name: redactText(rawMessage || "").slice(0, 200) });
     if (swap.ok && String(swap.chalet.id) !== curChaletId) chaletSwapSignal = true;
   }
+  // «أضف الجوال المحفوظ» (returning-customer chip): inject this named customer's
+  // UNIQUE saved phone into facts.private BEFORE the fact-signal check, so the
+  // closed-guided-mode no-op guard treats it as a real turn instead of swallowing
+  // it. Collision-safe; the raw number stays server-side (masked to the owner,
+  // never to the model). Absent if the owner already gave a phone this turn.
+  const msgStr = String(message || "");
+  const wantsSavedPhone = WANTS_SAVED_PHONE_RE.test(msgStr) && !NEGATED_SAVED_PHONE_RE.test(msgStr);
+  // Use THIS turn's name when the same message also renames the customer, so we
+  // never attach the previous customer's phone under a new name.
+  const nameForPhone = (facts.fields && facts.fields.customer_name) || (row && row.fields && row.fields.customer_name) || "";
+  if (row && wantsSavedPhone && nameForPhone && !(facts.private && facts.private.customer_phone)) {
+    const savedPhone = knownCustomerPhone(doc0, nameForPhone);
+    if (savedPhone) facts.private = { ...(facts.private || {}), customer_phone: savedPhone };
+  }
   const factSignal = Boolean(
     (facts.fields &&
       (facts.fields.booking_date ||
@@ -1855,8 +1879,16 @@ async function runBookingPipeline(deps, ctx, { threadId, rawMessage, message, pr
   }
 
   const priv = (typeof deps.getDraftPrivate === "function" ? await deps.getDraftPrivate(ctx.wsKey, threadId) : {}) || {};
+  // facts.private.customer_phone carries either the owner's typed phone OR the
+  // returning-customer saved phone injected above (the «أضف الجوال المحفوظ» chip).
   const newPhone = (privateFacts && privateFacts.customer_phone) || (facts.private && facts.private.customer_phone) || "";
   const privMerged = newPhone ? { ...priv, customer_phone: newPhone } : priv;
+  // Offer the saved phone (MASKED) when a known returning customer's booking is
+  // otherwise ready without one — a suggestion the owner opts into via a chip
+  // (never auto-applied). The chip's «أضف الجوال المحفوظ» is handled above.
+  const savedPhoneOffer = !privMerged.customer_phone && fields.customer_name
+    ? knownCustomerPhone(doc0, fields.customer_name)
+    : "";
 
   const saveDraft = async (linkedActionId) => {
     await deps.upsertDraft(ctx.wsKey, threadId, fields, privMerged, linkedActionId);
@@ -2076,8 +2108,15 @@ async function runBookingPipeline(deps, ctx, { threadId, rawMessage, message, pr
     await saveDraft(prepared.action_id);
     return {
       ok: true,
-      reply_ar: "جهّزت الحجز — راجع البطاقة ثم اضغط حفظ الحجز. لن يُحفظ شيء قبل تأكيدك.",
+      reply_ar: savedPhoneOffer
+        ? `جهّزت الحجز — راجع البطاقة ثم اضغط حفظ الحجز. «${fields.customer_name}» عميل سابق؛ تقدر تضيف جواله المحفوظ بضغطة.`
+        : "جهّزت الحجز — راجع البطاقة ثم اضغط حفظ الحجز. لن يُحفظ شيء قبل تأكيدك.",
       tool_results: [prepared],
+      // A suggestion the owner OPTS INTO (masked; the raw phone never leaves the
+      // server). Absent when a phone was given or the customer isn't known.
+      ...(savedPhoneOffer
+        ? { customer_phone_suggestion: { name: fields.customer_name, masked_phone: maskPhone(savedPhoneOffer) } }
+        : {}),
     };
   }
   if (prepared && (prepared.error === "BOOKING_CONFLICT" || prepared.error === "AVAILABILITY_UNPROVABLE")) {

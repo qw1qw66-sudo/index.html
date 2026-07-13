@@ -988,3 +988,113 @@ describe("edit-by-field selection (التعديل بالاختيار, zero model
     expect(JSON.stringify(deps._drafts.get("th-1").fields)).toBe(before);
   });
 });
+
+// «تعبئة العميل المعروف»: a returning customer's UNIQUE saved phone is OFFERED
+// (masked) as an opt-in chip; applying it attaches the phone SERVER-SIDE and it
+// rides through to the saved booking. The raw number never leaves the server,
+// never enters the model, and a name collision never guesses. Zero model calls.
+describe("known-customer saved-phone suggestion (returning customer, zero model calls)", () => {
+  function docWithReturningCustomer() {
+    const doc = fixtureDoc();
+    // A prior booking established «خالد»'s phone (past date, سكاي — no clash with
+    // a تولوم booking tomorrow). The row carries customer_phone like the real executor.
+    doc.bookings.push({
+      id: "prev-1", customer_name: "خالد", customer_phone: "0559998888",
+      chalet_id: "sky", booking_date: addDays(TODAY, -20), period_id: "s-pm",
+      guests: 2, total: 350, paid: 0, status: "confirmed", deleted_at: null,
+    });
+    return doc;
+  }
+  const BOOK = "احجز تولوم بكرة صباحي 4 ضيوف باسم خالد بمبلغ 300";
+
+  it("offers the saved phone (masked) when a returning customer's booking is ready without one", async () => {
+    const deps = makeDeps({ doc: docWithReturningCustomer() });
+    const r = await chat(deps, BOOK);
+    expect(r.model_calls).toBe(0);
+    expect((r.tool_results || []).some((x) => x.kind === "prepared_action")).toBe(true);
+    expect(r.customer_phone_suggestion).toBeTruthy();
+    expect(r.customer_phone_suggestion.name).toBe("خالد");
+    expect(r.customer_phone_suggestion.masked_phone).toBe("05••••8888");
+    // The RAW phone is NEVER in the response — only the masked form.
+    expect(JSON.stringify(r)).not.toContain("0559998888");
+  });
+
+  it("tapping «أضف الجوال المحفوظ» attaches the phone server-side and re-prepares (masked on the card)", async () => {
+    const deps = makeDeps({ doc: docWithReturningCustomer() });
+    await chat(deps, BOOK);
+    const r = await chat(deps, "أضف الجوال المحفوظ", "th-1");
+    expect(r.model_calls).toBe(0);
+    // Phone now in the PRIVATE store (full), never in the draft fields.
+    expect(deps._drafts.get("th-1").private.customer_phone).toBe("0559998888");
+    expect(JSON.stringify(deps._drafts.get("th-1").fields)).not.toContain("0559998888");
+    // The re-prepared card shows the MASKED phone; the raw value never leaves the server.
+    const prep = (r.tool_results || []).find((x) => x.kind === "prepared_action");
+    expect(prep).toBeTruthy();
+    const phoneRow = (prep.card.rows || []).find((row) => row.k === "الجوال");
+    expect(phoneRow.v).toBe("05••••8888");
+    expect(JSON.stringify(r)).not.toContain("0559998888");
+    // Offer is gone once a phone is attached.
+    expect(r.customer_phone_suggestion).toBeUndefined();
+  });
+
+  it("carries the applied phone through to the SAVED booking", async () => {
+    const deps = makeDeps({ doc: docWithReturningCustomer() });
+    await chat(deps, BOOK);
+    const r = await chat(deps, "أضف الجوال المحفوظ", "th-1");
+    const prep = (r.tool_results || []).find((x) => x.kind === "prepared_action");
+    const okc = await post(deps, { invoke_tool: { name: "confirm_booking_create", arguments: { action_id: prep.action_id, confirmation_token: prep.confirmation_token } } });
+    expect(okc.ok).toBe(true);
+    expect(deps._executed).toHaveLength(1);
+    expect(deps._executed[0].payload.args.customer_phone).toBe("0559998888");
+  });
+
+  it("makes NO offer when the owner already gave a phone", async () => {
+    const deps = makeDeps({ doc: docWithReturningCustomer() });
+    const r = await chat(deps, "احجز تولوم بكرة صباحي 4 ضيوف باسم خالد جواله 0501112223 بمبلغ 300");
+    expect(r.customer_phone_suggestion).toBeUndefined();
+  });
+
+  it("makes NO offer for a brand-new customer with no history", async () => {
+    const deps = makeDeps({ doc: docWithReturningCustomer() });
+    const r = await chat(deps, "احجز تولوم بكرة صباحي 4 ضيوف باسم زياد بمبلغ 300");
+    expect(r.customer_phone_suggestion).toBeUndefined();
+  });
+
+  it("makes NO offer when the returning name is AMBIGUOUS (two people, two numbers)", async () => {
+    const doc = docWithReturningCustomer();
+    doc.bookings.push({
+      id: "prev-2", customer_name: "خالد", customer_phone: "0557776666",
+      chalet_id: "sky", booking_date: addDays(TODAY, -15), period_id: "s-pm",
+      guests: 2, total: 350, paid: 0, status: "confirmed", deleted_at: null,
+    });
+    const deps = makeDeps({ doc });
+    const r = await chat(deps, BOOK);
+    expect((r.tool_results || []).some((x) => x.kind === "prepared_action")).toBe(true); // still books
+    expect(r.customer_phone_suggestion).toBeUndefined(); // just no phone guess
+  });
+
+  it("a NEGATED or questioning message never attaches the saved phone", async () => {
+    const deps = makeDeps({ doc: docWithReturningCustomer() });
+    await chat(deps, BOOK); // card ready for known «خالد», phone offered
+    // «لا تضيف الرقم المحفوظ» (don't add it) must NOT attach anything.
+    await chat(deps, "لا تضيف الرقم المحفوظ", "th-1");
+    expect(deps._drafts.get("th-1").private.customer_phone).toBeUndefined();
+  });
+
+  it("a same-turn rename attaches the NEW customer's phone, never the previous one", async () => {
+    const doc = docWithReturningCustomer(); // «خالد» → 0559998888
+    doc.bookings.push({
+      id: "prev-saad", customer_name: "سعد", customer_phone: "0557776666",
+      chalet_id: "sky", booking_date: addDays(TODAY, -12), period_id: "s-pm",
+      guests: 2, total: 350, paid: 0, status: "confirmed", deleted_at: null,
+    });
+    const deps = makeDeps({ doc });
+    await chat(deps, BOOK); // draft is for «خالد»
+    // The owner renames to «سعد» AND asks for the saved phone in ONE message:
+    // it must attach سعد's number, not خالد's stale one.
+    await chat(deps, "أضف الجوال المحفوظ باسم سعد", "th-1");
+    expect(deps._drafts.get("th-1").fields.customer_name).toBe("سعد");
+    expect(deps._drafts.get("th-1").private.customer_phone).toBe("0557776666");
+    expect(deps._drafts.get("th-1").private.customer_phone).not.toBe("0559998888");
+  });
+});

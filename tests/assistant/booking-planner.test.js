@@ -10,6 +10,7 @@ import {
   findAlternatives,
   buildCardData,
   maskPhone,
+  knownCustomerPhone,
 } from '../../supabase/functions/_shared/assistant/booking-planner.mjs';
 
 const TODAY = '2026-07-12'; // a Sunday
@@ -118,6 +119,43 @@ describe('phone handling', () => {
   it('maskPhone keeps the first 2 and last 4 digits', () => {
     expect(maskPhone('0501234567')).toBe('05••••4567');
     expect(maskPhone('')).toBe('');
+  });
+
+  it('knownCustomerPhone returns a prior UNIQUE phone by name, collision-safe', () => {
+    const doc = {
+      bookings: [
+        { customer_name: 'خالد', customer_phone: '0559998888', status: 'confirmed', deleted_at: null },
+        { customer_name: 'خالد', customer_phone: '0559998888', status: 'confirmed', deleted_at: null }, // same → still unique
+        { customer_name: 'سعد', customer_phone: '0551112222', status: 'confirmed', deleted_at: null },
+        { customer_name: 'منى', customer_phone: '', status: 'confirmed', deleted_at: null }, // no phone
+        { customer_name: 'عابر', customer_phone: '0557776666', status: 'cancelled', deleted_at: null }, // ignored
+        { customer_name: 'قديم', customer_phone: '0553334444', status: 'confirmed', deleted_at: '2026-01-01' }, // ignored
+      ],
+    };
+    expect(knownCustomerPhone(doc, 'خالد')).toBe('0559998888');
+    expect(knownCustomerPhone(doc, 'سعد')).toBe('0551112222');
+    expect(knownCustomerPhone(doc, 'منى')).toBe(''); // no stored phone
+    expect(knownCustomerPhone(doc, 'مجهول')).toBe(''); // never booked
+    expect(knownCustomerPhone(doc, 'عابر')).toBe(''); // only a cancelled booking
+    expect(knownCustomerPhone(doc, 'قديم')).toBe(''); // only a deleted booking
+  });
+
+  it('knownCustomerPhone refuses an AMBIGUOUS name (two people, two numbers)', () => {
+    const doc = {
+      bookings: [
+        { customer_name: 'محمد', customer_phone: '0550000001', status: 'confirmed', deleted_at: null },
+        { customer_name: 'محمد', customer_phone: '0550000002', status: 'confirmed', deleted_at: null },
+      ],
+    };
+    // Two distinct phones for the same name → we must NOT guess (wrong-number risk).
+    expect(knownCustomerPhone(doc, 'محمد')).toBe('');
+  });
+
+  it('knownCustomerPhone matches names across tashkeel / alef / spacing / case', () => {
+    const doc = { bookings: [{ customer_name: 'أحمد  السالم', customer_phone: '0556667777', status: 'confirmed', deleted_at: null }] };
+    expect(knownCustomerPhone(doc, 'احمد السالم')).toBe('0556667777');
+    expect(knownCustomerPhone({ bookings: [] }, 'احمد')).toBe('');
+    expect(knownCustomerPhone(null, 'احمد')).toBe('');
   });
 
   it('flags malformed phone-ish input without storing anything', () => {

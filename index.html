@@ -4847,6 +4847,8 @@
             return assistantDraftAction("cancel", sourceEl.dataset.actionId || "");
           if (a === "assistant-edit-field" && sourceEl)
             return assistantDraftAction("edit_field", "", sourceEl.dataset.field || "");
+          if (a === "assistant-add-saved-phone")
+            return assistantSend("أضف الجوال المحفوظ");
         }
         // ========================= JS: assistant (Chalet Brain) =========================
         // Talks ONLY to the server-side chalet-assistant Edge Function. The
@@ -5006,6 +5008,25 @@
               );
             })
             .join("");
+          log.appendChild(row);
+          log.scrollTop = log.scrollHeight;
+        }
+        // Returning-customer phone offer: one opt-in chip under the reply.
+        // Tapping it sends a fixed sentence; the SERVER looks up the customer's
+        // unique saved phone and attaches it (masked). The raw number is never
+        // in this payload — only masked_phone (e.g. «05••••67») is shown.
+        function renderPhoneSuggestion(sugg) {
+          const log = $("assistantLog");
+          if (!log) return;
+          log.querySelectorAll(".chat-phone-suggest").forEach((el) => el.remove());
+          if (!sugg || !sugg.masked_phone) return;
+          const row = document.createElement("div");
+          row.className = "chat-suggest chat-phone-suggest";
+          row.setAttribute("role", "group");
+          row.innerHTML =
+            '<button class="tiny" type="button" data-action="assistant-add-saved-phone">' +
+            esc("أضف جوال «" + String(sugg.name || "العميل") + "» المحفوظ") +
+            ' · <span class="ltr">' + esc(String(sugg.masked_phone)) + "</span></button>";
           log.appendChild(row);
           log.scrollTop = log.scrollHeight;
         }
@@ -5259,8 +5280,9 @@
           }
           assistantBusy = true;
           $("assistantSendButton").disabled = true;
-          // A typed message supersedes any open «تعديل بالاختيار» chips.
+          // A typed message supersedes any open «تعديل بالاختيار» / saved-phone chips.
           clearEditFieldChips();
+          renderPhoneSuggestion(null);
           setAssistantConn("جارٍ التفكير", "");
           try {
             const body = await assistantCall({ message });
@@ -5289,6 +5311,8 @@
               // just clears the previous row.
               renderNextActionChips(body.next_actions);
               renderToolResults(body.tool_results);
+              // Returning-customer offer: add their saved phone (masked) by tap.
+              renderPhoneSuggestion(body.customer_phone_suggestion);
             } else {
               // Defensive mapper: never a raw code, UUID, or body.error.
               // A server-side crash (EDGE_CRASH from the edge envelope) is a
