@@ -54,6 +54,7 @@ export const TOOL_REGISTRY = {
   get_today_bookings: { class: "read", schema: {}, desc: "حجوزات اليوم" },
   list_chalets: { class: "read", schema: {}, desc: "الشاليهات المسجلة وفتراتها الحقيقية" },
   list_bookings: { class: "read", schema: { from: { type: "date" }, to: { type: "date" }, status: { type: "string", maxLen: 20 } }, desc: "قائمة الحجوزات" },
+  get_bookings_summary: { class: "read", schema: { from: { type: "date" }, to: { type: "date" } }, desc: "عدد الحجوزات وإجمالي الدخل في مدى تاريخي (القادمة/السابقة/الأسبوع/الشهر)" },
   get_booking_details: { class: "read", schema: { booking_id: { type: "string", required: true, maxLen: 64 } }, desc: "تفاصيل حجز" },
   get_chalet_details: { class: "read", schema: { chalet_id: { type: "string", required: true, maxLen: 64 } }, desc: "تفاصيل شاليه" },
   find_available_periods: { class: "read", schema: { chalet_id: { type: "string", maxLen: 64 }, chalet_name: { type: "string", maxLen: 120 }, date: { type: "date" } }, desc: "الفترات المتاحة" },
