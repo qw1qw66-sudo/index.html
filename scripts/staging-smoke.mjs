@@ -305,6 +305,18 @@ async function main() {
     record("assistant_period_summary_read", ok, r.status + ":mc=" + (j.model_calls) + ":" + String(j.reply_ar || "").slice(0, 32));
   }
 
+  // 8c. R12 reverse-audit routing: a bare/tomorrow count question «كم حجز بكرة؟»
+  // used to FALL TO THE MODEL (model_calls>0). It must now dispatch to
+  // get_bookings_summary deterministically (model_calls===0) live on Deno —
+  // proving the deterministic guarantee holds for this phrasing in production.
+  {
+    const r = await assistant({ message: "كم حجز بكرة؟" });
+    const j = r.json || {};
+    const rendered = typeof j.reply_ar === "string" && /(عدد الحجوزات|حجز|حجوزات|لا توجد حجوزات في هذه المدة)/.test(j.reply_ar);
+    const ok = r.status === 200 && j.ok === true && j.model_calls === 0 && rendered && !leaks(j.reply_ar);
+    record("assistant_tomorrow_count_read_model_free", ok, r.status + ":mc=" + (j.model_calls) + ":" + String(j.reply_ar || "").slice(0, 32));
+  }
+
   // 9. Confirmed booking create through the real contracts (staging only).
   let newBookingId = null;
   {

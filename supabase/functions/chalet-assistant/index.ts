@@ -169,10 +169,14 @@ function makeDeps() {
       return data ?? [];
     },
     async promoteMemory(wsKey: string, memoryId: string) {
+      // Scalar-jsonb RPC → read WITHOUT .single() (matching assistant_consume_
+      // confirmation / get_booking_payments, which work live); .single() can 406
+      // on a scalar return in some PostgREST versions. Normalize array-or-object.
       const { data } = await supabase.rpc("assistant_promote_memory", {
         p_workspace_key: wsKey, p_memory_id: memoryId,
-      }).single();
-      return data ?? { ok: false, error: "PROMOTE_FAILED" };
+      });
+      const row = Array.isArray(data) ? data[0] : data;
+      return row ?? { ok: false, error: "PROMOTE_FAILED" };
     },
     async rejectMemory(wsKey: string, memoryId: string) {
       const { data, error } = await supabase.from("assistant_memory")

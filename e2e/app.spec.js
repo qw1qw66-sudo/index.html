@@ -661,6 +661,35 @@ test('تعديل keeps the draft fields; إلغاء cancels safely (server-drive
   await expect(page.locator('#assistantLog')).toContainText('تم الإلغاء، لم يُحفظ شيء.');
 });
 
+test('B1 (R12): a TYPED cancel «الغِ الحجز» clears the armed card, like the button', async ({ page }) => {
+  await mockRpc(page);
+  await page.route('**/functions/v1/chalet-assistant', async (route) => {
+    const body = JSON.parse(route.request().postData() || '{}');
+    // A TYPED cancel is an ordinary message (NOT draft_action) — the server
+    // retires the draft's action and flags draft_cancelled. This is the exact
+    // path the button-cancel test does NOT cover: the send handler must clear
+    // the card on its own, not rely on the cancel-draft click handler.
+    if (typeof body.message === 'string' && /الغ|إلغاء/.test(body.message)) {
+      return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true, draft_cancelled: true, reply_ar: 'تم الإلغاء، لم يُحفظ شيء.' }) });
+    }
+    return route.fulfill({ contentType: 'application/json', body: JSON.stringify(BOOKING_CARD_BODY) });
+  });
+  await page.goto('/');
+  await create(page);
+  await page.locator('[data-tab="assistant"]').click();
+  await page.locator('#assistantInput').fill('احجز تولوم');
+  await page.locator('[data-action="assistant-send"]').click();
+  // The armed «حفظ الحجز» card is on screen.
+  await expect(page.locator('#assistantActions .action-card')).toHaveCount(1);
+  await expect(page.locator('#assistantActions [data-action="assistant-confirm"]')).toBeVisible();
+  // Owner TYPES the cancel instead of tapping إلغاء.
+  await page.locator('#assistantInput').fill('الغِ الحجز');
+  await page.locator('[data-action="assistant-send"]').click();
+  // B1: the stale card + its confirm button are gone (previously left armed).
+  await expect(page.locator('#assistantActions .action-card')).toHaveCount(0);
+  await expect(page.locator('#assistantLog')).toContainText('تم الإلغاء، لم يُحفظ شيء.');
+});
+
 test('التعديل بالاختيار: reopen shows field chips; tapping one asks for that field, then a new card arrives', async ({ page }) => {
   await mockRpc(page);
   await page.route('**/functions/v1/chalet-assistant', async (route) => {

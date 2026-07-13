@@ -5326,6 +5326,15 @@
                 assistantThreadId = body.thread_id;
                 persistAssistantThreadId(body.thread_id);
               }
+              if (body.draft_cancelled) {
+                // A TYPED cancel («الغِ الحجز») retires the draft's action
+                // server-side; clear the armed card + its token here too — the
+                // BUTTON-cancel path already does this, so without it a typed
+                // cancel left a stale «حفظ الحجز» card on screen.
+                $("assistantActions").innerHTML = "";
+                Object.keys(assistantTokens).forEach((k) => delete assistantTokens[k]);
+                clearEditFieldChips();
+              }
               if (body.reply_ar) assistantAppend("bot", body.reply_ar);
               // Conflict alternatives arrive as ONE-TAP chips; an empty list
               // just clears the previous row.
