@@ -954,8 +954,17 @@ function deterministicReadIntent(message, todayIso) {
   // Booking COMMANDS are never read intents — «ابي حجز تولوم» must reach the
   // booking pipeline, not a lookup. This guard runs before everything.
   if (hasBookingIntent(text)) return null;
-  const asksAvailability = /(فتر|موعد)/.test(text) && /(فاضي|فاضية|متاح|متاحة)/.test(text) && /(اليوم|لليوم|هذا اليوم)/.test(text);
+  // «فاضي/متاح اليوم» — availability. Also fires when the AVAILABLE subject is a
+  // «شاليه» («وش الشاليهات المتاحة اليوم؟»), which otherwise fell to the static
+  // catalog below. Still requires an availability word AND «اليوم».
+  const asksAvailability = /(فتر|موعد|شاليه|شالية|شاليهات)/.test(text) && /(فاضي|فاضية|فاضيه|متاح|متاحة|متاحه|فراغ)/.test(text) && /(اليوم|لليوم|هذا اليوم)/.test(text);
   if (asksAvailability) return { name: "find_empty_dates", arguments: { days_ahead: 1 } };
+  // The static catalog covers «ما هي الشاليهات المسجلة». A TODAY availability
+  // question already returned above (asksAvailability fires first on «...اليوم»),
+  // so we must NOT also exclude متاح/فاضي here: a دون-يوم availability phrasing
+  // like «وش الشاليهات المتاحة عندي؟» (no «اليوم») has no other deterministic
+  // home — excluding it here dropped it to the model (regression). Let it list
+  // the chalets deterministically, exactly as it did before this round.
   const asksCatalog = /(شاليه|شاليهات)/.test(text) && /(ما\s*هي|وش|ايش|اعرض|اظهر|قائمة|المسجل|عندي|لديك)/.test(text) && !/(احجز|حجز|جهز|سج[ّل]+\s+حجز)/.test(text);
   if (asksCatalog) return { name: "list_chalets", arguments: {} };
   // «شنو/وش/ايش/اعرض حجوزات اليوم؟» answers from the workspace even when the
@@ -1010,10 +1019,24 @@ function deterministicReadIntent(message, todayIso) {
     !/(تسويق|التسويق|حملة|حملات)/.test(text) &&
     !/(فاضي|فاضية|فاضيه|متاح|متاحة|فراغ)/.test(text)
   ) {
-    const asksSummary = /(?:كم|عدد|دخل|دخلي|الدخل|إجمالي|اجمالي|مجموع)/.test(text);
+    // Anchor «كم/عدد» to حجز/حجوزات (or a bare دخل income word) so a mid-draft
+    // field answer that merely contains «عدد الضيوف» (guests count) is NEVER
+    // read as a bookings summary — R9: «...شالية تولوم عدد الضيوف ٥» must bind
+    // to the draft, not hijack to get_bookings_summary. BOOKING_READ_QUESTION_RE
+    // still matches «كم حجز بكرة؟»/«كم حجوزاتي؟»; the دخل clause keeps «كم دخلي؟».
+    const asksSummary = BOOKING_READ_QUESTION_RE.test(text) || /(دخل|دخلي|الدخل)/.test(text);
     // Past — everything before today (count + income). Any past question.
     if (/(السابقة|السابقه|سابقة|الماضية|الماضيه|الفائتة|الفايتة|المنتهية|القديمة|القديمه|اللي راحت|اللي فات)/.test(text)) {
       return { name: "get_bookings_summary", arguments: { from: "2000-01-01", to: addDaysIso(todayIso, -1) } };
+    }
+    // Single-day income/count — «كم دخلي اليوم؟» / «كم حجز بكرة؟». Must precede
+    // the week/month/income fallbacks so the stated day is not widened to a month.
+    if (asksSummary && /(اليوم|لليوم|هذا اليوم)/.test(text)) {
+      return { name: "get_bookings_summary", arguments: { from: todayIso, to: todayIso } };
+    }
+    if (asksSummary && /(بكرة|بكره|باكر|غدا|غداً|الغد)/.test(text)) {
+      const t = addDaysIso(todayIso, 1);
+      return { name: "get_bookings_summary", arguments: { from: t, to: t } };
     }
     if (asksSummary && /(اسبوع|الاسبوع|الأسبوع|أسبوع)/.test(text)) {
       return { name: "get_bookings_summary", arguments: { from: todayIso, to: addDaysIso(todayIso, 6) } };
@@ -1029,6 +1052,11 @@ function deterministicReadIntent(message, todayIso) {
     if (asksSummary && /(دخل|دخلي|الدخل)/.test(text)) {
       const mr = monthRangeIso(todayIso);
       return { name: "get_bookings_summary", arguments: { from: mr.from, to: mr.to } };
+    }
+    // Bare count question with no explicit period («كم حجوزاتي؟») → the upcoming
+    // set (the actionable default) — never fall through to the model for this.
+    if (asksSummary && /(حجز|حجوزات|الحجوزات)/.test(text)) {
+      return { name: "get_bookings_summary", arguments: { from: todayIso, to: addDaysIso(todayIso, 60) } };
     }
   }
   // Upcoming bookings (SHOW/list).
@@ -1121,7 +1149,7 @@ function withPrivateBookingFacts(call, facts) {
 // («ابغى منك حجز») so the pair no longer has to be strictly adjacent.
 // STRONG create stems — always a create («احجز»، «حجز جديد»، «سجل حجز» …).
 const BOOKING_INTENT_STRONG_RE =
-  /(احجز|احجزلي|تحجزلي|تحجز لي|سجلي|جهزلي|ثبتلي|جهز حجز|جهزلي حجز|حجز جديد|سوي حجز|اعمل حجز|رتب حجز|سجل حجز|سجل لي حجز)/;
+  /(احجز|احجزلي|تحجزلي|تحجز لي|سجلي|جهزلي|ثبتلي|جهز حجز|جهزلي حجز|حجز جديد|سوي حجز|اعمل حجز|رتب حجز|سجل حجز|سجل لي حجز|ثبت لي حجز|ثبت حجز|جهز لي حجز|رتب لي حجز)/;
 // LOOSE stem — «ابي/ابغى/بغيت/ابغا … حجز» (up to two words may sit between). It
 // is a create ONLY when the turn is not actually a READ or an EDIT question;
 // otherwise «ابغى اعرف كم حجز عندي» and «بغيت اعدل حجز احمد» were hijacked into a

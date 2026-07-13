@@ -13,6 +13,7 @@
 
 import { handleAssistant } from "../../../supabase/functions/chalet-assistant/handler.mjs";
 import { resolveBookingCreateArgs } from "../../../supabase/functions/_shared/assistant/booking-resolution.mjs";
+import { executeConfirmedAction } from "../../../supabase/functions/_shared/assistant/executors.mjs";
 import { riyadhToday, addDays } from "../../../supabase/functions/_shared/assistant/availability.mjs";
 
 const ENV = { ASSISTANT_CONFIRM_SECRET: "sec", DEEPSEEK_API_KEY: "k" };
@@ -66,12 +67,35 @@ function makeDeps(doc) {
   const modelCalls = [];
   const drafts = new Map();
   const actions = new Map();
+  const threads = new Map();
   let seq = 0;
+  let rev = 1; // workspace revision — bumped by every successful save (revision-atomic)
   const executed = [];
   const memories = [];
   let memSeq = 0;
+  const revId = () => "r" + rev;
+  // execDeps drives the REAL executeConfirmedAction over the in-memory doc, so
+  // the write path exercises production validation + field mapping (stores
+  // customer_phone, honors paid + total_is_free) instead of a rubber stamp.
+  const execDeps = {
+    env: ENV,
+    newId: () => "bk-exec-" + (++seq),
+    async getWorkspaceDoc() { return { data: doc, updated_at: revId() }; },
+    async saveWorkspaceV2(_k, _pin, dataObj, expectedRevision) {
+      if (revId() !== expectedRevision) return { ok: false, error: "WORKSPACE_DATA_CONFLICT" };
+      doc.bookings = dataObj.bookings; // persist the reconstructed document
+      rev += 1;
+      return { ok: true, updated_at: revId(), data: doc };
+    },
+    async recordManualPayment() { return { ok: true, transaction_id: "tx-1", duplicate: false }; },
+    async createPaymentSession() { return { ok: false, error: "NO_PROVIDER_CONFIGURED" }; },
+    async getBookingPayments() { return { ok: true, net_paid_halalas: 0 }; },
+    async resolveCustomerPhone(_k, _pin, bookingId) { const b = (doc.bookings || []).find((x) => x.id === bookingId); return b ? String(b.customer_phone || "") : ""; },
+    async sendOfficialWhatsApp() { return { ok: false, error: "OFFICIAL_WHATSAPP_NOT_WIRED" }; },
+    async recordOutbound() {},
+  };
   return {
-    env: ENV, _modelCalls: modelCalls, _drafts: drafts, _executed: executed, _doc: doc, _memories: memories,
+    env: ENV, _modelCalls: modelCalls, _drafts: drafts, _executed: executed, _doc: doc, _memories: memories, _actions: actions, _threads: threads,
     async auth(k, p) { return k === WS && p === "123456" ? { ok: true, workspace_key: WS } : { ok: false, error_code: "X" }; },
     async callModel(a) { modelCalls.push(a); return { ok: false, error: "DEEPSEEK_UNREACHABLE" }; },
     async activeMemories() { return memories.filter((m) => m.status === "active"); },
@@ -84,26 +108,58 @@ function makeDeps(doc) {
     },
     async listMemories(_k, opts) { return memories.filter((m) => !opts || !opts.status || m.status === opts.status); },
     async promoteMemory(_k, id) { const m = memories.find((x) => x.id === id); if (!m) return { ok: false, error: "MEMORY_NOT_FOUND" }; if (m.status !== "proposed") return { ok: false, error: "MEMORY_NOT_PROPOSED" }; m.status = "active"; return { ok: true }; },
-    async rejectMemory(_k, id) { const m = memories.find((x) => x.id === id); if (!m) return { ok: false, error: "MEMORY_NOT_FOUND" }; m.status = "rejected"; return { ok: true }; },
+    // Mirror the real UPDATE ... in ('proposed','active'): a superseded/rejected
+    // memory is NOT re-rejectable and reads back as MEMORY_NOT_FOUND.
+    async rejectMemory(_k, id) { const m = memories.find((x) => x.id === id); if (!m || (m.status !== "proposed" && m.status !== "active")) return { ok: false, error: "MEMORY_NOT_FOUND" }; m.status = "rejected"; return { ok: true }; },
     async loadHistory() { return []; },
     async appendMessages() {},
-    async getWorkspaceRevision() { return "r1"; },
-    async getWorkspaceData() { return { data: doc, updated_at: "r1" }; },
+    async getWorkspaceRevision() { return revId(); },
+    async getWorkspaceData() { return { data: doc, updated_at: revId() }; },
     async runReadTool() { return {}; },
     async resolveBookingCreateArgs(_k, a) { return resolveBookingCreateArgs(doc, a); },
-    async createThread() { return { ok: true, thread_id: "th-1" }; },
+    async createThread(_k, title) { const id = "th-1"; threads.set(id, { id, title: String(title || "").slice(0, 120), status: "active", updated_at: "t1" }); return { ok: true, thread_id: id }; },
+    // Thread lifecycle (workspace-scoped): list newest-first, archive one row.
+    async listThreads() { return [...threads.values()].map((t) => ({ id: t.id, title: t.title, status: t.status, updated_at: t.updated_at })); },
+    async archiveThread(_k, id) { const t = threads.get(id); if (!t) return { ok: false, error: "THREAD_NOT_FOUND" }; t.status = "archived"; t.updated_at = "t2"; return { ok: true }; },
     async threadBelongsToWorkspace() { return true; },
     newId: () => "bk-" + (seq + 1),
     async getActiveDraft(_k, t) { const d = drafts.get(t); return d && d.status === "active" ? { id: t, fields: d.fields, linked_action_id: d.linked || null } : null; },
     async getDraftPrivate(_k, t) { const d = drafts.get(t); return d && d.status === "active" ? d.private : {}; },
     async upsertDraft(_k, t, f, p, l) { const pr = drafts.get(t) || { private: {}, status: "active" }; drafts.set(t, { fields: f, private: p || pr.private || {}, status: "active", linked: l !== undefined ? l : pr.linked }); return { draft_id: t }; },
-    async closeDraft(_k, t, s) { const d = drafts.get(t); if (d) d.status = s; },
+    // active-only, mirroring the real .eq("status","active"): a completed/cancelled
+    // draft cannot be re-closed into a different terminal status.
+    async closeDraft(_k, t, s) { const d = drafts.get(t); if (d && d.status === "active") d.status = s; },
     async prepareSensitive(_k, s) { const id = "act-" + ++seq; actions.set(id, { id, workspace_key: _k, ...s, status: "prepared", confirmation_used_at: null }); return { action_id: id }; },
     async getConfirmationContext(_k, id) { const a = actions.get(id); if (!a || a.workspace_key !== _k) return null; return { action: a, tool_name: a.name, action_type: a.actionType, normalized_payload: { tool: a.name, args: a.args }, thread_id: a.threadId || null, status: a.status, confirmation_expires_at: new Date(a.expiresAtMs).toISOString() }; },
     async getLatestPreparedAction(_k) { const rows = [...actions.values()].filter((a) => a.status === "prepared" && !a.confirmation_used_at); const row = rows[rows.length - 1]; if (!row) return null; return { id: row.id, normalized_payload_json: { tool: row.name, args: row.args }, thread_id: row.threadId || null, confirmation_expires_at: new Date(row.expiresAtMs).toISOString(), status: row.status }; },
     async rotateConfirmation(_k, id, patch) { const a = actions.get(id); if (!a || a.status !== "prepared" || a.confirmation_used_at) return { ok: false, error: "ROTATE_FAILED" }; a.tokenHash = patch.tokenHash; a.expiresAtMs = patch.expiresAtMs; return { ok: true }; },
-    async consumeConfirmation(_k, id, tokenHash) { const a = actions.get(id); if (!a) return { ok: false, error: "ACTION_NOT_FOUND" }; if (a.status !== "prepared" || a.confirmation_used_at) return { ok: false, error: "CONFIRMATION_ALREADY_USED" }; if (a.tokenHash !== tokenHash) return { ok: false, error: "CONFIRMATION_TOKEN_MISMATCH" }; a.status = "confirmed"; a.confirmation_used_at = "now"; return { ok: true }; },
-    async executeConfirmed(_k, action) { executed.push(action); const args = action.payload.args; doc.bookings.push({ id: args.booking_id, customer_name: args.customer_name, chalet_id: args.chalet_id, booking_date: args.booking_date, period_id: args.period_id, guests: args.guests, total: args.total, paid: 0, status: "confirmed", deleted_at: null }); return { ok: true, result_reference: args.booking_id, safe_result: { booking_id: args.booking_id, action: "booking_created" } }; },
+    // 5-arg mirror of assistant_consume_confirmation: enforces the SAME ordered
+    // gate as the SQL — not-found, not-pending, already-used, EXPIRED, token,
+    // PAYLOAD_CHANGED, STALE_REVISION — so those guarantees are actually tested.
+    async consumeConfirmation(_k, id, tokenHash, payloadHash, currentRevision) {
+      const a = actions.get(id);
+      if (!a || a.workspace_key !== _k) return { ok: false, error: "ACTION_NOT_FOUND" };
+      if (a.status !== "prepared") return { ok: false, error: "ACTION_NOT_PENDING" };
+      if (a.confirmation_used_at) return { ok: false, error: "CONFIRMATION_ALREADY_USED" };
+      if (a.expiresAtMs == null || a.expiresAtMs < Date.now()) { a.status = "expired"; return { ok: false, error: "CONFIRMATION_EXPIRED" }; }
+      if (a.tokenHash !== tokenHash) return { ok: false, error: "CONFIRMATION_TOKEN_MISMATCH" };
+      if (a.payloadHash !== payloadHash) return { ok: false, error: "PAYLOAD_CHANGED" };
+      if (a.expectedRevision != null && currentRevision != null && a.expectedRevision !== currentRevision) return { ok: false, error: "STALE_REVISION" };
+      a.status = "confirmed"; a.confirmation_used_at = "now";
+      return { ok: true, action_type: a.actionType, tool_name: a.name };
+    },
+    // Read a finalized action's stored outcome — powers idempotent replay (a
+    // second confirm returns the stored result) and crash recovery (a "running"
+    // action is re-dispatched). Was entirely absent before, leaving both dead.
+    async getActionOutcome(_k, id) { const a = actions.get(id); if (!a || a.workspace_key !== _k) return {}; return { status: a.status, safe_result: a.safe_result_json, error_code: a.error_code }; },
+    async executeConfirmed(_k, action) {
+      const res = await executeConfirmedAction(
+        { wsKey: _k, pin: "123456", toolName: action.tool_name, payload: action.payload, actionId: action.action_id },
+        execDeps,
+      );
+      if (res && res.ok) executed.push(action);
+      return res;
+    },
     async finalizeAction(_k, id, patch) { const a = actions.get(id); if (a) Object.assign(a, patch); },
   };
 }

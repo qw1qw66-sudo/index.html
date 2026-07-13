@@ -135,9 +135,12 @@ function makeDeps({ doc = fixtureDoc(), modelSeq = [{ ok: false, error: "DEEPSEE
     },
     async executeConfirmed(_k, action) {
       executed.push(action);
-      // Reflect the write in the doc so counts stay truthful.
+      // Reflect the write in the doc so counts stay truthful. Mirror the real
+      // executor's field mapping: the customer_phone is stored and the owner's
+      // stated deposit rides through as paid (a missing value stays 0) — a
+      // hardcoded paid:0 / dropped phone was the shape of the earlier live bug.
       const args = action.payload.args;
-      doc.bookings.push({ id: args.booking_id, customer_name: args.customer_name, chalet_id: args.chalet_id, booking_date: args.booking_date, period_id: args.period_id, guests: args.guests, total: args.total, paid: 0, status: "confirmed", deleted_at: null });
+      doc.bookings.push({ id: args.booking_id, customer_name: args.customer_name, customer_phone: args.customer_phone || "", chalet_id: args.chalet_id, booking_date: args.booking_date, period_id: args.period_id, guests: args.guests, total: args.total, paid: Number(args.paid) || 0, status: "confirmed", deleted_at: null });
       return { ok: true, result_reference: args.booking_id, safe_result: { booking_id: args.booking_id, action: "booking_created" } };
     },
     async finalizeAction(_k, id, patch) { const a = actions.get(id); if (a) Object.assign(a, patch); },
