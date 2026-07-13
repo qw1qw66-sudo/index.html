@@ -612,6 +612,21 @@ async function main() {
     record("chalet_in_long_answer_binds", ok, detail);
   }
 
+  // 10i3. R10 (30-hunter audit): a single message exercises three high-value
+  // comprehension fixes at once — «لأربعة» (لـ + number-word) → 4 guests,
+  // «مؤكد» must NOT be swallowed into the name, and «خمس مية» → 500 ريال (the
+  // silent «100 ريال» money bug). One-turn card, zero model calls, no leaks.
+  {
+    const r = await assistant({ message: "احجز شاليه تولوم بكرة صباحي لأربعة باسم سعد مؤكد خمس مية" });
+    const b = r.json || {};
+    const prepared = (b.tool_results || []).find((x) => x.kind === "prepared_action" && x.ok);
+    const rows = prepared && prepared.card && Array.isArray(prepared.card.rows)
+      ? Object.fromEntries(prepared.card.rows.map((x) => [x.k, x.v])) : {};
+    const ok = r.status === 200 && b.ok === true && b.model_calls === 0 && Boolean(prepared) &&
+      rows["الضيوف"] === "4" && rows["العميل"] === "سعد" && String(rows["الإجمالي"] || "").includes("500") && !leaks(r.text);
+    record("audit_guests_name_money_fixed", ok, `guests=${rows["الضيوف"]},name=${rows["العميل"]},total=${rows["الإجمالي"]}`);
+  }
+
   // 10j. R7 CHIP TRUTH (IMG_6711): «من عليه مبالغ متبقية؟» must answer with
   // the debtor NAMES + amounts, deterministically — never the bare count
   // («يوجد N حجوزات») and never a model turn. The seeded «عميل تجريبي» has

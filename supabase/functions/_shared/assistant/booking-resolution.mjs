@@ -27,6 +27,11 @@ function normalizedTokens(value, ignored) {
     .replace(/ى/g, "ي")
     .replace(/ؤ/g, "و")
     .replace(/ئ/g, "ي")
+    // Casual elongation by REPEATING a base letter («تووولوم», «صبااااحي») is
+    // as common as tatweel emphasis — collapse any run of 3+ identical letters
+    // to one so it matches the stored spelling (tatweel itself is already
+    // stripped by ARABIC_MARKS). Genuine doubled letters (2) are preserved.
+    .replace(/(\p{L})\1{2,}/gu, "$1")
     .replace(/(\p{L})(\p{N})/gu, "$1 $2")
     .replace(/(\p{N})(\p{L})/gu, "$1 $2")
     .split(/[^\p{L}\p{N}]+/u)
@@ -112,7 +117,21 @@ function uniqueNameMatch(items, query, valueOf, normalize) {
     ? indexed.filter((x) => x.key && (x.key.includes(wanted) || wanted.includes(x.key)))
     : [];
   if (partial.length === 1) return { status: "ok", item: partial[0].item };
-  if (partial.length > 1) return { status: "ambiguous", matches: partial.map((x) => x.item) };
+  if (partial.length > 1) {
+    // Prefer the MOST SPECIFIC name the message actually spells out: when the
+    // query contains a longer registered name whose shorter sibling is merely a
+    // prefix/substring of it («تولوم 2» necessarily also contains «تولوم»), bind
+    // the longer one instead of failing ambiguous. Two genuinely distinct names
+    // (neither a substring of the other) still stay ambiguous.
+    const contained = partial.filter((x) => wanted.includes(x.key));
+    if (contained.length) {
+      const longest = contained.reduce((a, b) => (b.key.length > a.key.length ? b : a));
+      if (contained.every((x) => longest.key.includes(x.key))) {
+        return { status: "ok", item: longest.item };
+      }
+    }
+    return { status: "ambiguous", matches: partial.map((x) => x.item) };
+  }
   return { status: "not_found", matches: [] };
 }
 

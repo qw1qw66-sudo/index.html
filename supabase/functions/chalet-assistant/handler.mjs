@@ -827,7 +827,7 @@ function deterministicReadIntent(message, todayIso) {
   const text = String(message || "");
   // Booking COMMANDS are never read intents — «ابي حجز تولوم» must reach the
   // booking pipeline, not a lookup. This guard runs before everything.
-  if (BOOKING_INTENT_RE.test(text)) return null;
+  if (hasBookingIntent(text)) return null;
   const asksAvailability = /(فتر|موعد)/.test(text) && /(فاضي|فاضية|متاح|متاحة)/.test(text) && /(اليوم|لليوم|هذا اليوم)/.test(text);
   if (asksAvailability) return { name: "find_empty_dates", arguments: { days_ahead: 1 } };
   const asksCatalog = /(شاليه|شاليهات)/.test(text) && /(ما\s*هي|وش|ايش|اعرض|اظهر|قائمة|المسجل|عندي|لديك)/.test(text) && !/(احجز|حجز|جهز|سج[ّل]+\s+حجز)/.test(text);
@@ -901,9 +901,24 @@ function deterministicReadIntent(message, todayIso) {
   return null;
 }
 
+// Numeric shapes that must never FUSE into a phone: full dates, and a price
+// glued right before/after the number. Mirrors extractSaudiMobile in the planner
+// but ALSO strips price shapes — «بمبلغ ٤٥٠ ٠٥٠١٢٣٤٥٦٧» otherwise glued 450 onto
+// the mobile and forged a wrong number, while the Arabic-digit form was dropped
+// entirely (\d never matched ٠-٩). Digits are folded FIRST, then the match is
+// anchored on digit boundaries so an adjacent price/date can neither seed nor
+// truncate the number — the stored phone is the REAL one or nothing.
+const PHONE_DATE_SHAPE_RE =
+  /(?<!\d)(?:\d{4}-\d{1,2}-\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]\d{2,4}|\d{1,2}\/\d{1,2})(?!\d)/g;
+const PHONE_PRICE_SHAPE_RE =
+  /(?:و?ب?(?:ال)?(?:سعر|مبلغ)|و?(?:ال)?اجمالي)(?:\s+وقدره)?\s*[:=]?\s*\d+|(?<!\d)\d+(?:\.\d+)?\s*(?:ريالات|ريالا|ريال|ر\.س|sar|sr)/g;
 function extractBookingPhone(raw) {
-  const compact = String(raw || "").replace(/[\s()-]/g, "");
-  const match = compact.match(/(?:\+?966|00966)?0?5\d{8}/);
+  const folded = foldDigits(String(raw || ""));
+  const compact = folded
+    .replace(PHONE_DATE_SHAPE_RE, " ")
+    .replace(PHONE_PRICE_SHAPE_RE, " ")
+    .replace(/[\s()-]/g, "");
+  const match = compact.match(/(?<!\d)(?:\+?966|00966)?0?5\d{8}(?!\d)/);
   if (!match) return "";
   let digits = match[0].replace(/\D/g, "");
   if (digits.startsWith("00966")) digits = digits.slice(5);
@@ -935,8 +950,24 @@ function withPrivateBookingFacts(call, facts) {
 // «سجل حجز …» (with content) is the owner's most natural opener — it must
 // enter the deterministic pipeline. Bare «سجل الحجز» stays a confirm word:
 // bareConfirmReminder runs BEFORE this test and only on bare phrases.
+// Tested via hasBookingIntent() against a diacritic-folded copy, so harakat,
+// tatweel and hamza-alef spellings all collapse onto these bare stems. Includes
+// polite 2nd-person/dative verbs («تحجزلي»، «سجلي»، «جهزلي»، «ثبتلي») and a
+// loosened «ابي/ابغى/بغيت … حجز» that tolerates a couple of inserted words
+// («ابغى منك حجز») so the pair no longer has to be strictly adjacent.
 const BOOKING_INTENT_RE =
-  /(احجز|أحجز|احجزلي|ابي حجز|أبي حجز|ابغى حجز|أبغى حجز|بغيت حجز|جهز حجز|جهّز حجز|جهزلي حجز|حجز جديد|سوي حجز|اعمل حجز|رتب حجز|سجل حجز|سجّل حجز|سجل لي حجز|سجلي حجز)/;
+  /(احجز|احجزلي|تحجزلي|تحجز لي|سجلي|جهزلي|ثبتلي|جهز حجز|جهزلي حجز|حجز جديد|سوي حجز|اعمل حجز|رتب حجز|سجل حجز|سجل لي حجز|(?:ابي|ابغى|بغيت|ابغا)\s+(?:\S+\s+){0,2}حجز)/;
+
+// Diacritics/tatweel + hamza-alef folding for INTENT and period-label matching.
+// redactText only masks phones; a fully-voweled «اَحجُز» or a tatweel «مسـاء»
+// must still read like its bare form (the resolver already folds these, so the
+// handler's own regexes must match it — otherwise the two disagree).
+function stripTashkeelTatweel(s) {
+  return String(s || "").replace(/[ً-ْٰـ]/g, "");
+}
+function hasBookingIntent(message) {
+  return BOOKING_INTENT_RE.test(stripTashkeelTatweel(message).replace(/[أإآٱ]/g, "ا"));
+}
 
 // Wording that clearly TRIES to state a date (tomorrow-family words, weekday
 // names, «تاريخ», «يوم …»). Consulted ONLY when the deterministic parser
@@ -1073,10 +1104,18 @@ function parseAlternativePick(message, fields) {
   const alts = fields && Array.isArray(fields.alternatives) ? fields.alternatives : [];
   if (!alts.length) return null;
   const t = String(message || "").trim();
-  const m = t.match(/^[\s.)-]*(?:رقم\s*)?(١|1|الاول|الأول|٢|2|الثاني|٣|3|الثالث)[\s.!؟)-]*$/);
+  // «١/٢/٣»، «رقم ٢»، and the natural ordinal «الخيار الثاني» (with optional
+  // «رقم»): «الخيار …» is what owners actually type, and it must bind the option.
+  const m = t.match(
+    /^[\s.)-]*(?:الخيار\s*)?(?:رقم\s*)?(١|1|الاول|الأول|الاولى|الأولى|٢|2|الثاني|الثانية|٣|3|الثالث|الثالثة)[\s.!؟)-]*$/,
+  );
   let alt = null;
   if (m) {
-    const idx = { "١": 0, 1: 0, الاول: 0, الأول: 0, "٢": 1, 2: 1, الثاني: 1, "٣": 2, 3: 2, الثالث: 2 }[m[1]];
+    const idx = {
+      "١": 0, 1: 0, الاول: 0, الأول: 0, الاولى: 0, الأولى: 0,
+      "٢": 1, 2: 1, الثاني: 1, الثانية: 1,
+      "٣": 2, 3: 2, الثالث: 2, الثالثة: 2,
+    }[m[1]];
     alt = alts[idx] || null;
   } else if (t.length >= 8) {
     // Text match against the stored options: the option's OWN time pair, or
@@ -1118,14 +1157,57 @@ function parseAlternativePick(message, fields) {
   };
 }
 
+// Spoken-number words (واحد..عشرة) used as a numbered PICK must not double as a
+// guest count: «خمسه» picks فترة 5, but the owner never stated 5 guests.
+const SPOKEN_NUM_PICK = new Set([
+  "واحد", "واحدة", "واحده", "اثنين", "اثنان", "ثنين", "ثلاثة", "ثلاثه", "ثلاث",
+  "اربعة", "اربعه", "اربع", "خمسة", "خمسه", "خمس", "ستة", "سته", "ست",
+  "سبعة", "سبعه", "سبع", "ثمانية", "ثمانيه", "ثمان", "تسعة", "تسعه", "تسع",
+  "عشرة", "عشره", "عشر",
+]);
+// A message that is JUST a pick token — a 1-3 digit numeral OR a lone spoken
+// number — being used to select an option/period. Such a token must never leave
+// a fabricated guests/total on the draft.
+function isBarePickToken(rawMessage) {
+  const folded = foldDigits(stripTashkeelTatweel(String(rawMessage || ""))).trim();
+  if (/^\d{1,3}$/.test(folded)) return true;
+  return SPOKEN_NUM_PICK.has(folded);
+}
+
+// The chalet hint fed to the resolver from a whole sentence. A digit run glued
+// to a guest word («٢ ضيوف»/«ضيوف ٢») is a HEADCOUNT, not part of the chalet
+// name — dropping it stops «شالية تولوم ٢ ضيوف» from fusing into the ambiguous
+// «تولوم٢» and losing the chalet (the number is still read as guests elsewhere).
+const HINT_PERSON_SRC = "(?:اشخاص|شخصا|شخص|انفار|نفر|ضيوف|ضيف|افراد|فرد|زوار|زائر)";
+function chaletHintFromMessage(text) {
+  return String(text || "")
+    .replace(new RegExp(`[0-9٠-٩]+\\s*(${HINT_PERSON_SRC})`, "gu"), " $1 ")
+    .replace(new RegExp(`(${HINT_PERSON_SRC})\\s*[0-9٠-٩]+`, "gu"), " $1 ");
+}
+
+// A «من … الى/لـ …» TIME clause is present: a prayer/meridiem word inside it is
+// a CLOCK endpoint, not the period label. «من المغرب للفجر» must let the time
+// drive resolution (evening slot) rather than extractPeriodText grabbing «الفجر»
+// and canon-folding فجر→صباح onto the MORNING slot.
+const TIME_RANGE_CLAUSE_RE = /(?:^|\s)من\s+\S+\s+(?:الى|إلى|حتى|لل?\S)/u;
+const PRAYER_PERIOD_RE = /^(?:ال)?(?:فجر|مغرب|عشاء|عصر|ظهر|ضحى)/u;
+
+// The owner NAMED a chalet in the sentence (a chalet-designator word is present).
+// Used so an unknown name inside a booking command is answered with the real
+// registered list instead of the generic «لأي شاليه تريد الحجز؟».
+const CHALET_NAMED_RE = /(?:^|\s)(?:شاليه|شالية|الشاليه|الشالية|شاليهات|قصر|منتجع|منتجعات|استراحة)/u;
+
 // Short period wording (اسم فترة أو وصفها) worth handing to the resolver.
 // The bare «مساء» forms are listed explicitly: the «مسائي» stem uses ئ
 // (U+0626) while «مساء» ends in the standalone hamza ء (U+0621) — without
 // them a PM answer never registered and fell to the model (live bug).
 function extractPeriodText(message) {
+  // Fold tatweel/harakat FIRST (consistent with the chalet resolver): «مسـاء»
+  // with an embedded tatweel must match «مساء», not fall through and re-ask an
+  // already-answered field.
   // «فترة5» glued (no space) is how the owner actually types the digit labels
   // the app itself suggests — the glued alternative must come first.
-  const m = String(message || "").match(
+  const m = stripTashkeelTatweel(String(message || "")).match(
     /((?:ال)?فترة\s*[0-9٠-٩]+|الفترة\s+\S+|فترة\s+\S+|(?:ال)?(?:صباحي?ة?|مسائي?ة?|ليلي?ة?|نهاري?ة?)|مساءً|مساءا|المساء|مساء|عشاء|بالليل|ليلاً|ليلا|الليلة|ظهراً|ظهرا|الظهر|عصراً|عصرا|العصر|الضحى|ضحى|الفجر|فجر)/u,
   );
   return m ? m[0] : "";
@@ -1141,9 +1223,12 @@ function extractPeriodLabelHint(message) {
 }
 
 // Typed draft cancellation — the guided fallback advertises «الغِ الحجز», so
-// it must always work (diacritics stripped before matching).
+// it must always work (diacritics stripped before matching). Also covers the
+// natural colloquial closes: «ما ابي/أبي/أبغى»، «خلاص الغيه»، «خلاص خلاص»،
+// «توقف»، «بطّل/بطل». A leading «خلاص» must be followed by a real cancel word
+// (bare «خلاص» alone is ambiguous with «done, save it» and is NOT a cancel).
 const CANCEL_DRAFT_RE =
-  /^\s*(?:الغ|ألغ|الغي|ألغي|إلغاء|الغاء|كنسل|cancel)\s*(?:الحجز|الطلب|المسودة)?\s*[.!؟]*\s*$/;
+  /^\s*(?:الغ|ألغ|الغي|ألغي|الغيه|ألغيه|إلغاء|الغاء|كنسل|cancel|توقف|بطل|بطّل|ما\s*اب(?:ي|غى|غا)|ما\s*أب(?:ي|غى|غا)|خلاص\s+(?:خلاص|الغ|ألغ|الغي|ألغي|الغيه|ألغيه|كنسل|cancel|بطل|بطّل|توقف))\s*(?:الحجز|الطلب|المسودة|بسير|الان|عنك)?\s*[.!؟]*\s*$/;
 
 // A short answer to our own «باسم من؟» question is a customer name even when
 // the owner naturally replies with just «علي». Keep this contextual and
@@ -1269,7 +1354,7 @@ async function runBookingPipeline(deps, ctx, { threadId, rawMessage, message, pr
   if (typeof deps.getActiveDraft !== "function" || typeof deps.upsertDraft !== "function") return null;
 
   const row = await deps.getActiveDraft(ctx.wsKey, threadId);
-  const intent = BOOKING_INTENT_RE.test(message);
+  const intent = hasBookingIntent(message);
   if (!row && !intent) return null;
 
   // The question the server asked LAST turn (server-owned dialogue state).
@@ -1333,8 +1418,10 @@ async function runBookingPipeline(deps, ctx, { threadId, rawMessage, message, pr
   // we are picking (or the pending question is the pick list and the message
   // is a bare 1-3-digit numeral), drop the numeral's guests/total reading.
   if (pick || (pendingQ && pendingQ.kind === "pick")) {
-    const folded = foldDigits(String(rawMessage || "")).trim();
-    if (/^\d{1,3}$/.test(folded)) {
+    // A spoken-number pick («خمسه» → فترة 5) is ALSO a valid guest word to
+    // extractGuestCount; a digit pick («٢») is ALSO the whole-message guest
+    // rule. Either way, a token used to SELECT must never fabricate a headcount.
+    if (isBarePickToken(rawMessage)) {
       delete facts.fields.guests;
       delete facts.fields.total;
     }
@@ -1349,21 +1436,43 @@ async function runBookingPipeline(deps, ctx, { threadId, rawMessage, message, pr
   // A DATE answer to the period question is a date, not a period label —
   // «بعد يومين» was filed as period_text and answered with «لم أجد هذه
   // الفترة» (live Scenario A). Any parsed date this turn wins the reading.
-  const periodWord = meridiemAnswered
+  // A meridiem answer (or the pending AM/PM question itself) must not be read as
+  // a period label — «ظهراً»/«مساء» answers the time question, not «أي فترة».
+  let periodWord = (meridiemAnswered || (pendingQ && pendingQ.kind === "time_ampm"))
     ? ""
     : extractPeriodText(message) ||
       (row && pendingQ && pendingQ.kind === "period" &&
        !facts.fields.booking_date && !facts.fields.date_error
         ? contextualPeriodAnswer(rawMessage)
         : "");
-  // A bare digit answering the PERIOD question is a label pick («٥» = «فترة
-  // 5»), never a guest count — mirror the pick guard above.
-  if (row && pendingQ && pendingQ.kind === "period" && periodWord) {
-    const folded = foldDigits(String(rawMessage || "")).trim();
-    if (/^\d{1,3}$/.test(folded)) {
-      delete facts.fields.guests;
-      delete facts.fields.total;
-    }
+  // A prayer/meridiem word INSIDE a «من … الى/لـ …» time clause is a CLOCK
+  // endpoint («من المغرب للفجر»), not the period label — suppress it so the
+  // parsed time drives resolution instead of فجر→صباح booking the morning slot.
+  if (periodWord && PRAYER_PERIOD_RE.test(periodWord) && TIME_RANGE_CLAUSE_RE.test(stripTashkeelTatweel(message))) {
+    periodWord = "";
+  }
+  // A bare digit or spoken number answering the PERIOD question is a label pick
+  // («٥»/«خمسه» = «فترة 5»), never a guest count — mirror the pick guard above.
+  if (row && pendingQ && pendingQ.kind === "period" && periodWord && isBarePickToken(rawMessage)) {
+    delete facts.fields.guests;
+    delete facts.fields.total;
+  }
+  // The authoritative document is needed for the chalet-swap correction signal
+  // below and for binding/availability further down — load it once per turn.
+  const snap0 = typeof deps.getWorkspaceData === "function" ? await deps.getWorkspaceData(ctx.wsKey) : null;
+  const doc0 = snap0 && snap0.data ? snap0.data : null;
+  // A PURE chalet correction on an active draft («لا الشاليه سكاي») carries no
+  // date/guests/total/name/time/phone signal, so the closed-guided gate below
+  // would swallow it and never reach the swap code. Count it as a fact signal —
+  // but ONLY when the turn names a DIFFERENT resolvable chalet, so a chalet-less
+  // answer still cannot clobber a good earlier hint (R9).
+  // (Not while a numbered PICK is pending: there «شاليه سكاي» means "that option
+  // isn't in the list", handled by the pick-fallback — not a chalet swap.)
+  const curChaletId = row && row.fields ? String(row.fields.chalet_id || "") : "";
+  let chaletSwapSignal = false;
+  if (row && curChaletId && doc0 && !(pendingQ && pendingQ.kind === "pick") && /شاليه|شالية/.test(message)) {
+    const swap = resolveChaletReference(doc0, { chalet_name: redactText(rawMessage || "").slice(0, 200) });
+    if (swap.ok && String(swap.chalet.id) !== curChaletId) chaletSwapSignal = true;
   }
   const factSignal = Boolean(
     (facts.fields &&
@@ -1377,7 +1486,8 @@ async function runBookingPipeline(deps, ctx, { threadId, rawMessage, message, pr
       facts.accept_suggestion ||
       (facts.private && facts.private.customer_phone) ||
       periodWord ||
-      chaletAnswer,
+      chaletAnswer ||
+      chaletSwapSignal,
   );
   if (row && !intent && !factSignal && !pick && !forced) {
     // CLOSED GUIDED MODE: an active-draft turn NEVER falls through to the
@@ -1407,6 +1517,25 @@ async function runBookingPipeline(deps, ctx, { threadId, rawMessage, message, pr
         })),
       };
     }
+    // While a numbered PICK is pending, any UNRECOGNIZED reply (a chalet that
+    // isn't in the list, a re-typed conflicted name, gibberish) must re-emit the
+    // FULL options — never «لم أفهم», and never the 220-char-truncated pending
+    // echo that silently dropped option 3.
+    if (pendingQ && pendingQ.kind === "pick" && storedAlts.length) {
+      return {
+        ok: true,
+        reply_ar: alternativesReplyAr(storedAlts, "هذا الخيار ليس ضمن القائمة المعروضة. اختر رقماً من الخيارات:"),
+        tool_results: [],
+        next_actions: storedAlts.map((a, i) => ({
+          pick: i + 1,
+          chalet_name: a.chalet_name,
+          date: a.date,
+          start: a.start,
+          end: a.end,
+          price: a.price ?? null,
+        })),
+      };
+    }
     const missing0 = missingFields(row.fields || {});
     const pendingText =
       (pendingQ && pendingQ.q) ||
@@ -1419,11 +1548,6 @@ async function runBookingPipeline(deps, ctx, { threadId, rawMessage, message, pr
       tool_results: [],
     };
   }
-
-  // The authoritative document is needed both for corrections (chalet swap)
-  // and for binding/availability below — load it once per turn.
-  const snap0 = typeof deps.getWorkspaceData === "function" ? await deps.getWorkspaceData(ctx.wsKey) : null;
-  const doc0 = snap0 && snap0.data ? snap0.data : null;
 
   // ---- merge this turn's facts into the server draft ----
   let fields = mergeDraft(row ? row.fields || {} : {}, facts);
@@ -1442,7 +1566,7 @@ async function runBookingPipeline(deps, ctx, { threadId, rawMessage, message, pr
   // actually resolves to a chalet — otherwise a chalet-less answer («مساء» to
   // the AM/PM question) would clobber a good earlier hint and strand the draft.
   if (!fields.chalet_id && safeMessage) {
-    const thisHint = chaletAnswer ? redactText(chaletAnswer).slice(0, 200) : safeMessage;
+    const thisHint = chaletAnswer ? redactText(chaletAnswer).slice(0, 200) : chaletHintFromMessage(safeMessage);
     if (intent || !row || chaletAnswer) {
       fields.chalet_text = thisHint;
     } else if (factSignal && doc0 && resolveChaletReference(doc0, { chalet_name: thisHint }).ok) {
@@ -1573,12 +1697,15 @@ async function runBookingPipeline(deps, ctx, { threadId, rawMessage, message, pr
       delete fields.chalet_text;
     } else if (cres.error === "CHALET_AMBIGUOUS") {
       return ask(cres.reason_ar, { pending_q: { kind: "chalet" } });
-    } else if (cres.error === "CHALET_NOT_FOUND" && chaletAnswer) {
-      // The owner ANSWERED our chalet question with a name we cannot match —
-      // re-ask listing the REAL registered names (never the generic fallback).
+    } else if (cres.error === "CHALET_NOT_FOUND" && (chaletAnswer || (intent && CHALET_NAMED_RE.test(message)))) {
+      // The owner NAMED a chalet we cannot match — either as a direct answer to
+      // our chalet question, or inside a booking command («احجز قصر الياسمين…»).
+      // Say it's unknown and LIST the real registered names, never the generic
+      // «لأي شاليه تريد الحجز؟» that hides that the given name is unregistered.
       return ask(cres.reason_ar, { pending_q: { kind: "chalet" } });
     }
-    // NOT_FOUND on a generic sentence just means "chalet still unknown".
+    // NOT_FOUND on a sentence that named NO chalet just means "chalet still
+    // unknown" — the planner's combined question asks for it.
   }
 
   if (fields.chalet_id && !fields.period_id && typeof deps.resolveBookingCreateArgs === "function") {
@@ -1682,6 +1809,21 @@ async function runBookingPipeline(deps, ctx, { threadId, rawMessage, message, pr
     if (sp && sp > 0) {
       fields.total_suggested = sp;
       fields.total_source = "suggested";
+    }
+  }
+
+  // ---- capacity guard: an over-capacity headcount must NEVER silently reach
+  // the card. Caught here at the draft/prepare stage (the executor's own guard
+  // is only the last line). Negative/zero counts are handled by the parser; this
+  // enforces the upper bound against the resolved chalet's capacity.
+  if (doc && fields.chalet_id && Number.isInteger(fields.guests) && fields.guests > 0) {
+    const capChalet = (doc.chalets || []).find((c) => String(c.id) === String(fields.chalet_id));
+    const capacity = capChalet ? Number(capChalet.capacity) || 0 : 0;
+    if (capacity > 0 && fields.guests > capacity) {
+      return ask(
+        `عدد الضيوف (${fields.guests}) يتجاوز سعة الشاليه (${capacity}). قلّل العدد أو اختر شاليهاً أكبر.`,
+        { pending_q: { kind: "guests" } },
+      );
     }
   }
 
