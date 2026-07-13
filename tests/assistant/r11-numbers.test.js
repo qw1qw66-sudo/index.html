@@ -16,7 +16,7 @@ import {
   parseTimeExpression,
   isExplicitFree,
 } from '../../supabase/functions/_shared/assistant/nl-normalize.mjs';
-import { convo, TOMORROW } from '/tmp/claude-0/-home-user-index-html/b2f2de9e-599a-5acd-b19d-df4e536dbc41/scratchpad/audit-harness.mjs';
+import { convo, TOMORROW } from './helpers/audit-harness.mjs';
 
 // Fixed calendar anchors (pure inputs, independent of the machine clock).
 const MON = '2026-07-13'; // a Monday (UTC dow 1)

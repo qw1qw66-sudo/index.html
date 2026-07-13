@@ -5,7 +5,7 @@
 // silently rode the LLM.
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { convo } from "/tmp/claude-0/-home-user-index-html/b2f2de9e-599a-5acd-b19d-df4e536dbc41/scratchpad/audit-harness.mjs";
+import { convo } from "./helpers/audit-harness.mjs";
 import { resolveChaletReference } from "../../supabase/functions/_shared/assistant/booking-resolution.mjs";
 import { redactText } from "../../supabase/functions/_shared/assistant/redact.mjs";
 

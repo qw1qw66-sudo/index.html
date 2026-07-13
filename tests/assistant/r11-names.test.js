@@ -7,7 +7,7 @@
 // asserts model_calls === 0 (the deterministic planner path, model unreachable).
 import { describe, it, expect } from "vitest";
 import { extractFacts } from "../../supabase/functions/_shared/assistant/booking-planner.mjs";
-import { convo, TODAY } from "/tmp/claude-0/-home-user-index-html/b2f2de9e-599a-5acd-b19d-df4e536dbc41/scratchpad/audit-harness.mjs";
+import { convo, TODAY } from "./helpers/audit-harness.mjs";
 
 // extractCustomerName is not exported; read the captured name through extractFacts.
 const name = (msg) => extractFacts(msg, TODAY).fields.customer_name;
