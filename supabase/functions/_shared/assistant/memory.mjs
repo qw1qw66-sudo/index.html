@@ -16,8 +16,8 @@ import { normalizeProposedMemory } from "./policy.mjs";
 
 export const MEMORY_TYPES = ["fact", "preference", "decision", "policy", "mistake", "lesson"];
 
-// Arabic labels for the rendered block (context only).
-const TYPE_LABEL_AR = {
+// Arabic labels for the rendered block (context only) and the owner memory UI.
+export const TYPE_LABEL_AR = {
   fact: "معلومة",
   preference: "تفضيل",
   decision: "قرار",

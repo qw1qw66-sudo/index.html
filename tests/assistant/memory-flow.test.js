@@ -64,3 +64,55 @@ describe("memory injection into the model prompt", () => {
     expect(sp).not.toContain("ذاكرة نشطة");
   });
 });
+
+// The owner memory-management endpoint (memory_action): list what the assistant
+// learned (active + proposed), approve/reject each — phone-free to the browser.
+describe("memory management endpoint (owner UI)", () => {
+  it("lists active + proposed only, phone-free, with an Arabic type label", async () => {
+    const c = convo();
+    c.deps._memories.push({ id: "a1", memory_type: "preference", status: "active", enforcement_level: "advisory", content_json: { summary_ar: "العميل «علي» يفضّل المسائي.", subject: "علي", kind: "customer" } });
+    c.deps._memories.push({ id: "p1", memory_type: "fact", status: "proposed", enforcement_level: "advisory", content_json: { summary_ar: "العميل خالد يفضّل الشاليه الكبير." } });
+    c.deps._memories.push({ id: "r1", memory_type: "lesson", status: "rejected", content_json: { summary_ar: "مرفوضة لا تظهر." } });
+    c.deps._memories.push({ id: "s1", memory_type: "fact", status: "superseded", content_json: { summary_ar: "قديمة لا تظهر." } });
+    const r = await c.post({ memory_action: "list" });
+    expect(r.ok).toBe(true);
+    expect(r.memories.map((m) => m.id).sort()).toEqual(["a1", "p1"]); // active + proposed only
+    const a1 = r.memories.find((m) => m.id === "a1");
+    expect(a1.type_label).toBe("تفضيل");
+    expect(a1.status).toBe("active");
+    expect(a1.summary_ar).toContain("علي");
+  });
+
+  it("redacts (never leaks) a phone inside a memory summary", async () => {
+    const c = convo();
+    c.deps._memories.push({ id: "ph", memory_type: "fact", status: "active", content_json: { summary_ar: "العميل خالد جواله 0501234567." } });
+    const r = await c.post({ memory_action: "list" });
+    expect(JSON.stringify(r)).not.toContain("0501234567"); // phone redacted before the browser
+    const ph = r.memories.find((m) => m.id === "ph");
+    expect(ph).toBeTruthy();
+    expect(ph.summary_ar).toContain("خالد"); // context kept, phone masked
+  });
+
+  it("promotes a proposed memory to active", async () => {
+    const c = convo();
+    c.deps._memories.push({ id: "p2", memory_type: "policy", status: "proposed", content_json: { summary_ar: "سياسة: لا حجز بدون عربون." } });
+    const r = await c.post({ memory_action: "promote", memory_id: "p2" });
+    expect(r.ok).toBe(true);
+    expect(c.deps._memories.find((m) => m.id === "p2").status).toBe("active");
+  });
+
+  it("rejects a memory", async () => {
+    const c = convo();
+    c.deps._memories.push({ id: "a2", memory_type: "preference", status: "active", content_json: { summary_ar: "تفضيل ما." } });
+    const r = await c.post({ memory_action: "reject", memory_id: "a2" });
+    expect(r.ok).toBe(true);
+    expect(c.deps._memories.find((m) => m.id === "a2").status).toBe("rejected");
+  });
+
+  it("fails safely on a missing id, missing memory, or unknown action", async () => {
+    const c = convo();
+    expect((await c.post({ memory_action: "promote" })).ok).toBe(false); // no memory_id
+    expect((await c.post({ memory_action: "promote", memory_id: "nope" })).ok).toBe(false);
+    expect((await c.post({ memory_action: "frobnicate", memory_id: "x" })).ok).toBe(false);
+  });
+});

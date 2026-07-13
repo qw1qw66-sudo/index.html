@@ -737,6 +737,43 @@ test('العميل المعروف: a returning-customer phone chip appears (mask
   await expect(page.locator('#assistantActions .action-card')).toHaveCount(1);
 });
 
+test('memory management: Settings lists learned memories; approve/reject update the list', async ({ page }) => {
+  await mockRpc(page);
+  let memories = [
+    { id: 'a1', memory_type: 'preference', type_label: 'تفضيل', status: 'active', enforcement_level: 'advisory', summary_ar: 'العميل «علي» يفضّل المسائي.' },
+    { id: 'p1', memory_type: 'fact', type_label: 'معلومة', status: 'proposed', enforcement_level: 'advisory', summary_ar: 'خالد يفضّل الشاليه الكبير.' },
+  ];
+  await page.route('**/functions/v1/chalet-assistant', async (route) => {
+    const body = JSON.parse(route.request().postData() || '{}');
+    if (body.memory_action === 'promote') {
+      memories = memories.map((m) => (m.id === body.memory_id ? { ...m, status: 'active' } : m));
+      return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true }) });
+    }
+    if (body.memory_action === 'reject') {
+      memories = memories.filter((m) => m.id !== body.memory_id);
+      return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true }) });
+    }
+    // memory_action:"list" (and any other)
+    return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true, memories }) });
+  });
+  await page.goto('/');
+  await create(page);
+  await page.locator('[data-tab="settings"]').click();
+  await page.locator('#settingsMemoryCard summary').click(); // expand the section
+  // Both learned items are listed.
+  await expect(page.locator('#memoryList')).toContainText('العميل «علي» يفضّل المسائي.');
+  await expect(page.locator('#memoryList')).toContainText('خالد يفضّل الشاليه الكبير.');
+  // Only the PROPOSED item offers «اعتماد».
+  await expect(page.locator('#memoryList [data-action="memory-promote"][data-id="p1"]')).toHaveCount(1);
+  await expect(page.locator('#memoryList [data-action="memory-promote"][data-id="a1"]')).toHaveCount(0);
+  // Approve the proposed one → it becomes active (its اعتماد button disappears).
+  await page.locator('#memoryList [data-action="memory-promote"][data-id="p1"]').click();
+  await expect(page.locator('#memoryList [data-action="memory-promote"][data-id="p1"]')).toHaveCount(0);
+  // Reject the other → it leaves the list.
+  await page.locator('#memoryList [data-action="memory-reject"][data-id="a1"]').click();
+  await expect(page.locator('#memoryList')).not.toContainText('العميل «علي» يفضّل المسائي.');
+});
+
 test('pending booking card is recovered after a reload (rotated token, nothing in storage)', async ({ page }) => {
   await mockRpc(page);
   await page.route('**/functions/v1/chalet-setup-status', (route) =>

@@ -1425,6 +1425,21 @@
               </button>
             </div>
           </div>
+          <!-- Owner-facing memory management: what the assistant has learned
+               (active/proposed). Approve the useful, reject the wrong. Server
+               -side (via the assistant function) — never the local-doc save
+               cycle; phone numbers are never stored or shown here. -->
+          <details class="card section-details" id="settingsMemoryCard">
+            <summary>ذاكرة المساعد</summary>
+            <p class="muted settings-line">
+              ما تعلّمه المساعد عن مساحتك (سياقٌ مؤكَّد — ليس أمراً). اعتمِد المفيد
+              وارفض غير الصحيح. لا تُخزَّن أرقام هواتف العملاء هنا.
+            </p>
+            <div class="actions">
+              <button class="secondary tiny" type="button" data-action="memory-refresh">تحديث</button>
+            </div>
+            <div id="memoryList" class="muted settings-line">—</div>
+          </details>
           <!-- ========================= HTML: mobile setup (إعداد الربط) ========================= -->
           <!-- Non-destructive data-quality report: duplicate periods and
                periods with incomplete times. Read-only — the owner fixes them
@@ -3101,6 +3116,8 @@
             const logEl = $("assistantLog");
             if (logEl && !logEl.children.length) assistantNew({ keepThread: true });
           }
+          // Lazy-load the assistant's memory list the first time Settings opens.
+          if (tab === "settings") loadMemories();
           log("Tab changed; no upload", { tab });
         }
         // ========================= JS: rendering =========================
@@ -4849,6 +4866,9 @@
             return assistantDraftAction("edit_field", "", sourceEl.dataset.field || "");
           if (a === "assistant-add-saved-phone")
             return assistantSend("أضف الجوال المحفوظ");
+          if (a === "memory-promote") return assistantMemoryAction("promote", id);
+          if (a === "memory-reject") return assistantMemoryAction("reject", id);
+          if (a === "memory-refresh") return loadMemories(true);
         }
         // ========================= JS: assistant (Chalet Brain) =========================
         // Talks ONLY to the server-side chalet-assistant Edge Function. The
@@ -5571,6 +5591,66 @@
             }
           } catch (e) {
             assistantAppend("bot", e.notDeployed ? "المساعد غير مفعّل." : "تعذّر الاتصال بالخادم مؤقتاً. لم يتغيّر شيء.");
+          }
+        }
+        // ========================= JS: memory management (الإعدادات) =========================
+        // The owner sees what the assistant learned and approves/rejects each.
+        // Server-side via assistantCall(memory_action) — NOT the local-doc save
+        // cycle. The list is already phone-free from the server; the render adds
+        // nothing phone-shaped. esc() escapes every interpolated value.
+        const MEMORY_STATUS_AR = { active: "نشطة", proposed: "مقترحة" };
+        function memoryCard(m) {
+          const label = esc(String(m.type_label || "معلومة"));
+          const statusAr = esc(MEMORY_STATUS_AR[m.status] || String(m.status || ""));
+          const summary = esc(String(m.summary_ar || ""));
+          const promoteBtn =
+            m.status === "proposed"
+              ? '<button class="primary tiny" data-action="memory-promote" data-id="' + esc(String(m.id)) + '">اعتماد</button>'
+              : "";
+          return (
+            '<div class="item"><div class="actions between"><div><b>' + label +
+            '</b> <span class="muted">' + statusAr + '</span><div class="muted">' + summary +
+            "</div></div></div>" +
+            '<div class="actions">' + promoteBtn +
+            '<button class="danger tiny" data-action="memory-reject" data-id="' + esc(String(m.id)) + '">رفض</button>' +
+            "</div></div>"
+          );
+        }
+        function renderMemories(memories) {
+          const box = $("memoryList");
+          if (!box) return;
+          const items = Array.isArray(memories) ? memories : [];
+          box.innerHTML = items.length
+            ? items.map(memoryCard).join("")
+            : '<div class="empty">لا توجد ذاكرة بعد — يتعلّم المساعد من حجوزاتك المؤكَّدة.</div>';
+        }
+        let memoryLoaded = false;
+        async function loadMemories(force) {
+          const box = $("memoryList");
+          if (!box) return;
+          if (!loadedWorkspace) { box.innerHTML = '<div class="empty">سجّل الدخول أولاً.</div>'; return; }
+          if (assistantBackendMissing) { box.innerHTML = '<div class="empty">المساعد غير مفعّل بعد.</div>'; return; }
+          if (memoryLoaded && !force) return;
+          try {
+            const body = await assistantCall({ memory_action: "list" });
+            if (body && body.ok) { memoryLoaded = true; renderMemories(body.memories || []); }
+            else box.innerHTML = '<div class="empty">تعذّر تحميل الذاكرة.</div>';
+          } catch (e) {
+            box.innerHTML = '<div class="empty">' + (e.notDeployed ? "المساعد غير مفعّل بعد." : "تعذّر الاتصال بالخادم مؤقتاً.") + "</div>";
+          }
+        }
+        async function assistantMemoryAction(kind, id) {
+          if (!id) return;
+          try {
+            const body = await assistantCall({ memory_action: kind, memory_id: id });
+            if (body && body.ok) {
+              feedback(kind === "promote" ? "تم اعتماد الذاكرة." : "تم رفض الذاكرة.", "good");
+              await loadMemories(true);
+            } else {
+              feedback("تعذّر تنفيذ الإجراء على الذاكرة.", "bad");
+            }
+          } catch (e) {
+            feedback(e.notDeployed ? "المساعد غير مفعّل بعد." : "تعذّر الاتصال بالخادم مؤقتاً.", "bad");
           }
         }
         // Refresh recovery: after login, ask the server for the latest pending

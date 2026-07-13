@@ -357,6 +357,23 @@ async function main() {
     record("booking_cancelled", false, "NO_BOOKING_ID");
   }
 
+  // 10c. Owner memory-management endpoint: the confirmed booking above wrote a
+  // customer memory; LIST it (must be phone-free) then REJECT it (cleanup). This
+  // is the first live exercise of listMemories/rejectMemory + the memory_action
+  // branch. A zero-memory list still passes the shape/phone-free assertions.
+  {
+    const list = await assistant({ memory_action: "list" });
+    const lj = list.json || {};
+    const mems = Array.isArray(lj.memories) ? lj.memories : [];
+    const clean = mems.every((m) => !leaks(String(m.summary_ar || "")));
+    record("assistant_memory_list", list.status === 200 && lj.ok === true && Array.isArray(lj.memories) && clean, list.status + ":n=" + mems.length);
+    const mine = mems.find((m) => String(m.summary_ar || "").includes("مهره اختبار"));
+    if (mine && mine.id) {
+      const rej = await assistant({ memory_action: "reject", memory_id: mine.id });
+      record("assistant_memory_reject", rej.status === 200 && rej.json && rej.json.ok === true, rej.status + (rej.json && rej.json.error ? ":" + rej.json.error : ""));
+    }
+  }
+
   // 10b. Exact owner-reported conversation — spoken end hour, later guest
   // count, marker-only price and a bare customer-name answer must all survive
   // into one exact card with ZERO model calls.
