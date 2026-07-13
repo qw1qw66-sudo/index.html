@@ -567,15 +567,17 @@ async function main() {
     );
   }
 
-  // 10i. ANSWER MATRIX (IMG_6703): the bot's own «لأي شاليه تريد الحجز؟»
-  // question must accept the bare answer «تولوم» — the live reply was
-  // «لم أفهم ردّك» twice. Fresh thread; stops at the price question, so no
-  // booking and no cleanup.
+  // 10i. ANSWER MATRIX (IMG_6703): the assistant's own chalet question must
+  // accept the bare answer «تولوم» — the live reply was «لم أفهم ردّك» twice.
+  // Since R8 the ask is COMBINED when several fields are missing («باقي فقط:
+  // اسم الشاليه، والسعر…»), so the chalet may be requested as «اسم الشاليه»
+  // OR the single «لأي شاليه» — either counts. Fresh thread; stops at the
+  // price question, so no booking and no cleanup.
   {
     const t1 = await assistant({ message: "احجز فترة اليوم مساء من ٧ الى ٥ عدد الضيوف ١٠ باسم علي تجربة" });
     const b1 = t1.json || {};
     const t1Thread = b1.thread_id || null;
-    const askedChalet = t1.status === 200 && b1.ok === true && b1.model_calls === 0 && /لأي شاليه/.test(String(b1.reply_ar || ""));
+    const askedChalet = t1.status === 200 && b1.ok === true && b1.model_calls === 0 && /لأي شاليه|اسم الشاليه/.test(String(b1.reply_ar || ""));
     let advanced = false, detail = "NO_THREAD";
     if (t1Thread) {
       const t2 = await assistant({ message: "تولوم", thread_id: t1Thread });
