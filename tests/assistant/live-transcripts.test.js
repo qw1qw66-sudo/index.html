@@ -212,14 +212,17 @@ describe("live transcript corpus (owner-reported conversations, zero model calls
     const replies = [];
     const t1 = await chat(deps, "احجز تولوم بكرة بالليل");
     replies.push(t1.reply_ar);
-    expect(t1.reply_ar).toContain("كم عدد الضيوف");
+    // R8: ONE combined question for everything still open — never one-by-one.
+    expect(t1.reply_ar).toContain("عدد الضيوف");
+    expect(t1.reply_ar).toContain("اسم العميل");
+    expect(t1.reply_ar).toContain("رسالة واحدة");
     const t2 = await chat(deps, "١٠", "th-1");
     replies.push(t2.reply_ar);
     expect(t2.reply_ar).toContain("سعر النظام");
     expect(deps._drafts.get("th-1").fields.guests).toBe(10);
     const t3 = await chat(deps, "اعتمد", "th-1");
     replies.push(t3.reply_ar);
-    expect(t3.reply_ar).toContain("باسم من");
+    expect(t3.reply_ar).toContain("اسم العميل");
     const t4 = await chat(deps, "العميل علي تجربة", "th-1");
     replies.push(t4.reply_ar);
     const prep = (t4.tool_results || []).find((x) => x.kind === "prepared_action");
@@ -236,14 +239,23 @@ describe("live transcript corpus (owner-reported conversations, zero model calls
     expect(r.next_actions.length).toBeGreaterThan(0);
     const pick = await chat(deps, "١", "th-1");
     replies.push(pick.reply_ar);
-    // The accepted SYSTEM price belonged to the old slot — picking a new slot
-    // re-quotes honestly instead of silently keeping the wrong total.
-    expect(pick.reply_ar).toContain("سعر النظام");
-    const done = await chat(deps, "اعتمد", "th-1");
-    replies.push(done.reply_ar);
-    expect((done.tool_results || []).some((x) => x.kind === "prepared_action")).toBe(true);
+    // R8 (§5): tapping an option that PRINTS a price accepts that price — the
+    // card comes straight back, no second price question. The stale accepted
+    // system price of the OLD slot was invalidated, and the tapped option's
+    // own displayed price took its place.
+    const repick = (pick.tool_results || []).find((x) => x.kind === "prepared_action");
+    expect(repick).toBeTruthy();
+    const fAfterPick = deps._drafts.get("th-1").fields;
+    expect(fAfterPick.total_source).toBe("alternative_price");
+    expect(fAfterPick.total).toBeGreaterThan(0);
+    expect(fAfterPick.guests).toBe(10); // the pick never erases known answers
+    expect(fAfterPick.customer_name).toBe("علي تجربة");
     expect(deps._modelCalls).toHaveLength(0);
-    for (const rep of replies) expect(String(rep || "")).not.toContain("رقم الجوال");
+    // The phone is never DEMANDED: it may only ever appear as the optional
+    // item inside the combined ask.
+    for (const rep of replies) {
+      expect(String(rep || "")).not.toMatch(/رقم الجوال(?!\s*\(اختياري\))/u);
+    }
   });
 
   it("R1b: an unrelated legacy conflicting pair no longer blocks a safe new booking", async () => {
@@ -308,7 +320,10 @@ describe("live transcript corpus (owner-reported conversations, zero model calls
     expect(t3.reply_ar).toContain("لم أفهم ردّك");
     expect(t3.reply_ar).toContain("الغِ الحجز");
     expect(deps._modelCalls).toHaveLength(0);
-    for (const rep of replies) expect(String(rep || "")).not.toContain("رقم الجوال");
+    // Never DEMANDED — only the optional combined-ask mention is allowed.
+    for (const rep of replies) {
+      expect(String(rep || "")).not.toMatch(/رقم الجوال(?!\s*\(اختياري\))/u);
+    }
   });
 
   it("R4 (IMG_6702): the exact «سجل حجز…شالية…٧ المسا الى ٥ الصباح» message is fully deterministic", async () => {
@@ -339,7 +354,10 @@ describe("live transcript corpus (owner-reported conversations, zero model calls
     const deps = makeDeps();
     const t1 = await chat(deps, "احجز فترة اليوم مساء من ٧ الى ٥ عدد الضيوف ١٠ باسم علي تجربة");
     expect(t1.model_calls).toBe(0);
-    expect(t1.reply_ar).toContain("لأي شاليه");
+    // R8: the ask is combined, but the GIVEN period/time is never re-asked.
+    expect(t1.reply_ar).toContain("اسم الشاليه");
+    expect(t1.reply_ar).not.toContain("الفترة (اسمها أو وقتها)");
+    expect(t1.reply_ar).not.toContain("عدد الضيوف");
     expect(deps._drafts.get("th-1").fields.pending_q.kind).toBe("chalet");
     // Live failure: this exact answer got «لم أفهم ردّك» twice.
     const t2 = await chat(deps, "تولوم", "th-1");
@@ -434,6 +452,184 @@ describe("live transcript corpus (owner-reported conversations, zero model calls
     expect(revenue.model_calls).toBe(0);
     expect(revenue.reply_ar).toContain("900 ريال");
     expect(revenue.reply_ar).not.toBe("تمام.");
+    expect(deps._modelCalls).toHaveLength(0);
+  });
+
+  // --- R8 (spec §8): the FULL booking conversation, end to end. A complete
+  // message must NEVER become a field-by-field interrogation, and choosing a
+  // conflict alternative must NEVER lose the fields stated before the conflict.
+  function r8Doc({ conflictToday = false } = {}) {
+    // Two same-time day periods (فترة 5 / الفترة 6) + a second chalet, exactly
+    // the shape the live staging workspace has.
+    const doc = {
+      chalets: [
+        {
+          id: "tulum", name: "شاليه تولوم", capacity: 20, deleted_at: null,
+          periods: [
+            { id: "f5", label: "فترة 5", start: "07:00", end: "17:00", active: true, sort: 1, weekday_price: 450, weekend_price: 450 },
+            { id: "f6", label: "الفترة 6", start: "07:00", end: "17:00", active: true, sort: 2, weekday_price: 400, weekend_price: 400 },
+            { id: "t-pm", label: "مسائي", start: "19:00", end: "05:00", active: true, sort: 3, weekday_price: 500, weekend_price: 700 },
+          ],
+        },
+        {
+          id: "sky", name: "شاليه سكاي", capacity: 8, deleted_at: null,
+          periods: [{ id: "s-pm", label: "مسائي", start: "19:00", end: "05:00", active: true, sort: 1, weekday_price: 350, weekend_price: 500 }],
+        },
+      ],
+      bookings: [],
+    };
+    if (conflictToday) {
+      doc.bookings.push({ id: "bk-existing", customer_name: "حجز قائم", chalet_id: "tulum", booking_date: TODAY, period_id: "t-pm", guests: 5, total: 500, paid: 0, status: "confirmed", deleted_at: null });
+    }
+    return doc;
+  }
+
+  it("R8 Scenario A: a COMPLETE message never becomes an interrogation (chalet/guests/price/name never re-asked)", async () => {
+    const deps = makeDeps({ doc: r8Doc() });
+    const t1 = await chat(
+      deps,
+      "اعمل حجز جديد بعد يومين شاليه تولوم من 7 الصباح إلى 5 العصر عدد الضيوف 4 رقم الجوال 0503559373 باسم خالد السعر 450",
+    );
+    expect(t1.model_calls).toBe(0);
+    // The ONLY thing genuinely ambiguous is which same-time period — so the
+    // reply is the period pick, never a re-ask of anything already given.
+    expect(t1.reply_ar).not.toContain("لأي شاليه");
+    expect(t1.reply_ar).not.toContain("كم عدد الضيوف");
+    expect(t1.reply_ar).not.toContain("كم الإجمالي");
+    expect(t1.reply_ar).not.toContain("باسم من");
+    expect(t1.reply_ar).not.toContain("ما تاريخ");
+    const f1 = deps._drafts.get("th-1").fields;
+    expect(f1.chalet_id).toBe("tulum");
+    expect(f1.booking_date).toBe(addDays(TODAY, 2));
+    expect(f1.guests).toBe(4);
+    expect(f1.total).toBe(450);
+    expect(f1.customer_name).toBe("خالد");
+    expect(deps._drafts.get("th-1").private.customer_phone).toBe("0503559373");
+    // The period pick is offered as tappable numbered options.
+    expect(Array.isArray(t1.next_actions)).toBe(true);
+    expect(t1.next_actions.length).toBe(2);
+    // Tapping «1» goes STRAIGHT to the card — no more questions.
+    const t2 = await chat(deps, "1", "th-1");
+    expect(t2.model_calls).toBe(0);
+    const prep = (t2.tool_results || []).find((x) => x.kind === "prepared_action");
+    expect(prep).toBeTruthy();
+    const f2 = deps._drafts.get("th-1").fields;
+    expect(f2.guests).toBe(4);
+    expect(f2.total).toBe(450);
+    expect(f2.customer_name).toBe("خالد");
+    expect(f2.period_id).toBe("f5");
+    expect(deps._drafts.get("th-1").private.customer_phone).toBe("0503559373");
+    expect(deps._modelCalls).toHaveLength(0);
+  });
+
+  it("R8 Scenario A (unique period): a complete message with ONE possible period reaches the card in one turn", async () => {
+    const doc = r8Doc();
+    // Collapse to a single day period so the time is unambiguous.
+    doc.chalets[0].periods = [doc.chalets[0].periods[0], doc.chalets[0].periods[2]];
+    const deps = makeDeps({ doc });
+    const t1 = await chat(
+      deps,
+      "اعمل حجز جديد بعد يومين شاليه تولوم من 7 الصباح إلى 5 العصر عدد الضيوف 4 رقم الجوال 0503559373 باسم خالد السعر 450",
+    );
+    expect(t1.model_calls).toBe(0);
+    const prep = (t1.tool_results || []).find((x) => x.kind === "prepared_action");
+    expect(prep).toBeTruthy(); // straight to the confirmation card
+    expect(prep.card.rows.find((r) => r.k === "الضيوف").v).toBe("4");
+    expect(prep.card.rows.find((r) => r.k === "الإجمالي").v).toContain("450");
+    expect(prep.card.rows.find((r) => r.k === "العميل").v).toBe("خالد");
+    expect(deps._modelCalls).toHaveLength(0);
+  });
+
+  it("R8 Scenario B: after a conflict, picking «1» keeps guests/total/customer/phone and goes to the card", async () => {
+    const deps = makeDeps({ doc: r8Doc({ conflictToday: true }) });
+    const t1 = await chat(
+      deps,
+      "سجل حجز جديد اليوم من 7 مساء إلى 5 صباح رقم الجوال 0503666853 اسم الشاليه تولوم عدد الضيوف 10 السعر 300 باسم علي",
+    );
+    expect(t1.model_calls).toBe(0);
+    // Real conflict UX: blocker named + numbered real alternatives + chips.
+    expect(t1.reply_ar).toContain("حجز قائم");
+    expect(Array.isArray(t1.next_actions)).toBe(true);
+    expect(t1.next_actions.length).toBeGreaterThan(0);
+    const t2 = await chat(deps, "1", "th-1");
+    expect(t2.model_calls).toBe(0);
+    const prep = (t2.tool_results || []).find((x) => x.kind === "prepared_action");
+    expect(prep).toBeTruthy(); // straight to the card
+    const f = deps._drafts.get("th-1").fields;
+    expect(f.guests).toBe(10); // NOT lost
+    expect(f.total).toBe(300); // explicit price preserved (never the option's)
+    expect(f.customer_name).toBe("علي");
+    expect(deps._drafts.get("th-1").private.customer_phone).toBe("0503666853");
+    // The card shows the same preserved values.
+    expect(prep.card.rows.find((r) => r.k === "الضيوف").v).toBe("10");
+    expect(prep.card.rows.find((r) => r.k === "الإجمالي").v).toContain("300");
+    expect(prep.card.rows.find((r) => r.k === "العميل").v).toBe("علي");
+    expect(deps._modelCalls).toHaveLength(0);
+  });
+
+  it("R8 Scenario C: «احجز تولوم بكرة الفترة خمسه لـ 10 ضيوف باسم مهره جوال 0500000091 بمبلغ 450» binds the real period id in one turn", async () => {
+    const deps = makeDeps({ doc: r8Doc() });
+    const t1 = await chat(deps, "احجز تولوم بكرة الفترة خمسه لـ 10 ضيوف باسم مهره جوال 0500000091 بمبلغ 450");
+    expect(t1.model_calls).toBe(0);
+    const prep = (t1.tool_results || []).find((x) => x.kind === "prepared_action");
+    expect(prep).toBeTruthy();
+    const f = deps._drafts.get("th-1").fields;
+    expect(f.chalet_id).toBe("tulum"); // real chalet id
+    expect(f.period_id).toBe("f5"); // «الفترة خمسه» -> real period id, no guess
+    expect(f.booking_date).toBe(TOMORROW);
+    expect(f.guests).toBe(10);
+    expect(f.total).toBe(450);
+    expect(f.customer_name).toBe("مهره");
+    expect(deps._drafts.get("th-1").private.customer_phone).toBe("0500000091");
+    // period_id/chalet_id never leak into the reply.
+    expect(t1.reply_ar).not.toContain("f5");
+    expect(t1.reply_ar).not.toContain("tulum");
+    expect(deps._modelCalls).toHaveLength(0);
+  });
+
+  it("R8 Scenario D: several missing fields → ONE combined question → ONE combined reply completes the draft", async () => {
+    const doc = r8Doc();
+    doc.chalets[0].periods = [doc.chalets[0].periods[0], doc.chalets[0].periods[2]]; // unique day period
+    const deps = makeDeps({ doc });
+    const t1 = await chat(deps, "احجز تولوم بكرة فترة 5");
+    expect(t1.model_calls).toBe(0);
+    // ONE combined question, not sequential.
+    expect(t1.reply_ar).toContain("باقي فقط:");
+    expect(t1.reply_ar).toContain("عدد الضيوف");
+    expect(t1.reply_ar).toContain("اسم العميل");
+    expect(t1.reply_ar).toContain("رسالة واحدة");
+    // ONE combined reply carries everything and reaches the card.
+    const t2 = await chat(deps, "٤ ضيوف باسم سالم جوال 0500000012 والسعر 450", "th-1");
+    expect(t2.model_calls).toBe(0);
+    const prep = (t2.tool_results || []).find((x) => x.kind === "prepared_action");
+    expect(prep).toBeTruthy();
+    const f = deps._drafts.get("th-1").fields;
+    expect(f.guests).toBe(4);
+    expect(f.customer_name).toBe("سالم");
+    expect(f.total).toBe(450);
+    expect(deps._drafts.get("th-1").private.customer_phone).toBe("0500000012");
+    expect(deps._modelCalls).toHaveLength(0);
+  });
+
+  it("R8 §5: choosing an option that DISPLAYS a price (no explicit total) adopts that price — one card, no price question", async () => {
+    const deps = makeDeps({ doc: r8Doc({ conflictToday: true }) });
+    // No price stated by the owner this time.
+    const t1 = await chat(
+      deps,
+      "سجل حجز جديد اليوم من 7 مساء إلى 5 صباح اسم الشاليه تولوم عدد الضيوف 10 باسم علي جوال 0503666853",
+    );
+    expect(t1.model_calls).toBe(0);
+    expect(Array.isArray(t1.next_actions)).toBe(true);
+    // Option 2 (الفترة 6) displays 400 ريال — tapping it accepts that price.
+    const t2 = await chat(deps, "2", "th-1");
+    expect(t2.model_calls).toBe(0);
+    const prep = (t2.tool_results || []).find((x) => x.kind === "prepared_action");
+    expect(prep).toBeTruthy(); // straight to the card, no separate price question
+    const f = deps._drafts.get("th-1").fields;
+    expect(f.total).toBe(400);
+    expect(f.total_source).toBe("alternative_price");
+    expect(f.guests).toBe(10);
+    expect(f.customer_name).toBe("علي");
     expect(deps._modelCalls).toHaveLength(0);
   });
 });

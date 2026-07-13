@@ -134,6 +134,29 @@ function foldTimeHourWords(s) {
 // and the following guest/price digit became a fabricated end hour.
 const TIME_FIELD_BREAK_RE = /(?:^|\s)(?:و|ف|ل)?(?:رقم|الرقم|جوال|الجوال|هاتف|تلفون|موبايل|واتس|اسم|الاسم|العميل|باسم|شاليه|الشاليه|عدد|العدد|ضيف|الضيف|ضيوف|الضيوف|شخص|اشخاص|سعر|السعر|بسعر|المبلغ|الاجمالي)(?=\s|$)/;
 
+// A number is not an HOUR CANDIDATE at all when its immediate context says it
+// is something else: a period label («الفترة 5», «فترة خمسه» after folding),
+// a guest count on either side («لـ 10 ضيوف», «الضيوف 10»), or money
+// («السعر 450», «450 ريال»). Without this, «الفترة خمسه لـ 10 ضيوف» parsed as
+// the fabricated range 05:00–10:00 (live Scenario C) because the lone «لـ»
+// doubles as the من…لـ range separator.
+const HOUR_PERSON_SRC =
+  '(?:اشخاص|شخصا|شخص|انفار|نفر|ضيوف|ضيف|افراد|فرد|زوار|زائر|guests?|persons?|people|pax)';
+const HOUR_GUEST_AFTER_RE = new RegExp(`^\\s*${HOUR_PERSON_SRC}(?=\\s|$)`);
+const HOUR_GUEST_BEFORE_RE = new RegExp(`(?:^|\\s)(?:ال)?${HOUR_PERSON_SRC}\\s*$`);
+const HOUR_PERIOD_BEFORE_RE = /(?:^|\s)(?:ال)?فترة\s*(?:رقم\s*)?$/;
+const HOUR_MONEY_BEFORE_RE = /(?:^|\s)(?:و?ب?(?:ال)?(?:سعر|مبلغ)|و?(?:ال)?اجمالي)(?:\s+وقدره)?\s*[:=]?\s*$/;
+const HOUR_CURRENCY_AFTER_RE = /^\s*(?:ريالات|ريالا|ريال|ر\.س)/;
+function isNonHourContext(before, after) {
+  return (
+    HOUR_PERIOD_BEFORE_RE.test(before) ||
+    HOUR_GUEST_BEFORE_RE.test(before) ||
+    HOUR_MONEY_BEFORE_RE.test(before) ||
+    HOUR_GUEST_AFTER_RE.test(after) ||
+    HOUR_CURRENCY_AFTER_RE.test(after)
+  );
+}
+
 // Parse a TIME RANGE from free text. Range-only: a single lone time -> null.
 export function parseTimeExpression(text) {
   if (typeof text !== 'string' || !text.trim()) return null;
@@ -147,7 +170,9 @@ export function parseTimeExpression(text) {
   const tokens = [];
   for (const m of t.matchAll(TIME_TOKEN_RE)) {
     const inDate = spans.some(([a, b]) => m.index >= a && m.index < b);
-    if (!inDate) tokens.push(m);
+    if (inDate) continue;
+    if (isNonHourContext(t.slice(0, m.index), t.slice(m.index + m[0].length))) continue;
+    tokens.push(m);
   }
   if (tokens.length < 2) return null;
 
@@ -342,8 +367,34 @@ export function parseDateExpression(text, todayIso) {
   // 2) Keywords (can never resolve to a past date).
   const tokens = t.split(/[^0-9a-zء-ي]+/).filter(Boolean);
   for (let i = 0; i < tokens.length; i += 1) {
-    if (tokens[i] === 'بعد' && i + 1 < tokens.length && AFTER_WORDS.has(tokens[i + 1])) {
+    if (tokens[i] !== 'بعد' || i + 1 >= tokens.length) continue;
+    const next = tokens[i + 1];
+    if (AFTER_WORDS.has(next)) {
       return { date: addDaysIso(todayIso, 2), confidence: 'high' };
+    }
+    // Relative day/week offsets: «بعد يومين», «بعد ٣ أيام», «بعد أسبوع» —
+    // the live Scenario-A opener used «بعد يومين» and the null parse turned a
+    // complete booking message into an interrogation.
+    if (next === 'يوم') return { date: addDaysIso(todayIso, 1), confidence: 'high' };
+    if (next === 'يومين') return { date: addDaysIso(todayIso, 2), confidence: 'high' };
+    if (next === 'اسبوع' || next === 'الاسبوع') {
+      return { date: addDaysIso(todayIso, 7), confidence: 'high' };
+    }
+    if (next === 'اسبوعين') return { date: addDaysIso(todayIso, 14), confidence: 'high' };
+    const unitAfter = tokens[i + 2] || '';
+    const DAY_UNIT = unitAfter === 'يوم' || unitAfter === 'يوما' || unitAfter === 'ايام';
+    const WEEK_UNIT = unitAfter === 'اسبوع' || unitAfter === 'اسابيع';
+    if (/^\d{1,3}$/.test(next) && (DAY_UNIT || WEEK_UNIT)) {
+      const n = Number(next);
+      if (n >= 1 && n <= 365) {
+        return { date: addDaysIso(todayIso, WEEK_UNIT ? n * 7 : n), confidence: 'high' };
+      }
+    }
+    if (
+      Object.prototype.hasOwnProperty.call(NUM_WORDS, next) && (DAY_UNIT || WEEK_UNIT)
+    ) {
+      const n = NUM_WORDS[next];
+      return { date: addDaysIso(todayIso, WEEK_UNIT ? n * 7 : n), confidence: 'high' };
     }
   }
   // «بكرة بالليل» stays tomorrow — the night word never shifts the date.
@@ -467,8 +518,12 @@ export function extractAmount(text) {
 
   // An explicit money marker is sufficient even when the owner omits the
   // currency word: «السعر ٣٠٠», «المبلغ: 500». The marker keeps phone, guest
-  // count and time digits from ever being mistaken for money.
-  const marked = t.match(/(?:^|\s)(?:السعر|سعر|بسعر|المبلغ|الاجمالي)\s*[:=]?\s*(\d+(?:\.\d+)?)(?!\d)/);
+  // count and time digits from ever being mistaken for money. Attached و/ب
+  // prefixes count too — the live Scenario-C/D wordings were «بمبلغ 450» and
+  // «والسعر 450», and both fell through to a needless price question.
+  const marked = t.match(
+    /(?:^|\s)(?:و?ب?(?:ال)?(?:سعر|مبلغ)|و?(?:ال)?اجمالي)(?:\s+وقدره)?\s*[:=]?\s*(\d+(?:\.\d+)?)(?!\d)/,
+  );
   if (marked) return Number(marked[1]);
 
   // Digits + currency, attached or spaced («٥٠٠ ريال», "500ريال", "500 sar").

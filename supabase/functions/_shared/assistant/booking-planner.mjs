@@ -69,9 +69,13 @@ function normalizeLoose(s) {
 // ---------------------------------------------------------------------------
 
 // Markers that introduce the customer name; «لـ» must keep its tatweel so a
-// bare preposition ل never triggers a capture.
+// bare preposition ل never triggers a capture. Marker-only (the tail is
+// sliced manually): EVERY marker in the message is tried and the first that
+// yields a real name wins — a greedy single capture stopped at the earlier
+// «لـ» in «… لـ 10 ضيوف باسم مهره …» (its tail starts with a digit) and the
+// actual name after «باسم» was never reached (live Scenario C).
 const NAME_MARKER_RE =
-  /(?:^|[\s،,.;:؛])(?:و|ف)?(?:العميل|الاسم|باسم|بإسم|بأسم|لـ)[\s:،]*([^\n]*)/u;
+  /(?:^|[\s،,.;:؛])(?:و|ف)?(?:العميل|الاسم|باسم|بإسم|بأسم|لـ)[\s:،]*/gu;
 
 const CURRENCY_TOKEN_RE = /^(?:ريال|ريالا|ريالات|ر\.س|sar|sr)$/;
 
@@ -87,7 +91,7 @@ const NAME_STOP = new Set([
   "جوال", "جواله", "الجوال", "رقم", "رقمه", "هاتف", "هاتفه", "تلفون", "تليفون", "موبايل", "واتس", "واتساب", "phone", "mobile",
   // counts / money
   "شخص", "شخصين", "اشخاص", "ضيف", "ضيوف", "نفر", "انفار", "فرد", "افراد", "عدد",
-  "سعر", "السعر", "بسعر", "المبلغ", "الاجمالي", "مجانا", "مجاني",
+  "سعر", "السعر", "بسعر", "مبلغ", "بمبلغ", "المبلغ", "اجمالي", "الاجمالي", "مجانا", "مجاني",
   // booking vocabulary / connectors («شالية» is the common taa-marbuta
   // spelling; «الوقت/الساعة» open a time clause — live IMG_6702 wording)
   "حجز", "الحجز", "احجز", "فترة", "الفترة", "شاليه", "الشاليه", "شالية", "الشالية", "شاليات",
@@ -97,11 +101,7 @@ const NAME_STOP = new Set([
 
 // "العميل علي تجربة" -> "علي تجربة". Capture after a marker until a digit,
 // a currency word, a stop word, sentence punctuation or end (trim ، / و).
-function extractCustomerName(folded) {
-  const m = NAME_MARKER_RE.exec(folded);
-  if (!m) return "";
-  // Sentence punctuation ends the name outright.
-  const segment = m[1].split(/[،,.;؛!؟?]/)[0];
+function nameFromSegment(segment) {
   const collected = [];
   for (const tok of segment.split(/\s+/).filter(Boolean)) {
     if (/\d/.test(tok)) break;
@@ -114,6 +114,17 @@ function extractCustomerName(folded) {
     if (collected.length >= 5) break; // names are short; never swallow a sentence
   }
   return collected.join(" ").trim().slice(0, 60).trim();
+}
+
+function extractCustomerName(folded) {
+  const s = String(folded || "");
+  for (const m of s.matchAll(NAME_MARKER_RE)) {
+    // Sentence punctuation ends the name outright.
+    const tail = s.slice(m.index + m[0].length);
+    const name = nameFromSegment(tail.split(/[،,.;؛!؟?\n]/)[0]);
+    if (name) return name;
+  }
+  return "";
 }
 
 // ---------------------------------------------------------------------------
@@ -267,7 +278,7 @@ const MODEL_FILLABLE = new Set(["customer_name", "notes"]);
 // Keys that must never enter the draft through a merge: private data, merge
 // bookkeeping, and SERVER-owned dialogue state (pending_q, alternatives are
 // written only by the pipeline, never by a parsed/model turn).
-const MERGE_BLOCKLIST = new Set(["customer_phone", "sources", "warnings", "phone_warning", "pending_q", "alternatives"]);
+const MERGE_BLOCKLIST = new Set(["customer_phone", "sources", "warnings", "phone_warning", "pending_q", "alternatives", "period_options"]);
 
 // Fail-closed validation of LLM-extracted values (never trusted blindly).
 function sanitizeModelValue(key, value) {
@@ -417,10 +428,66 @@ export function suggestedPrice(period, dateIso) {
 
 const QUESTION_PRIORITY = ["chalet", "booking_date", "period", "guests", "total", "customer_name"];
 
-export function nextQuestionAr(draft, missing) {
+// Human labels for the combined ask. total is handled separately (its wording
+// depends on whether a system price is pending acceptance).
+const MISSING_ITEM_AR = {
+  chalet: "اسم الشاليه",
+  booking_date: "التاريخ (مثل: بكرة أو 15-08-2026)",
+  period: "الفترة (اسمها أو وقتها)",
+  guests: "عدد الضيوف",
+  customer_name: "اسم العميل",
+};
+
+// ONE message that asks for EVERY still-missing field («لا تسأل عن الحقول
+// واحدًا واحدًا» — the live complaint was a full booking message turning into
+// a field-by-field interrogation). opts.hasPhone === false appends the phone
+// to the ask; the phone stays OPTIONAL for completion (a booking without a
+// phone still reaches the card, exactly as before).
+export function nextQuestionAr(draft, missing, opts = {}) {
   const d = isObj(draft) ? draft : {};
   const set = new Set(Array.isArray(missing) ? missing : []);
-  const first = QUESTION_PRIORITY.find((k) => set.has(k));
+  const order = QUESTION_PRIORITY.filter((k) => set.has(k));
+  if (!order.length) return "";
+  // «period» counts as missing until it BINDS, but when the owner already
+  // wrote period wording (a label or a time) it is merely awaiting
+  // resolution (usually: the chalet must bind first). Asking for it again
+  // would re-ask a given answer — exactly the live complaint.
+  const periodPending = Boolean(
+    String(d.period_text || "").trim() || String(d.period_label_hint || "").trim(),
+  );
+  const askable = order.filter((k) => k !== "period" || !periodPending);
+  if (!askable.length) return singleQuestionAr(d, order[0]);
+  const wantPhone = opts && opts.hasPhone === false;
+  const suggested = Number(d.total_suggested);
+  const hasSuggestion = Number.isFinite(suggested) && suggested > 0;
+  const multi = askable.length > 1 || (wantPhone && askable[0] === "customer_name");
+  if (multi) {
+    const items = [];
+    for (const k of askable) {
+      if (k === "total") {
+        if (!hasSuggestion) items.push("السعر الإجمالي بالريال (أو اكتب «مجاني»)");
+      } else if (MISSING_ITEM_AR[k]) {
+        items.push(MISSING_ITEM_AR[k]);
+      }
+    }
+    // Invitation only — the phone NEVER blocks the card and never gets its
+    // own standalone question (the R3 pin), but the combined ask names it so
+    // one reply can carry everything.
+    if (wantPhone) items.push("رقم الجوال (اختياري)");
+    const priceTail =
+      set.has("total") && hasSuggestion
+        ? ` وسعر النظام لهذه الفترة ${suggested} ريال — اكتب «اعتمد» أو حدد سعراً آخر.`
+        : "";
+    if (items.length) {
+      return `باقي فقط: ${items.join("، و")}. أرسلها في رسالة واحدة.${priceTail}`;
+    }
+    // Only the suggested-price acceptance is left — fall through to its
+    // dedicated single question below.
+  }
+  return singleQuestionAr(d, askable[0]);
+}
+
+function singleQuestionAr(d, first) {
   switch (first) {
     case "chalet":
       return "لأي شاليه تريد الحجز؟";

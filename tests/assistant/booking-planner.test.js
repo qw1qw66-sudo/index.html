@@ -239,7 +239,8 @@ describe('nextQuestionAr', () => {
     const d = {
       chalet_id: 'c1', booking_date: '2026-07-13',
       period_id: 'p1', canonical_start: '19:00', canonical_end: '05:00',
-      guests: 4, total_suggested: 600, total_source: 'suggested',
+      guests: 4, customer_name: 'علي تجربة',
+      total_suggested: 600, total_source: 'suggested',
     };
     const question = nextQuestionAr(d, missingFields(d));
     expect(question).toContain('600');
@@ -250,6 +251,7 @@ describe('nextQuestionAr', () => {
   it('lists up to 3 numbered period options with their times', () => {
     const d = {
       chalet_id: 'c1', booking_date: '2026-07-13',
+      guests: 2, total: 500, total_source: 'explicit', customer_name: 'علي تجربة',
       period_options: [
         { label: 'صباحي', start: '08:00', end: '14:00' },
         { label: 'مسائي', start: '19:00', end: '05:00' },
@@ -259,6 +261,49 @@ describe('nextQuestionAr', () => {
     expect(question).toContain('1. صباحي');
     expect(question).toContain('08:00');
     expect(question).toContain('2. مسائي');
+  });
+
+  it('several missing fields become ONE combined question — never one-by-one', () => {
+    const d = {
+      chalet_id: 'c1', booking_date: '2026-07-13',
+      period_id: 'p1', canonical_start: '19:00', canonical_end: '05:00',
+    };
+    const q = nextQuestionAr(d, missingFields(d), { hasPhone: false });
+    expect(q).toContain('باقي فقط:');
+    expect(q).toContain('عدد الضيوف');
+    expect(q).toContain('اسم العميل');
+    expect(q).toContain('رقم الجوال');
+    expect(q).toContain('رسالة واحدة');
+    // No suggestion on this draft => the plain price item is listed.
+    expect(q).toContain('السعر الإجمالي بالريال');
+  });
+
+  it('combined question folds a pending system price into the SAME message', () => {
+    const d = {
+      chalet_id: 'c1', booking_date: '2026-07-13',
+      period_id: 'p1', canonical_start: '19:00', canonical_end: '05:00',
+      total_suggested: 600, total_source: 'suggested',
+    };
+    const q = nextQuestionAr(d, missingFields(d), { hasPhone: true });
+    expect(q).toContain('باقي فقط:');
+    expect(q).toContain('عدد الضيوف');
+    expect(q).toContain('اسم العميل');
+    expect(q).not.toContain('رقم الجوال'); // phone already known
+    expect(q).toContain('سعر النظام لهذه الفترة 600 ريال');
+    expect(q).toContain('«اعتمد»');
+  });
+
+  it('the spec example: only name+phone missing → «باقي فقط اسم العميل ورقم الجوال»', () => {
+    const d = {
+      chalet_id: 'c1', booking_date: '2026-07-13',
+      period_id: 'p1', canonical_start: '19:00', canonical_end: '05:00',
+      guests: 4, total: 500, total_source: 'explicit',
+    };
+    const q = nextQuestionAr(d, missingFields(d), { hasPhone: false });
+    expect(q).toContain('اسم العميل');
+    expect(q).toContain('رقم الجوال');
+    expect(q).toContain('رسالة واحدة');
+    expect(q).not.toContain('عدد الضيوف');
   });
 });
 
