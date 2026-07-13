@@ -632,4 +632,43 @@ describe("live transcript corpus (owner-reported conversations, zero model calls
     expect(f.customer_name).toBe("علي");
     expect(deps._modelCalls).toHaveLength(0);
   });
+
+  it("R9 (IMG_6721): a chalet named INSIDE a long combined-answer sentence binds — never re-asked", async () => {
+    const deps = makeDeps();
+    // The draft starts empty (bare intent), so the first reply is the full
+    // combined question.
+    const t0 = await chat(deps, "ابغى احجز");
+    expect(t0.model_calls).toBe(0);
+    expect(t0.reply_ar).toContain("اسم الشاليه");
+    // The owner answers with a long multi-field sentence that names the chalet
+    // «شالية تولوم» among the other fields — the live dead-end was re-asking
+    // «اسم الشاليه» because the hint stayed frozen on the first message.
+    const t1 = await chat(deps, "الحجز باسم محمد التاريخ بعد ٣ ايام شالية تولوم عدد الضيوف ٥", "th-1");
+    expect(t1.model_calls).toBe(0);
+    const f = deps._drafts.get("th-1").fields;
+    expect(f.chalet_id).toBe("tulum"); // bound from inside the sentence
+    expect(f.customer_name).toBe("محمد"); // NOT «محمد التاريخ» — label stops it
+    expect(f.guests).toBe(5);
+    expect(f.booking_date).toBe(addDays(TODAY, 3));
+    // The chalet is never re-asked once bound.
+    expect(t1.reply_ar).not.toContain("اسم الشاليه");
+    expect(t1.reply_ar).not.toContain("عدد الضيوف");
+    expect(t1.reply_ar).not.toContain("اسم العميل");
+    expect(deps._modelCalls).toHaveLength(0);
+  });
+
+  it("R9: a chalet-less answer («مساء») never clobbers a chalet named on an EARLIER turn", async () => {
+    const deps = makeDeps();
+    // «تولوم» is named up front, but the turn returns at the AM/PM clarify
+    // before the chalet binds — the hint must survive the «مساء» answer.
+    const t1 = await chat(deps, "احجز تولوم من 7 الى 12");
+    expect(t1.reply_ar).toContain("صباحاً أم مساءً");
+    const t2 = await chat(deps, "مساء", "th-1");
+    expect(t2.model_calls).toBe(0);
+    const f = deps._drafts.get("th-1").fields;
+    expect(f.chalet_id).toBe("tulum"); // the earlier hint was NOT clobbered
+    expect(f.period_id).toBe("t-pm");
+    expect(f.canonical_end).toBe("05:00");
+    expect(deps._modelCalls).toHaveLength(0);
+  });
 });

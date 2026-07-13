@@ -590,6 +590,28 @@ async function main() {
     record("chalet_answer_binds", askedChalet && advanced, detail);
   }
 
+  // 10i2. R9 (IMG_6721): a chalet named INSIDE a long combined-answer sentence
+  // must bind — the live dead-end re-asked «اسم الشاليه» because the hint
+  // stayed frozen on the first (chalet-less) message, and the name over
+  // -captured «محمد التاريخ». Fresh thread; stops at the period/price question
+  // (no booking, no cleanup).
+  {
+    const a1 = await assistant({ message: "ابغى احجز" });
+    const th = (a1.json || {}).thread_id || null;
+    let ok = false, detail = "NO_THREAD";
+    if (th) {
+      const a2 = await assistant({ message: "الحجز باسم محمد التاريخ بعد ٣ ايام شالية تولوم عدد الضيوف ٥", thread_id: th });
+      const b2 = a2.json || {};
+      const reply = String(b2.reply_ar || "");
+      // The chalet is bound (never re-asked) and the flow advanced to period.
+      const chaletNotReasked = !/لأي شاليه|اسم الشاليه/.test(reply);
+      const advancedToPeriod = /الفترة|فترة/.test(reply);
+      ok = a2.status === 200 && b2.ok === true && b2.model_calls === 0 && chaletNotReasked && advancedToPeriod && !leaks(a2.text);
+      detail = "chaletNotReasked=" + chaletNotReasked + ",advanced=" + advancedToPeriod + ",model_calls=" + b2.model_calls;
+    }
+    record("chalet_in_long_answer_binds", ok, detail);
+  }
+
   // 10j. R7 CHIP TRUTH (IMG_6711): «من عليه مبالغ متبقية؟» must answer with
   // the debtor NAMES + amounts, deterministically — never the bare count
   // («يوجد N حجوزات») and never a model turn. The seeded «عميل تجريبي» has
