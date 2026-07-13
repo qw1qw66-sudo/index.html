@@ -661,6 +661,50 @@ test('تعديل keeps the draft fields; إلغاء cancels safely (server-drive
   await expect(page.locator('#assistantLog')).toContainText('تم الإلغاء، لم يُحفظ شيء.');
 });
 
+test('التعديل بالاختيار: reopen shows field chips; tapping one asks for that field, then a new card arrives', async ({ page }) => {
+  await mockRpc(page);
+  await page.route('**/functions/v1/chalet-assistant', async (route) => {
+    const body = JSON.parse(route.request().postData() || '{}');
+    if (body.draft_action === 'reopen') {
+      return route.fulfill({ contentType: 'application/json', body: JSON.stringify({
+        ok: true,
+        reply_ar: 'تمام — اختر الحقل الذي تريد تعديله، أو اكتب التغيير مباشرةً.',
+        edit_fields: [
+          { field: 'booking_date', label: 'التاريخ', value: '15-08-2026' },
+          { field: 'period', label: 'الفترة', value: 'مسائي' },
+          { field: 'guests', label: 'الضيوف', value: '4' },
+          { field: 'total', label: 'السعر', value: '300' },
+          { field: 'customer_name', label: 'العميل', value: 'تجربة' },
+        ],
+      }) });
+    }
+    if (body.draft_action === 'edit_field') {
+      return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true, editing_field: body.field, reply_ar: 'كم عدد الضيوف؟' }) });
+    }
+    return route.fulfill({ contentType: 'application/json', body: JSON.stringify(BOOKING_CARD_BODY) });
+  });
+  await page.goto('/');
+  await create(page);
+  await page.locator('[data-tab="assistant"]').click();
+  await page.locator('#assistantInput').fill('احجز تولوم');
+  await page.locator('[data-action="assistant-send"]').click();
+  await expect(page.locator('#assistantActions .action-card')).toHaveCount(1);
+  // «تعديل» → field chips appear (edit BY SELECTION); the prepared card leaves.
+  await page.locator('[data-action="assistant-edit"]').click();
+  await expect(page.locator('#assistantActions .action-card')).toHaveCount(0);
+  const chips = page.locator('#assistantLog .chat-edit-fields button');
+  await expect(chips).toHaveCount(5);
+  await expect(page.locator('#assistantLog .chat-edit-fields button[data-field="guests"]')).toContainText('4');
+  // Tapping the guests chip asks only for guests and consumes the chip row.
+  await page.locator('#assistantLog .chat-edit-fields button[data-field="guests"]').click();
+  await expect(page.locator('#assistantLog')).toContainText('كم عدد الضيوف؟');
+  await expect(page.locator('#assistantLog .chat-edit-fields')).toHaveCount(0);
+  // Typing just the new value yields a fresh card.
+  await page.locator('#assistantInput').fill('٦');
+  await page.locator('[data-action="assistant-send"]').click();
+  await expect(page.locator('#assistantActions .action-card')).toHaveCount(1);
+});
+
 test('pending booking card is recovered after a reload (rotated token, nothing in storage)', async ({ page }) => {
   await mockRpc(page);
   await page.route('**/functions/v1/chalet-setup-status', (route) =>
