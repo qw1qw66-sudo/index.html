@@ -2263,23 +2263,15 @@
             sort: Number(p.sort ?? i + 1),
           }));
         }
-        // The editor still offers at least six slots. Only the first slot of a
-        // brand-new chalet is active; the other blank slots must be configured
-        // explicitly instead of masquerading as real duplicate periods.
+        // The editor shows the chalet's REAL periods — no padding to a fixed
+        // count. A brand-new chalet (no periods) starts with ONE active slot;
+        // the owner adds/removes more with the ➕/حذف buttons (unlimited count).
         function periodsForEditor(existing) {
           const arr = normalizePeriods(existing).map((p) => ({ ...p }));
-          const startedEmpty = arr.length === 0;
-          while (arr.length < 6) {
-            const n = arr.length + 1;
+          if (arr.length === 0) {
             arr.push({
-              id: uid(),
-              label: "الفترة " + n,
-              start: startedEmpty && n === 1 ? "07:00" : "",
-              end: startedEmpty && n === 1 ? "17:00" : "",
-              weekday_price: 0,
-              weekend_price: 0,
-              active: startedEmpty && n === 1,
-              sort: n,
+              id: uid(), label: "الفترة 1", start: "07:00", end: "17:00",
+              weekday_price: 0, weekend_price: 0, active: true, sort: 1,
             });
           }
           return arr;
@@ -3627,9 +3619,13 @@
                 esc(p.weekend_price) +
                 '"></div></div><label><input data-period-field="active" type="checkbox" ' +
                 (p.active ? "checked" : "") +
-                ' style="width:auto;min-height:auto"> مفعلة</label></div>',
+                ' style="width:auto;min-height:auto"> مفعلة</label>' +
+                '<div class="actions"><button class="danger tiny" data-action="remove-period" data-id="' +
+                esc(p.id) +
+                '">حذف الفترة</button></div></div>',
             )
-            .join("");
+            .join("") +
+            '<div class="actions"><button class="secondary" data-action="add-period">➕ إضافة فترة</button></div>';
         }
         function syncPeriodInputs() {
           qsa("[data-period-id]").forEach((row) => {
@@ -3650,6 +3646,35 @@
             });
           });
           editingChaletPeriods = periodsForEditor(editingChaletPeriods);
+        }
+        // Append a new (blank, inactive) period slot — the owner fills its times
+        // and prices. Capture the current on-screen edits first so nothing is lost.
+        function addPeriodSlot() {
+          syncPeriodInputs();
+          const n = editingChaletPeriods.length + 1;
+          editingChaletPeriods.push({
+            id: uid(), label: "الفترة " + n, start: "", end: "",
+            weekday_price: 0, weekend_price: 0, active: false, sort: n,
+          });
+          renderPeriodEditor();
+        }
+        // Remove a period slot. A period that any booking references is NEVER
+        // hard-removed (its interval/voucher are read live from it) — it is
+        // deactivated instead so history stays intact.
+        function removePeriodSlot(periodId) {
+          syncPeriodInputs();
+          const chaletId = $("chaletId").value;
+          const referenced = state.bookings.some(
+            (b) => b.chalet_id === chaletId && String(b.period_id) === String(periodId) && !b.deleted_at,
+          );
+          if (referenced) {
+            const p = editingChaletPeriods.find((x) => x.id === periodId);
+            if (p) p.active = false;
+            renderPeriodEditor();
+            return feedback("لا يمكن حذف فترة عليها حجوزات — عُطّلت بدل الحذف.", "bad");
+          }
+          editingChaletPeriods = editingChaletPeriods.filter((x) => x.id !== periodId);
+          renderPeriodEditor();
         }
         function saveChalet() {
           syncPeriodInputs();
@@ -4884,6 +4909,8 @@
           if (a === "new-chalet") return newChalet();
           if (a === "edit-chalet") return editChalet(id);
           if (a === "soft-delete-chalet") return softDeleteChalet(id);
+          if (a === "add-period") return addPeriodSlot();
+          if (a === "remove-period") return removePeriodSlot(id);
           if (a === "save-chalet") return saveChalet();
           if (a === "cancel-chalet") return cancelChalet();
           if (a === "delete-chalet")

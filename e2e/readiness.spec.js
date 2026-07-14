@@ -47,7 +47,8 @@ async function addChalet(page, name = 'Tulum') {
   await page.locator('[data-tab="chalets"]').click();
   await page.locator('[data-action="new-chalet"]').click();
   await page.locator('#chaletName').fill(name);
-  await expect(page.locator('.period-card')).toHaveCount(6);
+  // The editor starts with ONE period (F4a: unlimited count, no pad-to-6).
+  await expect(page.locator('.period-card')).toHaveCount(1);
   await page.locator('[data-period-field="label"]').nth(0).fill('Morning');
   await page.locator('[data-period-field="start"]').nth(0).fill('07:00');
   await page.locator('[data-period-field="end"]').nth(0).fill('17:00');

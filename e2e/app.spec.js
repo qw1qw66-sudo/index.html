@@ -70,6 +70,9 @@ async function createChaletWithSixPeriods(page) {
   await page.locator('[data-tab="chalets"]').click();
   await page.locator('[data-action="new-chalet"]').click();
   await page.locator('#chaletName').fill('Tulum');
+  // The editor starts with ONE period; add five more (unlimited count, F4a).
+  await expect(page.locator('.period-card')).toHaveCount(1);
+  for (let k = 0; k < 5; k += 1) await page.locator('[data-action="add-period"]').click();
   await expect(page.locator('.period-card')).toHaveCount(6);
   const starts = ['07:00', '17:00', '18:00', '19:00', '20:00', '21:00'];
   const ends = ['17:00', '18:00', '19:00', '20:00', '21:00', '22:00'];
@@ -1327,7 +1330,7 @@ test('a new manual booking cannot be hidden as an old booking; historical edits 
   await expect(page.locator('#bookingPastList')).not.toContainText('مهره ماضي');
 });
 
-test('period normalization preserves period 7 and does not activate five fake duplicate slots', async ({ page }) => {
+test('period normalization preserves all 7 real periods; a new chalet starts with one', async ({ page }) => {
   const periods = Array.from({ length: 7 }, (_, i) => ({
     id: 'p' + (i + 1), label: 'فترة ' + (i + 1), start: String(7 + i).padStart(2, '0') + ':00', end: String(8 + i).padStart(2, '0') + ':00', active: true, sort: i + 1,
   }));
@@ -1350,8 +1353,58 @@ test('period normalization preserves period 7 and does not activate five fake du
 
   await page.locator('[data-action="cancel-chalet"]').click();
   await page.locator('[data-action="new-chalet"]').click();
-  await expect(page.locator('.period-card')).toHaveCount(6);
+  // F4a: a new chalet starts with exactly ONE (active) period — no pad-to-6, so
+  // no fake duplicate slots ever appear.
+  await expect(page.locator('.period-card')).toHaveCount(1);
   await expect(page.locator('[data-period-field="active"]:checked')).toHaveCount(1);
+});
+
+test('F4a: add/remove periods (unlimited count) + the referenced-period delete guard', async ({ page }) => {
+  await mockRpc(page);
+  await page.goto('/');
+  await create(page);
+  await page.locator('[data-tab="chalets"]').click();
+  await page.locator('[data-action="new-chalet"]').click();
+  await page.locator('#chaletName').fill('Tulum');
+  // Starts with ONE period; add two more (unlimited count).
+  await expect(page.locator('.period-card')).toHaveCount(1);
+  await page.locator('[data-action="add-period"]').click();
+  await page.locator('[data-action="add-period"]').click();
+  await expect(page.locator('.period-card')).toHaveCount(3);
+  const starts = ['07:00', '17:00', '20:00'];
+  const ends = ['17:00', '20:00', '23:00'];
+  for (let i = 0; i < 3; i += 1) {
+    await page.locator('[data-period-field="label"]').nth(i).fill('Period ' + (i + 1));
+    await page.locator('[data-period-field="start"]').nth(i).fill(starts[i]);
+    await page.locator('[data-period-field="end"]').nth(i).fill(ends[i]);
+    await page.locator('[data-period-field="active"]').nth(i).check();
+  }
+  await page.locator('[data-action="save-chalet"]').click();
+
+  // Re-open: 3 REAL periods (no padding). Remove the third (unreferenced) → 2.
+  await page.locator('[data-action="edit-chalet"]').click();
+  await expect(page.locator('.period-card')).toHaveCount(3);
+  await page.locator('.period-card').nth(2).locator('[data-action="remove-period"]').click();
+  await expect(page.locator('.period-card')).toHaveCount(2);
+  await page.locator('[data-action="save-chalet"]').click();
+
+  // Book the first period, then the delete guard DEACTIVATES it (never removes).
+  await page.locator('[data-tab="bookings"]').click();
+  await page.locator('[data-action="new-booking"]').click();
+  await page.locator('#bookingCustomerName').fill('زبون الفترة الأولى');
+  await page.locator('#bookingCustomerPhone').fill('0509999999');
+  await page.locator('#bookingDate').fill(FUTURE_DATE);
+  await page.locator('#bookingTotal').fill('300');
+  await page.locator('[data-action="save-booking"]').click();
+  await expect(page.locator('#bookingList')).toContainText('زبون الفترة الأولى');
+
+  await page.locator('[data-tab="chalets"]').click();
+  await page.locator('[data-action="edit-chalet"]').click();
+  await expect(page.locator('.period-card')).toHaveCount(2);
+  await page.locator('.period-card').nth(0).locator('[data-action="remove-period"]').click();
+  await expect(page.locator('#feedback')).toContainText('لا يمكن حذف فترة عليها حجوزات');
+  await expect(page.locator('.period-card')).toHaveCount(2); // kept, not removed
+  await expect(page.locator('.period-card').nth(0).locator('[data-period-field="active"]')).not.toBeChecked();
 });
 
 test('expenses tab: add an expense, list it, and see net in the report', async ({ page }) => {
