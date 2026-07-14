@@ -7,8 +7,10 @@ import {
   findDocConflictPair,
   findDocConflictPairs,
   findNewDocConflictPair,
+  isPeriodBookable,
   isSlotAvailable,
   periodInterval,
+  validatePeriodTimes,
 } from "../../supabase/functions/_shared/assistant/availability.mjs";
 import { isVacancyStillEmpty } from "../../supabase/functions/_shared/assistant/vacancy.mjs";
 
@@ -134,5 +136,45 @@ describe("night-anchored intervals", () => {
     expect(isVacancyStillEmpty(d, { chalet_id: "c1", date: D, period_id: "day" })).toBe(true);
     expect(isVacancyStillEmpty(d, { chalet_id: "c1", date: D, period_id: "gone" })).toBe(false);
     expect(isVacancyStillEmpty(d, { chalet_id: "no-such", date: D, period_id: "day" })).toBe(false);
+  });
+});
+
+// F4b — a FULL-DAY (24h) period whose start EQUALS its end («١٢ إلى ١٢»). The
+// interval math already folds it into a 24h wrap; F4b lifts the validity gate so
+// it becomes bookable across every layer (browser + availability.mjs + SQL).
+describe("F4b: a full-day 24h period (start === end)", () => {
+  const full = { id: "full", label: "يوم كامل", start: "12:00", end: "12:00", active: true, sort: 9 };
+  const noon = new Date(`${D}T12:00:00Z`).getTime();
+
+  it("is bookable — validatePeriodTimes / isPeriodBookable accept it", () => {
+    expect(validatePeriodTimes(full).ok).toBe(true);
+    expect(isPeriodBookable(full).ok).toBe(true);
+    // A period with a MISSING time is still rejected (fail-closed unchanged).
+    expect(validatePeriodTimes({ start: "", end: "12:00" }).ok).toBe(false);
+  });
+
+  it("has exactly a 24-hour interval [T .. T+1day]", () => {
+    const iv = periodInterval(full, D);
+    expect(iv.start).toBe(noon);
+    expect(iv.end).toBe(noon + 24 * 3600000);
+    // Matches the browser intervalFor / SQL e<=s wrap rule bit-for-bit.
+    expect(applyNightAnchor(noon, noon, 12)).toEqual({ start: noon, end: noon + 86400000 });
+  });
+
+  it("occupies its whole date but frees the next date", () => {
+    const d = doc([bk("f1", "full", D)]);
+    d.chalets[0].periods.push({ ...full });
+    // Every other slot on this chalet/date now conflicts with the 24h booking…
+    expect(isSlotAvailable(d, "c1", D, period("day"))).toBe(false);
+    expect(isSlotAvailable(d, "c1", D, period("night"))).toBe(false);
+    // …but the SAME 24h period on the NEXT date is a different night → free.
+    expect(isSlotAvailable(d, "c1", D1, full)).toBe(true);
+  });
+
+  it("a second 24h booking on the same date conflicts; availablePeriodsOn drops all slots", () => {
+    const d = doc([bk("f1", "full", D)]);
+    d.chalets[0].periods.push({ ...full });
+    expect(isSlotAvailable(d, "c1", D, full)).toBe(false); // day already fully taken
+    expect(availablePeriodsOn(d, "c1", D).available.map((p) => p.id)).not.toContain("day");
   });
 });

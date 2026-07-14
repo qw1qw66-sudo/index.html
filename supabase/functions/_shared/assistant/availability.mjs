@@ -41,14 +41,15 @@ export function normalizeTimeHHmm(value) {
   return String(h).padStart(2, "0") + ":" + m[2];
 }
 
-// FAIL-CLOSED gate for anything that books: a period is bookable only when
-// both times are valid HH:mm and the interval is not zero-length. Missing or
-// malformed times mean availability CANNOT be proven — «وقت الفترة غير مكتمل».
+// FAIL-CLOSED gate for anything that books: a period is bookable only when both
+// times are valid HH:mm. Missing or malformed times mean availability CANNOT be
+// proven — «وقت الفترة غير مكتمل». A period whose start EQUALS its end is a valid
+// FULL-DAY (24h) period (e.g. «١٢ إلى ١٢»): periodInterval folds it into a wrap
+// [T .. T+1day], so it is bookable and its whole night blocks conflicts.
 export function validatePeriodTimes(period) {
   const start = normalizeTimeHHmm(period?.start);
   const end = normalizeTimeHHmm(period?.end);
   if (!start || !end) return { ok: false, error: "PERIOD_TIME_INCOMPLETE" };
-  if (start === end) return { ok: false, error: "PERIOD_TIME_INCOMPLETE" };
   return { ok: true, start, end };
 }
 export function isPeriodBookable(period) {
@@ -83,16 +84,12 @@ export function periodInterval(period, dateIso) {
   const end = normalizeTimeHHmm(period?.end);
   // Missing/malformed times can never prove availability — fail CLOSED (null).
   if (!start || !end) return null;
-  // A grandfathered ZERO-LENGTH period (start===end) is deliberately NOT treated
-  // as unprovable here. The SQL save-guard (migration 0008) and index.html
-  // intervalFor both fold end<=start into a wrap (+1 day) — i.e. a full 24h
-  // interval [T .. T+1day] — and applyNightAnchor does the same in its e<=s
-  // branch. So we let it run instead of returning null: an already-saved
-  // zero-length period then blocks ONLY its real 24h night (matching SQL) rather
-  // than fail-closing every booking on the chalet with `unknown_interval`.
-  // Creating a NEW zero-length period is still refused up front (index.html
-  // saveChalet + the stricter validatePeriodTimes used by isPeriodBookable /
-  // availablePeriodsOn), so this branch only ever grandfathers legacy data.
+  // A ZERO-LENGTH period (start===end) is a valid FULL-DAY (24h) period. The SQL
+  // save-guard (migration 0008) and index.html intervalFor both fold end<=start
+  // into a wrap (+1 day) — a full 24h interval [T .. T+1day] — and applyNightAnchor
+  // does the same in its e<=s branch. So it runs (never null): a 24h period blocks
+  // exactly its one physical night, matching SQL. (This branch also grandfathers
+  // any legacy zero-length data identically.)
   const s = new Date(`${dateIso}T${start}:00Z`).getTime();
   const e = new Date(`${dateIso}T${end}:00Z`).getTime();
   if (!isFinite(s) || !isFinite(e)) return null;
