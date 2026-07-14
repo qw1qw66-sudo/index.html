@@ -85,6 +85,27 @@ const BOOKING_FIELDS_INSTRUCTION =
   "لا تضع تاريخاً أو عدد ضيوف أو مبلغاً أبداً — هذه يفهمها النظام من كلام المستخدم مباشرة. " +
   "لا تخترع قيماً ناقصة، ولا تضع معرفات قواعد بيانات أبداً.";
 
+// G3 — a FRESH booking request that DELEGATES the choice to the assistant
+// («احجز أي شاليه فاضي بكرة»، «دبّر لي أرخص/أنسب شاليه»، «اختر لي») needs
+// judgment the deterministic planner cannot give (it can only ask «أي شاليه؟»).
+// The pipeline yields these to the model, which reads availability and proposes
+// a full prepare_booking_create (owner still confirms). Requires booking INTENT
+// AND a delegation cue; a concrete «احجز تولوم بكرة» has no cue → stays
+// deterministic. Mid-draft turns (an active row) never yield.
+const DELEGATE_BOOKING_RE =
+  /(اقترح|اقترحي|دبّر|دبر|رتّب\s*لي|رتب\s*لي|اختر\s*لي|اختاري\s*لي|نصيحتك|شو\s*تنصح|وش\s*تنصح|أنسب\s*شاليه|انسب\s*شاليه|أرخص\s*شاليه|ارخص\s*شاليه|أفضل\s*شاليه|افضل\s*شاليه|أي\s*شاليه|اي\s*شاليه)/;
+
+// Booking-lead guidance for the MODEL loop (delegated bookings only reach it).
+// The model proposes; the deterministic layer validates every field; the owner
+// confirms. Price stays the CARD price (from find_empty_dates), never invented;
+// the customer phone is never invented (the server binds the real one).
+const BOOKING_LEAD_INSTRUCTION =
+  "إذا طلب صاحب المكان أن ترتّب أو تختار له حجزاً (مثل «احجز أي شاليه فاضي» أو «دبّر أنسب/أرخص شاليه»): " +
+  "اقرأ التوفّر عبر find_empty_dates، اختر فتحة مناسبة، ثم جهّز الحجز باستدعاء prepare_booking_create بالشاليه والتاريخ والفترة وعدد الضيوف والمبلغ. " +
+  "المبلغ خذه من سعر الفتحة الذي تُعيده find_empty_dates (السعر من بطاقة الشاليه) — لا تخترع سعراً؛ وإن لم يكن للفتحة سعر فاسأل صاحب المكان عنه. " +
+  "إن لم تعرف عدد الضيوف فاسأل عنه بإيجاز قبل التجهيز. لا تخترع رقم جوال أبداً. " +
+  "أنت تُجهّز فقط ولا تنفّذ — التأكيد النهائي بزرّ صاحب المكان.";
+
 // Transient model failures (timeout, unreachable, rate limit, 5xx, stochastic
 // bad output) are retried a bounded number of times before the turn is
 // declared assistant_unavailable — a single flaky call must not take the whole
@@ -383,7 +404,7 @@ export async function handleAssistant(req, deps) {
   // Bounds: MAX_MODEL_HOPS model calls, MAX_TOTAL_TOOLS tool runs, and a
   // no-progress guard (a hop repeating its last request) end the loop so a stuck
   // model can't spin. The final answer is the reply of the hop that stops asking.
-  const loopSystem = systemPrompt + "\n\n" + AGENTIC_GUIDANCE;
+  const loopSystem = systemPrompt + "\n\n" + AGENTIC_GUIDANCE + "\n\n" + BOOKING_LEAD_INSTRUCTION;
   const results = [];        // ALL tool results across hops (returned + fallback)
   let convo = history;       // running conversation, grown with each hop
   let replyAr = "";
@@ -1823,6 +1844,13 @@ async function runBookingPipeline(deps, ctx, { threadId, rawMessage, message, pr
   const row = await deps.getActiveDraft(ctx.wsKey, threadId);
   const intent = hasBookingIntent(message);
   if (!row && !intent) return null;
+
+  // G3: a FRESH booking request (no active draft) that DELEGATES the choice to
+  // the assistant needs judgment the deterministic parser can't provide — yield
+  // to the model, which reads availability/analytics and proposes a full prepare
+  // (all validators + the owner-token confirm gate still apply). A concrete
+  // «احجز تولوم بكرة» carries no delegation cue → stays deterministic here.
+  if (!row && intent && !forced && DELEGATE_BOOKING_RE.test(message)) return null;
 
   // The question the server asked LAST turn (server-owned dialogue state).
   const pendingQ = row && row.fields && row.fields.pending_q ? row.fields.pending_q : null;
