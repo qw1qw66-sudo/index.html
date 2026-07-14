@@ -1301,6 +1301,28 @@ test('expenses tab: add an expense, list it, and see net in the report', async (
   await expect(page.locator('#reportBox')).toContainText('الصافي');
 });
 
+test('home quick-glance panel shows month totals and an actionable tip (G4)', async ({ page }) => {
+  await mockRpc(page);
+  await page.goto('/');
+  await create(page);
+  // Add an expense so the glance has real numbers to summarize.
+  await page.locator('[data-tab="expenses"]').click();
+  const todayIso = new Date().toISOString().slice(0, 10);
+  await page.locator('#expenseDate').fill(todayIso);
+  await page.locator('#expenseCategory').selectOption('كهرباء');
+  await page.locator('#expenseAmount').fill('200');
+  await page.locator('[data-action="save-expense"]').click();
+  // The home tab's quick-glance card surfaces month income/expenses/net + a tip.
+  await page.locator('[data-tab="home"]').click();
+  const glance = page.locator('#homeGlance');
+  await expect(glance).toContainText('دخل الشهر');
+  await expect(glance).toContainText('مصاريف الشهر');
+  await expect(glance).toContainText('صافي الشهر');
+  await expect(glance).toContainText('حجوزات قادمة');
+  await expect(glance).toContainText('200'); // the expense flows into the month total
+  await expect(glance).toContainText('💡'); // the proactive tip
+});
+
 test('bookings search filters the list live by customer name', async ({ page }) => {
   await mockRpc(page);
   await page.goto('/');
