@@ -85,6 +85,12 @@ export const TOOL_REGISTRY = {
   prepare_booking_cancel: { class: "read", schema: { booking_id: reqStr() }, desc: "تجهيز إلغاء حجز", usesContract: "save_shared_workspace_v2", prepares: "confirm_booking_cancel" },
   confirm_booking_cancel: { class: "sensitive", schema: confSchema(), desc: "تأكيد إلغاء حجز", usesContract: "save_shared_workspace_v2" },
 
+  // ---------------- EXPENSE WRITE (via save_shared_workspace_v2 only) ----------------
+  // The model may only PREPARE; the owner confirms. Amount is in WHOLE RIYALS
+  // (the document unit — never halalas). category/date default server-side.
+  prepare_add_expense: { class: "read", schema: expenseSchema(), desc: "تجهيز تسجيل مصروف (كهرباء/ماء/صيانة/…)", usesContract: "save_shared_workspace_v2", prepares: "confirm_add_expense" },
+  confirm_add_expense: { class: "sensitive", schema: confSchema(), desc: "تأكيد تسجيل مصروف", usesContract: "save_shared_workspace_v2" },
+
   // ---------------- PAYMENTS (existing PR #73 contracts only) ----------------
   prepare_manual_payment: { class: "read", schema: { booking_id: reqStr(), amount_halalas: { type: "integer", required: true, min: 1 }, payment_method: { type: "string", required: true, enum: ["cash", "bank_transfer", "pos", "worker", "other"] }, reason: { type: "string", maxLen: 500 }, actor_label: { type: "string", maxLen: 120 } }, desc: "تجهيز دفعة يدوية", usesContract: "record_manual_payment", prepares: "confirm_manual_payment" },
   confirm_manual_payment: { class: "sensitive", schema: confSchema(), desc: "تأكيد دفعة يدوية", usesContract: "record_manual_payment" },
@@ -147,6 +153,20 @@ function bookingSchema(create, update) {
   }
   if (update) s.booking_id = reqStr();
   return s;
+}
+
+// Expense fields. amount is REQUIRED and in whole riyals; category/date/note and
+// an optional chalet link are all optional (the executor defaults category→«أخرى»
+// and date→today, and resolves a chalet by name or id when given).
+function expenseSchema() {
+  return {
+    amount: { type: "number", required: true, min: 0 },
+    category: { type: "string", maxLen: 40 },
+    date: { type: "date" },
+    note: { type: "string", maxLen: 1000 },
+    chalet_id: { type: "string", maxLen: 64 },
+    chalet_name: { type: "string", maxLen: 120 },
+  };
 }
 
 export function isRegisteredTool(name) {

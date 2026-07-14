@@ -263,6 +263,19 @@ async function main() {
     record("assistant_guests_optional_defaults_one", ok, `mc=${b.model_calls},guests=${rows["الضيوف"]},prepared=${Boolean(prepared)}`);
   }
 
+  // 6g. F3 (LIVE): the assistant records an expense itself. «سجّل مصروف كهرباء
+  // ٣٠٠» prepares a confirmation card deterministically (model_calls=0) carrying
+  // the category + amount. Prepare-only — nothing is written to staging.
+  {
+    const r = await assistant({ message: "سجّل مصروف كهرباء ٣٠٠" });
+    const b = r.json || {};
+    const prepared = (b.tool_results || []).find((x) => x.kind === "prepared_action" && x.confirm_tool === "confirm_add_expense");
+    const rows = prepared && prepared.card && Array.isArray(prepared.card.rows)
+      ? Object.fromEntries(prepared.card.rows.map((x) => [x.k, x.v])) : {};
+    const ok = b.model_calls === 0 && Boolean(prepared) && rows["النوع"] === "كهرباء" && String(rows["المبلغ"] || "").includes("300") && !leaks(r.text);
+    record("assistant_expense_write_prepares", ok, `mc=${b.model_calls},prepared=${Boolean(prepared)},cat=${rows["النوع"]}`);
+  }
+
   // 6. setup-status with valid auth: booleans only, staging env, DeepSeek ready.
   {
     const r = await http("POST", "/functions/v1/chalet-setup-status", { body: { workspace_key: WS_KEY, access_pin: PIN } });
