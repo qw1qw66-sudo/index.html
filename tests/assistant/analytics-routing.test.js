@@ -122,6 +122,12 @@ describe("G2 collision matrix — existing income/summary intents are untouched"
     ["وش الشاليهات المتاحة اليوم؟", "find_empty_dates"], // availability, NOT profitability
     ["وش الشاليهات المسجلة عندي؟", "list_chalets"],
     ["من عليه مبالغ متبقية؟", "list_outstanding_balances"],
+    // Adversarial-review regressions: profit/net tokens are also customer names
+    // and the marketing keyword — the net matcher must NOT steal these.
+    ["حجوزات صافي", "find_bookings"], // a customer named صافي (Safi), not «net»
+    ["حجز ربحي", "find_bookings"], // a customer named ربحي (Ribhi), not «profit»
+    ["كم أرباح التسويق؟", "get_attributed_revenue"], // marketing revenue, not net
+    ["وش الشاليه الأفضل للعوائل؟", "list_chalets"], // a recommendation, NOT profitability
   ];
   for (const [phrase, tool] of KEEP) {
     it(`«${phrase}» still → ${tool} (model_calls=0)`, async () => {

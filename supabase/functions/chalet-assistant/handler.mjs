@@ -691,7 +691,7 @@ function describeReadAr(result) {
       `• دخل الشهر: ${Math.round(Number(r.month_income) || 0)} ريال`,
       `• مصاريف الشهر: ${Math.round(Number(r.month_expenses) || 0)} ريال`,
       `• صافي الشهر: ${Math.round(Number(r.month_net) || 0)} ريال`,
-      `• متبقٍّ على العملاء: ${Math.round(Number(r.outstanding_total) || 0)} ريال`,
+      `• متبقٍّ على العملاء (إجمالي، كل الفترات): ${Math.round(Number(r.outstanding_total) || 0)} ريال`,
     ];
     if (r.top_chalet) parts.push(`• أربح شاليه: ${r.top_chalet.chalet_name} (صافي ${Math.round(Number(r.top_chalet.net_profit) || 0)} ريال)`);
     return parts.join("\n");
@@ -1156,14 +1156,29 @@ function deterministicReadIntent(message, todayIso) {
     if (/(قارن|قارِن|مقارنة|قارنّ|الفرق\s*بين)/.test(text) && /(شهر|الشهر|شهور|الشهرين|بالماضي)/.test(text)) {
       return { name: "compare_months", arguments: {} };
     }
-    // Most-profitable chalet — «أي شاليه أربح؟». Needs a chalet word AND a
-    // profit word; checked before the net matcher so «أربح» doesn't read as net.
-    if (/(شاليه|شاليهات|شالية)/.test(text) && /(أربح|اربح|ربح|أرباح|ارباح|الأفضل|الافضل|أعلى\s*دخل|اعلى\s*دخل|أكثر\s*دخل|اكثر\s*دخل)/.test(text)) {
+    // A message is a booking/customer LOOKUP or a MARKETING-revenue question —
+    // both have their own intents further below. «حجوزات صافي» (a customer named
+    // Safi) and «كم أرباح التسويق؟» must NOT be captured by the net matcher, whose
+    // «صافي/ربح/أرباح» tokens are also ordinary names and the marketing keyword.
+    const marketingCtx = /(تسويق|التسويق|حملة|حملات|جابه)/.test(text);
+    const nameLookupShape =
+      /(?:رقمه|جواله|رقم\s*جواله|الرقم)\s*(?:ينتهي|اخره|آخره)/.test(text) ||
+      /(?:^|\s)(?:حجز|حجوزات)\s+(?:العميل\s+)?[\p{L}][\p{L}\s]{1,30}$/u.test(text);
+    // Most-profitable chalet — «أي شاليه أربح؟». Needs a chalet word AND a profit
+    // word; checked before the net matcher so «أربح» doesn't read as net. «الأفضل»
+    // is intentionally NOT a trigger — «الشاليه الأفضل للعوائل» is a recommendation.
+    if (/(شاليه|شاليهات|شالية)/.test(text) && /(أربح|اربح|ربح|أرباح|ارباح|أعلى\s*دخل|اعلى\s*دخل|أكثر\s*دخل|اكثر\s*دخل)/.test(text)) {
       return { name: "get_chalet_profitability", arguments: analyticsRange() };
     }
-    // Net profit — «الصافي»، «صافي الربح»، «كم ربحت؟». Distinct from gross
-    // income («كم دخلي؟» stays a bookings summary): requires a profit/net word.
-    if (/(الصافي|صافي|ربح|أرباح|ارباح|ربحت|كسبت|كسبان)/.test(text)) {
+    // Net profit — «الصافي»، «صافي الربح»، «كم ربحت؟». Anchored to a net/profit
+    // QUESTION shape (not a bare «صافي/ربحي» customer name), never on a name
+    // lookup or a marketing question, and distinct from gross income («كم دخلي؟»
+    // stays a bookings summary — it has no net/profit word).
+    if (!marketingCtx && !nameLookupShape && (
+      /الصافي/.test(text) ||
+      /صافي\s*(?:ال)?(?:ربح|دخل|أرباح|ارباح)/.test(text) ||
+      /(?:كم|وش|كام|ايش|اعرف|أعرف|احسب)\s*(?:هو\s*)?(?:صافي|ربح|أرباح|ارباح|ربحت|ربحنا|كسبت|كسبنا)/.test(text)
+    )) {
       return { name: "get_net_profit", arguments: analyticsRange() };
     }
     // Expenses — «كم صرفت؟»، «مصاريفي»، «تكاليف هذا الشهر».

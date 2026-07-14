@@ -124,7 +124,12 @@ export function chaletProfitability(chalets, bookings, expenses, { from = "", to
 export function compareMonths(bookings, expenses, monthA, monthB) {
   const mk = (m) => {
     const mm = String(m || "").slice(0, 7);
-    if (!/^\d{4}-\d{2}$/.test(mm)) return { month: mm, income: 0, expenses: 0, net_profit: 0, count: 0 };
+    const [yy, mo] = mm.split("-").map(Number);
+    // Validate VALUE, not just shape: "2026-00"/"0000-07" are digit-shaped but
+    // make monthRangeIso return empty (open) bounds, which would sum all-time.
+    if (!/^\d{4}-\d{2}$/.test(mm) || !yy || !(mo >= 1 && mo <= 12)) {
+      return { month: mm, income: 0, expenses: 0, net_profit: 0, count: 0 };
+    }
     const np = netProfit(bookings, expenses, monthRangeIso(`${mm}-01`));
     const count = bookingRowsForList(bookings).filter((b) => String(b.booking_date || "").slice(0, 7) === mm).length;
     return { month: mm, income: np.income, expenses: np.expenses, net_profit: np.net_profit, count };

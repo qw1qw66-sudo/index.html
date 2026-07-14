@@ -97,8 +97,12 @@ describe("compareMonths", () => {
     expect(c.delta).toMatchObject({ income: 1200, expenses: -4550, net_profit: 5750, count: 2 });
   });
   it("invalid month degrades to zeros (never all-time)", () => {
-    const c = compareMonths(BOOKINGS, EXPENSES, "nope", "2026-06");
-    expect(c.a).toMatchObject({ income: 0, expenses: 0, net_profit: 0, count: 0 });
+    expect(compareMonths(BOOKINGS, EXPENSES, "nope", "2026-06").a).toMatchObject({ income: 0, expenses: 0, net_profit: 0, count: 0 });
+    // Digit-shaped but out-of-range months must NOT leak all-time totals via
+    // monthRangeIso's empty (open) bounds (adversarial-review Finding 2).
+    expect(compareMonths(BOOKINGS, EXPENSES, "2026-00", "2026-06").a).toMatchObject({ income: 0, expenses: 0, net_profit: 0, count: 0 });
+    expect(compareMonths(BOOKINGS, EXPENSES, "0000-07", "2026-06").a).toMatchObject({ income: 0, expenses: 0, net_profit: 0, count: 0 });
+    expect(compareMonths(BOOKINGS, EXPENSES, "2026-13", "2026-06").a).toMatchObject({ income: 0, count: 0 });
   });
 });
 
