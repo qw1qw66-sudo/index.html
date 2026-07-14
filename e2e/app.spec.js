@@ -211,6 +211,44 @@ test('a cancelled booking stays reachable in its own section and can be re-confi
   await expect(page.locator('#bookingsCancelledSection summary')).toContainText('الحجوزات الملغاة (0)');
 });
 
+test('F1: one-tap «إلغاء الحجز» on the card cancels without the delete/backup path', async ({ page }) => {
+  await mockRpc(page);
+  await page.goto('/');
+  await create(page);
+  await createChaletWithSixPeriods(page);
+  await page.locator('[data-tab="bookings"]').click();
+  await page.locator('[data-action="new-booking"]').click();
+  await page.locator('#bookingCustomerName').fill('زبون للإلغاء');
+  await page.locator('#bookingCustomerPhone').fill('0509999999');
+  await page.locator('#bookingDate').fill(FUTURE_DATE);
+  await page.locator('#bookingTotal').fill('900');
+  await page.locator('[data-action="save-booking"]').click();
+  await expect(page.locator('#bookingList')).toContainText('زبون للإلغاء');
+
+  // A confirmed booking's card exposes a one-tap cancel button.
+  const card = page.locator('#bookingList [data-booking-card-id]').first();
+  const cancelBtn = card.locator('[data-action="cancel-booking-status"]');
+  await expect(cancelBtn).toHaveText('إلغاء الحجز');
+
+  // The confirm prompt is a plain cancel confirmation — NOT the delete/backup
+  // warning the owner was hitting when forced through the حذف button.
+  let dialogText = '';
+  page.once('dialog', (d) => { dialogText = d.message(); d.accept(); });
+  await cancelBtn.click();
+  expect(dialogText).toContain('إلغاء هذا الحجز');
+  expect(dialogText).not.toContain('النسخ الاحتياطية');
+
+  // The booking moves to the cancelled section (record kept), and a cancelled
+  // card no longer offers the cancel button (only a confirmed booking does).
+  await expect(page.locator('#feedback')).toContainText('تم إلغاء الحجز');
+  await expect(page.locator('#bookingList')).not.toContainText('زبون للإلغاء');
+  await expect(page.locator('#bookingsCancelledSection summary')).toContainText('الحجوزات الملغاة (1)');
+  await page.locator('#bookingsCancelledSection summary').click();
+  const cancelledCard = page.locator('#bookingCancelledList [data-booking-card-id]').first();
+  await expect(cancelledCard).toContainText('زبون للإلغاء');
+  await expect(cancelledCard.locator('[data-action="cancel-booking-status"]')).toHaveCount(0);
+});
+
 test('a booking saved while an upload is in flight is never lost (mid-flight edit kept)', async ({ page }) => {
   const box = await mockMutableCloud(page);
   // Make the save RPC slow so we can edit during the in-flight window.

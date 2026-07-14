@@ -1784,6 +1784,11 @@
           "تحذير: لديك تغييرات محلية لم يتم رفعها إلى السحابة. سحب البيانات الآن سيستبدل تغييراتك المحلية نهائيًا ولا يمكن التراجع. هل تريد المتابعة وفقدان تغييراتك المحلية؟";
         const DELETE_BOOKING_WARNING =
           "هل أنت متأكد من حذف هذا الحجز؟ لا يمكن التراجع عن الحذف إلا من النسخ الاحتياطية.";
+        // Cancelling keeps the record (status → ملغي); it is NOT a delete, so it
+        // never routes through the backup-recovery warning and is never blocked
+        // by the empty-overwrite guard (a cancelled booking still counts as data).
+        const CANCEL_BOOKING_CONFIRM =
+          "تأكيد إلغاء هذا الحجز؟ سيبقى محفوظاً في السجل بحالة «ملغي».";
         const DELETE_CHALET_WARNING =
           "حذف الشاليه قد يؤثر على حجوزاته المرتبطة. هل أنت متأكد من حذف الشاليه؟ سيتم إخفاء العنصر من النظام وقد يؤثر على التقارير والتصدير.";
         const DELETE_EXPENSE_WARNING =
@@ -3210,7 +3215,13 @@
             esc(b.id) +
             '">تعديل</button><button class="secondary tiny" data-action="open-customer-whatsapp" data-id="' +
             esc(b.id) +
-            '">محادثة واتساب</button><button class="danger tiny" data-action="soft-delete-booking" data-id="' +
+            '">محادثة واتساب</button>' +
+            (b.status === "confirmed" && !b.deleted_at
+              ? '<button class="secondary tiny" data-action="cancel-booking-status" data-id="' +
+                esc(b.id) +
+                '">إلغاء الحجز</button>'
+              : "") +
+            '<button class="danger tiny" data-action="soft-delete-booking" data-id="' +
             esc(b.id) +
             '">حذف</button></div></div></div>'
           );
@@ -4026,6 +4037,24 @@
         function cancelBooking() {
           $("bookingEditor").classList.add("hidden");
           feedback("تم الإلغاء");
+        }
+        // One-tap "cancel booking": flip status → ملغي and keep the record. This
+        // is the discoverable counterpart to editing the الحالة dropdown by hand;
+        // it is NOT a delete (no backup warning) and a cancelled booking still
+        // counts as business data, so the empty-overwrite guard never blocks it.
+        function cancelBookingStatus(id) {
+          const b = state.bookings.find((x) => x.id === id);
+          if (!b || b.deleted_at) return;
+          if (b.status === "cancelled") {
+            return feedback("الحجز ملغى مسبقًا", "bad");
+          }
+          if (!confirm(CANCEL_BOOKING_CONFIRM)) return;
+          b.status = "cancelled";
+          b.updated_at = now();
+          $("bookingEditor").classList.add("hidden");
+          setDirty(true, "cancel booking status");
+          renderAll();
+          feedback("تم إلغاء الحجز", "good");
         }
         // ========================= JS: expenses logic =========================
         function fillExpenseSelects() {
@@ -4864,6 +4893,7 @@
           if (a === "new-booking") return newBooking();
           if (a === "edit-booking") return editBooking(id, sourceEl);
           if (a === "soft-delete-booking") return softDeleteBooking(id);
+          if (a === "cancel-booking-status") return cancelBookingStatus(id);
           if (a === "save-booking") return saveBooking();
           if (a === "cancel-booking") return cancelBooking();
           if (a === "delete-booking")
