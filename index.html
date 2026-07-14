@@ -874,6 +874,10 @@
             </div>
           </div>
           <div class="card">
+            <h3>نظرة سريعة ونصيحة</h3>
+            <div id="homeGlance"></div>
+          </div>
+          <div class="card">
             <h3>تنبيهات مبالغ الحجوزات السابقة</h3>
             <div id="remainingAlerts"></div>
           </div>
@@ -3228,6 +3232,7 @@
               .reduce((s, b) => s + remainingAmount(b), 0),
           );
           renderRemainingAlerts();
+          $("homeGlance").innerHTML = renderQuickGlance();
           $("homeUpcoming").innerHTML =
             upcoming
               .slice(0, 5)
@@ -3238,6 +3243,55 @@
             '<div class="empty">لا توجد حجوزات قديمة</div>';
           $("homePastSection").querySelector("summary").textContent =
             "الحجوزات القديمة (" + past.length + ")";
+        }
+        // G4 — a proactive "quick glance + advice" panel on the home tab. Reuses
+        // the SAME browser computations the rest of the app uses (activeBookings/
+        // activeExpenses/remainingAmount/money) — no new source of truth. Shows
+        // this month's income/expenses/net, upcoming load, the top-earning chalet,
+        // and ONE actionable tip derived from the numbers.
+        function renderQuickGlance() {
+          const m = monthNow();
+          const t = today();
+          const inMonth = (d) => d && String(d).slice(0, 7) === m;
+          const monthBookings = activeBookings().filter(
+            (b) => b.status !== "cancelled" && inMonth(b.booking_date),
+          );
+          const income = monthBookings.reduce((s, b) => s + (+b.total || 0), 0);
+          const expenses = activeExpenses()
+            .filter((e) => inMonth(e.date))
+            .reduce((s, e) => s + (+e.amount || 0), 0);
+          const net = income - expenses;
+          const upcoming = activeBookings().filter(
+            (b) => b.status !== "cancelled" && b.booking_date && b.booking_date >= t,
+          );
+          const upcomingTotal = upcoming.reduce((s, b) => s + (+b.total || 0), 0);
+          const outstanding = activeBookings()
+            .filter((b) => b.status !== "cancelled")
+            .reduce((s, b) => s + remainingAmount(b), 0);
+          const rev = {};
+          monthBookings.forEach((b) => (rev[b.chalet_id] = (rev[b.chalet_id] || 0) + (+b.total || 0)));
+          const bestId = Object.keys(rev).sort((a, b) => rev[b] - rev[a])[0];
+          // ONE proactive tip, most-actionable first.
+          let tip;
+          if (!activeBookings().length && !activeExpenses().length)
+            tip = "ابدأ بإضافة شاليه وأول حجز، وسأعرض لك نظرة مالية سريعة هنا.";
+          else if (!upcoming.length)
+            tip = "لا توجد حجوزات قادمة — وقت مناسب للتسويق للفترات الفارغة.";
+          else if (outstanding > 0)
+            tip = "لديك مبالغ متبقية على العملاء — تابع تحصيلها من تبويب الحجوزات.";
+          else if (net < 0)
+            tip = "المصاريف تجاوزت الدخل هذا الشهر — راجع بنود المصاريف.";
+          else tip = "أداء جيّد هذا الشهر — صافي الربح موجب.";
+          const row = (label, value) =>
+            '<div style="display:flex;justify-content:space-between;gap:8px;padding:4px 0">' +
+            "<span class=\"muted\">" + label + "</span><b class=\"ltr\">" + value + "</b></div>";
+          let html = row("دخل الشهر", money(income) + " ريال");
+          html += row("مصاريف الشهر", money(expenses) + " ريال");
+          html += row("صافي الشهر", money(net) + " ريال");
+          html += row("حجوزات قادمة", upcoming.length + " — " + money(upcomingTotal) + " ريال");
+          if (bestId) html += row("أعلى شاليه دخلاً", esc(chaletName(bestId)));
+          html += '<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--line,#eee)">💡 ' + esc(tip) + "</div>";
+          return html;
         }
         function remainingAlertCard(b) {
           const ch = getChalet(b.chalet_id);
