@@ -121,7 +121,7 @@ describe("deepseek client (fail closed, redaction, strict json)", () => {
     expect(r).toEqual({ ok: false, error: "DEEPSEEK_KEY_MISSING" });
   });
   it("does not silently substitute a missing model", () => {
-    expect(deepseekConfig({ DEEPSEEK_API_KEY: "k", DEEPSEEK_MODEL: "" }).model).toBe("deepseek-v4-flash"); // documented default, not obsolete
+    expect(deepseekConfig({ DEEPSEEK_API_KEY: "k", DEEPSEEK_MODEL: "" }).model).toBe("deepseek-v4-pro"); // default is the stronger tier (very-smart assistant)
   });
   it("honours the configured model and base URL in the real request", async () => {
     let sentUrl = null, sentBody = null;
