@@ -7,7 +7,7 @@ import { randomUUID } from "node:crypto";
 
 // REAL end-to-end: the actual chalet-assistant handler + the real
 // executeConfirmedAction dispatcher, driven against a REAL PostgreSQL 16 with
-// the migration chain needed by these contracts (through 0007) and the ACTUAL
+// the migration chain needed by these contracts (through 0009) and the ACTUAL
 // RPCs (workspace_auth, assistant_consume_confirmation, save_shared_workspace_v2,
 // record_manual_payment, get_booking_payments). Proves confirmed actions write
 // real rows — not a scaffold, not only mocks.
@@ -47,6 +47,7 @@ d("REAL Postgres: confirmed assistant actions write real rows", () => {
       "supabase/migrations/20260711000003_chalet_assistant.sql",
       "supabase/migrations/20260712000007_grandfather_existing_booking_conflicts.sql",
       "supabase/migrations/20260712000008_night_anchor_booking_conflicts.sql",
+      "supabase/migrations/20260712000009_unified_business_data_guard.sql",
     ]) {
       await pool.query(readFileSync(f, "utf8"));
     }
@@ -249,6 +250,42 @@ d("REAL Postgres: confirmed assistant actions write real rows", () => {
     unrelated.bookings.push({ id: "bn4", customer_name: "آمن", chalet_id: "n1", booking_date: "2099-09-10", period_id: "night", guests: 2, total: 100, paid: 0, status: "confirmed", deleted_at: null });
     saved = (await pool.query("select public.save_shared_workspace_v2($1,$2,$3::jsonb,$4::timestamptz) r", ["WSNIGHT", "123456", JSON.stringify(unrelated), snap.rev])).rows[0].r;
     expect(saved.ok).toBe(true);
+  });
+
+  it("unified guard (migration 0009): an expenses-only doc is neither wrongly rejected nor wipeable", async () => {
+    const exp = [{ id: "e1", date: "2099-06-01", category: "كهرباء", amount: 100, note: "", chalet_id: "", deleted_at: null }];
+
+    // (A) A full doc → save reduced to expenses-only SUCCEEDS. Before 0009 the
+    // guard counted only chalets+bookings, so this legitimate save was rejected
+    // EMPTY_OVERWRITE_BLOCKED and the expenses update was lost.
+    await pool.query("select public.create_shared_workspace($1,$2,$3::jsonb)", ["WSEXP", "123456",
+      JSON.stringify({ schema_version: 3, settings: {}, chalets: [{ id: "c1", name: "ش", deleted_at: null, periods: [] }], bookings: [], expenses: exp })]);
+    let snap = (await pool.query("select data, updated_at::text as rev from public.shared_workspaces where workspace_key='WSEXP'")).rows[0];
+    let saved = (await pool.query("select public.save_shared_workspace_v2($1,$2,$3::jsonb,$4::timestamptz) r",
+      ["WSEXP", "123456", JSON.stringify({ schema_version: 3, settings: {}, chalets: [], bookings: [], expenses: exp }), snap.rev])).rows[0].r;
+    expect(saved.ok).toBe(true);
+
+    // (B) A truly-empty doc over that expenses-only doc is BLOCKED — wipe
+    // protection now EXTENDS to expenses (before 0009 this was a silent wipe).
+    snap = (await pool.query("select data, updated_at::text as rev from public.shared_workspaces where workspace_key='WSEXP'")).rows[0];
+    saved = (await pool.query("select public.save_shared_workspace_v2($1,$2,$3::jsonb,$4::timestamptz) r",
+      ["WSEXP", "123456", "{}", snap.rev])).rows[0].r;
+    expect(saved.ok).toBe(false);
+    expect(saved.error).toBe("EMPTY_OVERWRITE_BLOCKED");
+
+    // (C) Original protection intact: empty over a chalets doc still BLOCKED.
+    await pool.query("select public.create_shared_workspace($1,$2,$3::jsonb)", ["WSCHA", "123456",
+      JSON.stringify({ schema_version: 3, settings: {}, chalets: [{ id: "c1", name: "ش", deleted_at: null, periods: [] }], bookings: [] })]);
+    snap = (await pool.query("select data, updated_at::text as rev from public.shared_workspaces where workspace_key='WSCHA'")).rows[0];
+    saved = (await pool.query("select public.save_shared_workspace_v2($1,$2,$3::jsonb,$4::timestamptz) r",
+      ["WSCHA", "123456", "{}", snap.rev])).rows[0].r;
+    expect(saved.ok).toBe(false);
+    expect(saved.error).toBe("EMPTY_OVERWRITE_BLOCKED");
+
+    // (E) The legacy v1 path is guarded too: empty over expenses-only raises.
+    await expect(
+      pool.query("select public.save_shared_workspace($1,$2,$3::jsonb)", ["WSEXP", "123456", "{}"]),
+    ).rejects.toThrow(/EMPTY_OVERWRITE_BLOCKED/);
   });
 
   it("composite workspace FK blocks a message referencing another workspace's thread (Stage 5)", async () => {
