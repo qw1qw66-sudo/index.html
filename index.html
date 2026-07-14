@@ -1840,7 +1840,9 @@
         }
         // A period is BOOKABLE only when both times are valid HH:mm. New
         // bookings on timeless periods fail closed (availability cannot be
-        // proven); historical bookings still display normally.
+        // proven); historical bookings still display normally. A period whose
+        // start EQUALS its end is a valid FULL-DAY (24h) period («١٢ إلى ١٢») —
+        // intervalFor folds it into a 24h wrap, mirroring the server + SQL.
         function periodTimesValid(p) {
           const re = /^(\d{1,2}):(\d{2})$/;
           const okOne = (v) => {
@@ -1849,8 +1851,7 @@
             const h = Number(m[1]), mi = Number(m[2]);
             return h >= 0 && h <= 23 && mi >= 0 && mi <= 59;
           };
-          if (!okOne(p && p.start) || !okOne(p && p.end)) return false;
-          return String(p.start) !== String(p.end); // zero-length is invalid
+          return okOne(p && p.start) && okOne(p && p.end);
         }
         function monthNow() {
           return today().slice(0, 7);
@@ -3681,11 +3682,9 @@
             // would make the SQL cast raise and abort the conflict query.
             if ((hasStart && !padTimeHHmm(p.start)) || (hasEnd && !padTimeHHmm(p.end)))
               return feedback("صيغة الوقت غير صحيحة", "bad");
-            // D-P6-1: a zero-length period (start===end) hard-blocks bookings via
-            // AVAILABILITY_UNPROVABLE. Refuse it at the source so it can never be
-            // created (already-saved ones are grandfathered as a 24h interval).
-            if (hasStart && hasEnd && padTimeHHmm(p.start) === padTimeHHmm(p.end))
-              return feedback("وقت البداية والنهاية لا يمكن أن يكونا متطابقين", "bad");
+            // start === end is a valid FULL-DAY (24h) period («١٢ إلى ١٢»):
+            // intervalFor folds it into a 24h wrap, so it is bookable and blocks
+            // exactly its one night — no longer refused here.
           }
           if (old) Object.assign(old, c);
           else state.chalets.push(c);

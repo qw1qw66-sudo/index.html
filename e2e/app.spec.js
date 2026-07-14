@@ -177,6 +177,43 @@ test('conflict and voucher use selected period exactly', async ({ page }) => {
   await expect(page.locator('#voucherBox')).toContainText('5:00 م');
 });
 
+test('F4b: a full-day 24h period (start === end) saves and is bookable', async ({ page }) => {
+  await mockRpc(page);
+  await page.goto('/');
+  await create(page);
+  await page.locator('[data-tab="chalets"]').click();
+  await page.locator('[data-action="new-chalet"]').click();
+  await page.locator('#chaletName').fill('Tulum');
+  // A period whose start EQUALS its end is a valid FULL-DAY (24h) period.
+  await page.locator('[data-period-field="label"]').nth(0).fill('يوم كامل');
+  await page.locator('[data-period-field="start"]').nth(0).fill('12:00');
+  await page.locator('[data-period-field="end"]').nth(0).fill('12:00');
+  await page.locator('[data-period-field="active"]').nth(0).check();
+  await page.locator('[data-period-field="weekday_price"]').nth(0).fill('500');
+  await page.locator('[data-period-field="weekend_price"]').nth(0).fill('700');
+  await page.locator('[data-action="save-chalet"]').click();
+  // It saves — no «وقت البداية والنهاية لا يمكن أن يكونا متطابقين» rejection.
+  await expect(page.locator('#feedback')).toContainText('تم تحديث بيانات الشاليه.');
+
+  // The 24h period is bookable.
+  await page.locator('[data-tab="bookings"]').click();
+  await page.locator('[data-action="new-booking"]').click();
+  await page.locator('#bookingCustomerName').fill('زبون اليوم الكامل');
+  await page.locator('#bookingCustomerPhone').fill('0509999999');
+  await page.locator('#bookingDate').fill(FUTURE_DATE);
+  await page.locator('#bookingTotal').fill('500');
+  await page.locator('[data-action="save-booking"]').click();
+  await expect(page.locator('#bookingList')).toContainText('زبون اليوم الكامل');
+
+  // A second booking on the SAME date/chalet conflicts — the 24h slot owns the day.
+  await page.locator('[data-action="new-booking"]').click();
+  await page.locator('#bookingCustomerName').fill('زبون متعارض');
+  await page.locator('#bookingCustomerPhone').fill('0555555555');
+  await page.locator('#bookingDate').fill(FUTURE_DATE);
+  await page.locator('[data-action="save-booking"]').click();
+  await expect(page.locator('#feedback')).toContainText('يتعارض زمنيًا');
+});
+
 test('a cancelled booking stays reachable in its own section and can be re-confirmed', async ({ page }) => {
   await mockRpc(page);
   await page.goto('/');
