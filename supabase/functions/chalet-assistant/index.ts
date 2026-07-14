@@ -21,7 +21,8 @@ import { executeConfirmedAction } from "../_shared/assistant/executors.mjs";
 import { corsWrap } from "../_shared/cors.mjs";
 import { riyadhToday, addDays, availablePeriodsOn, isSlotAvailable } from "../_shared/assistant/availability.mjs";
 import { chaletCatalog, resolveBookingCreateArgs as resolveBookingCreateSelection, resolveChaletReference } from "../_shared/assistant/booking-resolution.mjs";
-import { bookingRowsForList, nonDeletedBookingRows, bookingsSummary } from "../_shared/assistant/booking-reads.mjs";
+import { bookingRowsForList, nonDeletedBookingRows, bookingsSummary, monthRangeIso } from "../_shared/assistant/booking-reads.mjs";
+import { expenseSummary, netProfit, chaletProfitability, compareMonths, topCustomers, businessOverview, prevMonthKey } from "../_shared/assistant/analytics.mjs";
 
 // deno-lint-ignore no-explicit-any
 declare const Deno: any;
@@ -491,12 +492,20 @@ function buildDraft(kind: string, facts: Record<string, unknown>) {
 // Pure document reads (authoritative source). All REAL workspace data; phone
 // numbers are redacted by the caller before anything is returned/sent to the
 // model. "today"/date math use Asia/Riyadh, and availability uses time-overlap.
-function readFromDoc(name: string, args: Record<string, unknown>, doc: { chalets?: unknown[]; bookings?: unknown[] }, nowMs: number) {
+function readFromDoc(name: string, args: Record<string, unknown>, doc: { chalets?: unknown[]; bookings?: unknown[]; expenses?: unknown[] }, nowMs: number) {
   const bookings = (doc.bookings ?? []) as Array<Record<string, unknown>>;
   const chalets = (doc.chalets ?? []) as Array<Record<string, unknown>>;
+  const expenses = (doc.expenses ?? []) as Array<Record<string, unknown>>;
   const persistedB = nonDeletedBookingRows(bookings) as Array<Record<string, unknown>>;
   const activeC = chalets.filter((c) => !c.deleted_at);
   const today = riyadhToday(nowMs);
+  // Money reads default to THIS MONTH when the caller gives no range; the model
+  // may pass an explicit {from,to}. (top_customers defaults to all-time.)
+  const rangeOrMonth = () => {
+    const from = String(args.from || "");
+    const to = String(args.to || "");
+    return from || to ? { from, to } : monthRangeIso(today);
+  };
   switch (name) {
     case "get_today_bookings":
       return { date: today, bookings: bookingRowsForList(bookings).filter((b) => b.booking_date === today) };
@@ -518,6 +527,23 @@ function readFromDoc(name: string, args: Record<string, unknown>, doc: { chalets
       const s = bookingsSummary(bookings, { from: String(args.from || ""), to: String(args.to || "") });
       return { summary: true, count: s.count, total_income: s.total_income, paid_total: s.paid_total, from: s.from, to: s.to, bookings: s.bookings.slice(0, 10) };
     }
+    // ---- G2 analytical brain (all doc-derived, whole riyals) ----
+    case "get_expense_summary":
+      return expenseSummary(expenses, rangeOrMonth());
+    case "get_net_profit":
+      return netProfit(bookings, expenses, { ...rangeOrMonth(), chalet_id: String(args.chalet_id || "") });
+    case "get_chalet_profitability":
+      return chaletProfitability(chalets, bookings, expenses, rangeOrMonth());
+    case "compare_months": {
+      const thisMonth = today.slice(0, 7);
+      const monthA = String(args.month_a || thisMonth);
+      const monthB = String(args.month_b || prevMonthKey(thisMonth));
+      return compareMonths(bookings, expenses, monthA, monthB);
+    }
+    case "get_top_customers":
+      return topCustomers(bookings, { from: String(args.from || ""), to: String(args.to || ""), limit: Number(args.limit) || 5 });
+    case "get_business_overview":
+      return businessOverview(doc, today);
     case "get_booking_details":
       return persistedB.find((b) => b.id === args.booking_id) ?? { error: "NOT_FOUND" };
     case "find_bookings": {

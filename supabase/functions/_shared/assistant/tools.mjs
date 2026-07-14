@@ -69,6 +69,14 @@ export const TOOL_REGISTRY = {
   get_campaign_results: { class: "read", schema: { limit: { type: "integer", min: 1, max: 50, default: 5 } }, desc: "نتائج الحملات" },
   get_attributed_revenue: { class: "read", schema: {}, desc: "الدخل المنسوب للمساعد" },
 
+  // ---------------- ANALYTICS (doc-derived insights; whole riyals; read-only) ----------------
+  get_expense_summary: { class: "read", schema: { from: { type: "date" }, to: { type: "date" } }, desc: "ملخص المصاريف: الإجمالي وبالفئة (الشهر افتراضياً أو مدى)" },
+  get_net_profit: { class: "read", schema: { from: { type: "date" }, to: { type: "date" }, chalet_id: { type: "string", maxLen: 64 } }, desc: "صافي الربح = دخل الحجوزات − المصاريف (الشهر/مدى، وكل شاليه)" },
+  get_chalet_profitability: { class: "read", schema: { from: { type: "date" }, to: { type: "date" } }, desc: "ربحية كل شاليه مرتّبة (الأربح أولاً)" },
+  compare_months: { class: "read", schema: { month_a: { type: "string", maxLen: 10 }, month_b: { type: "string", maxLen: 10 } }, desc: "مقارنة شهرين: دخل/مصاريف/صافي/عدد (YYYY-MM)" },
+  get_top_customers: { class: "read", schema: { from: { type: "date" }, to: { type: "date" }, limit: { type: "integer", min: 1, max: 50, default: 5 } }, desc: "أكثر العملاء حجزاً (بالاسم فقط، بلا هاتف)" },
+  get_business_overview: { class: "read", schema: {}, desc: "نظرة عامة شاملة على الأعمال هذا الشهر (دخل/مصاريف/صافي/إشغال/أربح شاليه)" },
+
   // ---------------- BOOKING WRITES (via save_shared_workspace_v2 only) ----------------
   prepare_booking_create: { class: "read", schema: bookingSchema(true), desc: "تجهيز حجز جديد", usesContract: "save_shared_workspace_v2", prepares: "confirm_booking_create" },
   confirm_booking_create: { class: "sensitive", schema: confSchema(), desc: "تأكيد إنشاء حجز", usesContract: "save_shared_workspace_v2" },

@@ -336,6 +336,28 @@ async function main() {
     record("assistant_tomorrow_count_read_model_free", ok, r.status + ":mc=" + (j.model_calls) + ":" + String(j.reply_ar || "").slice(0, 32));
   }
 
+  // 8d. G2 analytical brain — expenses are now visible to the server assistant.
+  // «كم صرفت هذا الشهر؟» dispatches to get_expense_summary DETERMINISTICALLY
+  // (model_calls===0) and renders a total (or a clear empty answer) with no
+  // leak — proving expenses, previously hidden from the server, are wired live.
+  {
+    const r = await assistant({ message: "كم صرفت هذا الشهر؟" });
+    const j = r.json || {};
+    const rendered = typeof j.reply_ar === "string" && /(إجمالي المصاريف|لا توجد مصاريف)/.test(j.reply_ar);
+    const ok = r.status === 200 && j.ok === true && j.model_calls === 0 && rendered && !leaks(j.reply_ar);
+    record("assistant_expense_summary_read", ok, r.status + ":mc=" + (j.model_calls) + ":" + String(j.reply_ar || "").slice(0, 32));
+  }
+
+  // 8e. G2 net profit — «كم صافي الربح هذا الشهر؟» dispatches to get_net_profit
+  // (income − expenses) DETERMINISTICALLY (model_calls===0), rendering the net.
+  {
+    const r = await assistant({ message: "كم صافي الربح هذا الشهر؟" });
+    const j = r.json || {};
+    const rendered = typeof j.reply_ar === "string" && /(الصافي|الدخل)/.test(j.reply_ar);
+    const ok = r.status === 200 && j.ok === true && j.model_calls === 0 && rendered && !leaks(j.reply_ar);
+    record("assistant_net_profit_read", ok, r.status + ":mc=" + (j.model_calls) + ":" + String(j.reply_ar || "").slice(0, 32));
+  }
+
   // 9. Confirmed booking create through the real contracts (staging only).
   let newBookingId = null;
   {

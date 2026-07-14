@@ -41,6 +41,7 @@ import {
   knownCustomerPhone,
 } from "../_shared/assistant/booking-planner.mjs";
 import { monthRangeIso } from "../_shared/assistant/booking-reads.mjs";
+import { prevMonthKey } from "../_shared/assistant/analytics.mjs";
 
 // The model runs a bounded AGENTIC loop: on each hop it may request read/prepare
 // tools, read their (redacted) results, then request MORE tools on the next hop —
@@ -60,6 +61,7 @@ const MAX_TOTAL_TOOLS = 8;
 const AGENTIC_GUIDANCE =
   "يمكنك استدعاء الأدوات على عدة خطوات: اطلب أداة، اقرأ نتيجتها، ثم اطلب أداة أخرى إن لزم، حتى تكتمل المعلومة. " +
   "حين تكفيك النتائج، أعطِ الإجابة النهائية بالعربية الطبيعية المختصرة — ويمكنك التحليل والمقارنة وتقديم نصيحة أو ملاحظة مفيدة إن دعمتها النتائج. " +
+  "للأسئلة المالية والتحليلية (المصاريف، صافي الربح، ربحية كل شاليه، مقارنة الشهور، أكثر العملاء، نظرة عامة) استخدم أدوات القراءة التحليلية المتاحة ثم استدلّ على نتائجها. " +
   "اعتمد فقط على الأرقام والأسماء الواردة من الأدوات؛ لا تخترع بيانات غير موجودة. " +
   "لا تذكر أسماء الأدوات الداخلية ولا أكواد الأخطاء ولا JSON خارج ردّك، " +
   "ولا تدّعِ إتمام حفظ أو دفع أو إجراء ما لم تُعِده الأداة كإجراء مكتمل فعلاً.";
@@ -646,6 +648,54 @@ function describeReadAr(result) {
     const more = n > shown.length ? `\n…و${n - shown.length} حجوزات أخرى.` : "";
     return `عندك ${head}، إجمالي الدخل ${income} ريال.\n${lines.join("\n")}${more}`;
   }
+  // ---- G2 analytics renders (whole riyals — booking/expense amounts, no /100) ----
+  if (r.expense_summary === true) {
+    if (!Number(r.count)) return "لا توجد مصاريف في هذه الفترة.";
+    const cats = (Array.isArray(r.by_category) ? r.by_category : []).slice(0, 8)
+      .map((c) => `• ${c.category}: ${Math.round(Number(c.amount) || 0)} ريال`);
+    return `إجمالي المصاريف ${Math.round(Number(r.total) || 0)} ريال (${Number(r.count)} بند):\n${cats.join("\n")}`;
+  }
+  if (r.net === true) {
+    const income = Math.round(Number(r.income) || 0);
+    const exp = Math.round(Number(r.expenses) || 0);
+    const net = Math.round(Number(r.net_profit) || 0);
+    return `الدخل ${income} ريال، والمصاريف ${exp} ريال، فالصافي ${net} ريال.`;
+  }
+  if (r.profitability === true) {
+    const rows = Array.isArray(r.chalets) ? r.chalets : [];
+    if (!rows.length) return "لا توجد بيانات كافية لحساب ربحية الشاليهات بعد.";
+    const lines = rows.slice(0, 10).map(
+      (c) => `• ${c.chalet_name}: صافي ${Math.round(Number(c.net_profit) || 0)} ريال (دخل ${Math.round(Number(c.income) || 0)} − مصاريف ${Math.round(Number(c.expenses) || 0)})`,
+    );
+    const un = Math.round(Number(r.unattributed_expenses) || 0);
+    const tail = un > 0 ? `\nمصاريف غير منسوبة لشاليه معيّن: ${un} ريال.` : "";
+    return `الأربح: ${rows[0].chalet_name} (صافي ${Math.round(Number(rows[0].net_profit) || 0)} ريال).\n${lines.join("\n")}${tail}`;
+  }
+  if (r.comparison === true) {
+    const fmt = (x) => `${x.month}: دخل ${Math.round(Number(x.income) || 0)}، مصاريف ${Math.round(Number(x.expenses) || 0)}، صافي ${Math.round(Number(x.net_profit) || 0)} ريال (${Number(x.count) || 0} حجز)`;
+    const netD = Math.round(Number(r.delta && r.delta.net_profit) || 0);
+    const dir = netD > 0 ? "أعلى" : netD < 0 ? "أقل" : "مساوٍ";
+    return `${fmt(r.a)}\n${fmt(r.b)}\nالفرق في الصافي: ${Math.abs(netD)} ريال (${dir}).`;
+  }
+  if (r.top_customers === true) {
+    const rows = Array.isArray(r.customers) ? r.customers : [];
+    if (!rows.length) return "لا توجد حجوزات لعرض ترتيب العملاء.";
+    const lines = rows.map((c, i) => `${i + 1}. ${c.customer_name} — ${Number(c.count) || 0} حجز، إجمالي ${Math.round(Number(c.total) || 0)} ريال`);
+    return `أكثر العملاء حجزاً:\n${lines.join("\n")}`;
+  }
+  if (r.overview === true) {
+    const parts = [
+      `نظرة عامة (${r.month}):`,
+      `• الشاليهات: ${Number(r.chalet_count) || 0}`,
+      `• الحجوزات النشطة: ${Number(r.booking_count_total) || 0} (منها قادمة ${Number(r.upcoming_count) || 0})`,
+      `• دخل الشهر: ${Math.round(Number(r.month_income) || 0)} ريال`,
+      `• مصاريف الشهر: ${Math.round(Number(r.month_expenses) || 0)} ريال`,
+      `• صافي الشهر: ${Math.round(Number(r.month_net) || 0)} ريال`,
+      `• متبقٍّ على العملاء (إجمالي، كل الفترات): ${Math.round(Number(r.outstanding_total) || 0)} ريال`,
+    ];
+    if (r.top_chalet) parts.push(`• أربح شاليه: ${r.top_chalet.chalet_name} (صافي ${Math.round(Number(r.top_chalet.net_profit) || 0)} ريال)`);
+    return parts.join("\n");
+  }
   if (Array.isArray(r.chalets)) {
     if (!r.chalets.length) return "لا توجد شاليهات مسجلة في هذه المساحة.";
     const lines = r.chalets.map((c) => {
@@ -1044,7 +1094,10 @@ function deterministicReadIntent(message, todayIso) {
   // like «وش الشاليهات المتاحة عندي؟» (no «اليوم») has no other deterministic
   // home — excluding it here dropped it to the model (regression). Let it list
   // the chalets deterministically, exactly as it did before this round.
-  const asksCatalog = /(شاليه|شاليهات)/.test(text) && /(ما\s*هي|وش|ايش|اعرض|اظهر|قائمة|المسجل|عندي|لديك)/.test(text) && !/(احجز|حجز|جهز|سج[ّل]+\s+حجز)/.test(text);
+  // A profitability/expenses question about a «شاليه» («وش الشاليه الأكثر دخل؟»)
+  // is analytical, not a catalog list — exclude analytical words so it falls
+  // through to the G2 profitability/expense intents below.
+  const asksCatalog = /(شاليه|شاليهات)/.test(text) && /(ما\s*هي|وش|ايش|اعرض|اظهر|قائمة|المسجل|عندي|لديك)/.test(text) && !/(احجز|حجز|جهز|سج[ّل]+\s+حجز)/.test(text) && !/(أربح|اربح|أرباح|ارباح|ربح|صافي|مصاريف|المصاريف|تكاليف|أكثر\s*دخل|اكثر\s*دخل|أعلى\s*دخل|اعلى\s*دخل)/.test(text);
   if (asksCatalog) return { name: "list_chalets", arguments: {} };
   // «شنو/وش/ايش/اعرض حجوزات اليوم؟» answers from the workspace even when the
   // model provider is down. Deliberately narrow: «ما هي حجوزات اليوم؟» stays on
@@ -1086,6 +1139,56 @@ function deterministicReadIntent(message, todayIso) {
   // Recent payments.
   if (/(آخر|اخر|أحدث|احدث)/.test(text) && /(مدفوعات|دفعات|المدفوعات)/.test(text)) {
     return { name: "list_recent_payments", arguments: {} };
+  }
+  // ---- G2 analytical intents (expenses / net / profitability / compare /
+  // top customers). These MUST precede the count+income summary block below,
+  // whose loose «حجز|دخل» guard would otherwise capture analytical phrasings
+  // like «صافي دخلي» or «قارن دخل الشهر بالماضي». Each answers deterministically
+  // (model_calls=0) from the document. Range: this month, or last month when a
+  // «الماضي/الفائت» word is present; the model handles arbitrary ranges/months.
+  if (todayIso) {
+    const pastMonth = /(الماضي|الماضيه|الماضية|الفائت|الفائتة|الفايت|المنصرم|اللي\s*فات|اللي\s*راح)/.test(text);
+    const analyticsRange = () => {
+      if (pastMonth) return monthRangeIso(`${prevMonthKey(todayIso.slice(0, 7))}-01`);
+      return monthRangeIso(todayIso);
+    };
+    // Compare two months (this vs last by default). «قارن» + a month word.
+    if (/(قارن|قارِن|مقارنة|قارنّ|الفرق\s*بين)/.test(text) && /(شهر|الشهر|شهور|الشهرين|بالماضي)/.test(text)) {
+      return { name: "compare_months", arguments: {} };
+    }
+    // A message is a booking/customer LOOKUP or a MARKETING-revenue question —
+    // both have their own intents further below. «حجوزات صافي» (a customer named
+    // Safi) and «كم أرباح التسويق؟» must NOT be captured by the net matcher, whose
+    // «صافي/ربح/أرباح» tokens are also ordinary names and the marketing keyword.
+    const marketingCtx = /(تسويق|التسويق|حملة|حملات|جابه)/.test(text);
+    const nameLookupShape =
+      /(?:رقمه|جواله|رقم\s*جواله|الرقم)\s*(?:ينتهي|اخره|آخره)/.test(text) ||
+      /(?:^|\s)(?:حجز|حجوزات)\s+(?:العميل\s+)?[\p{L}][\p{L}\s]{1,30}$/u.test(text);
+    // Most-profitable chalet — «أي شاليه أربح؟». Needs a chalet word AND a profit
+    // word; checked before the net matcher so «أربح» doesn't read as net. «الأفضل»
+    // is intentionally NOT a trigger — «الشاليه الأفضل للعوائل» is a recommendation.
+    if (/(شاليه|شاليهات|شالية)/.test(text) && /(أربح|اربح|ربح|أرباح|ارباح|أعلى\s*دخل|اعلى\s*دخل|أكثر\s*دخل|اكثر\s*دخل)/.test(text)) {
+      return { name: "get_chalet_profitability", arguments: analyticsRange() };
+    }
+    // Net profit — «الصافي»، «صافي الربح»، «كم ربحت؟». Anchored to a net/profit
+    // QUESTION shape (not a bare «صافي/ربحي» customer name), never on a name
+    // lookup or a marketing question, and distinct from gross income («كم دخلي؟»
+    // stays a bookings summary — it has no net/profit word).
+    if (!marketingCtx && !nameLookupShape && (
+      /الصافي/.test(text) ||
+      /صافي\s*(?:ال)?(?:ربح|دخل|أرباح|ارباح)/.test(text) ||
+      /(?:كم|وش|كام|ايش|اعرف|أعرف|احسب)\s*(?:هو\s*)?(?:صافي|ربح|أرباح|ارباح|ربحت|ربحنا|كسبت|كسبنا)/.test(text)
+    )) {
+      return { name: "get_net_profit", arguments: analyticsRange() };
+    }
+    // Expenses — «كم صرفت؟»، «مصاريفي»، «تكاليف هذا الشهر».
+    if (/(صرفت|مصاريف|المصاريف|مصروف|مصاريفي|تكاليف|التكاليف|انفقت|أنفقت|صرفنا|صرفتها)/.test(text)) {
+      return { name: "get_expense_summary", arguments: analyticsRange() };
+    }
+    // Top customers by bookings — «أكثر العملاء»، «أفضل الزبائن» (names only).
+    if (/(أكثر|اكثر|أفضل|افضل)\s*(العملاء|عملاء|الزباين|الزبائن|زبائن)/.test(text) || /(العملاء|الزبائن)\s*(الأكثر|الاكثر|الدائمين)/.test(text)) {
+      return { name: "get_top_customers", arguments: {} };
+    }
   }
   // The app's OWN suggestion chips (and their natural variants) must never
   // depend on the model (live IMG_6710/6711: «تمام.» / bare counts).
