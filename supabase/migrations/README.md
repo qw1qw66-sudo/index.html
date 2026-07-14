@@ -4,8 +4,12 @@ This directory is what `supabase db push` applies, in filename order. It is the
 **only** maintained migration set (the old `database/migrations/` copies were
 relocated here with timestamped names — same SQL, same rollback comments).
 
-**Nothing here has been applied to the production Supabase project by the
-branches that introduced it.** Staging first, always.
+**Reality (2026-07):** there is currently ONE configured Supabase project — the
+same one the official GitHub Pages app connects to (labeled `APP_ENV=staging`) —
+and these migrations ARE applied to it by the deploy workflow. It holds real
+data, so treat every application here as a **production** change. A truly separate
+production+staging split (two projects) is a follow-up; until it lands, "staging"
+and "the live app's backend" are the same project.
 
 ## The chain (applied in this exact order)
 
@@ -25,14 +29,23 @@ branches that introduced it.** Staging first, always.
    (assistant_threads/messages/memory/actions, automation_rules/runs,
    outbound_messages) + atomic confirmation/memory RPCs, with composite
    `(workspace_key, id)` FKs. Requires the two files above.
+5. `20260711000004_pgcrypto_search_path.sql` — pin `pgcrypto` search_path.
+6. `20260711000005_payment_reads_volatile.sql` — payment read RPCs volatility.
+7. `20260712000006_assistant_booking_drafts.sql` — server-side booking drafts.
+8. `20260712000007_grandfather_existing_booking_conflicts.sql` — the current
+   authoritative `save_shared_workspace`/`_v2` definitions + conflict grandfather.
+9. `20260712000008_night_anchor_booking_conflicts.sql` — night-anchor overlap rule.
 
 ## How they are applied
 
-- **Staging:** the `Deploy Supabase Staging` GitHub Actions workflow
-  (`workflow_dispatch` only) runs `supabase db push` against the staging
-  project linked via repository secrets. See `.github/workflows/deploy-supabase-staging.yml`.
-- **Production:** manual only, by the owner, in a maintenance window, after
-  staging verification. Nothing in CI targets production.
+- The `Deploy Supabase` GitHub Actions workflow runs `supabase db push` against
+  the configured project. It deploys **only intentionally** — a manual
+  `workflow_dispatch`, OR a push to `main` whose commit message contains
+  `[deploy]`. A normal merge does NOT auto-apply migrations. See
+  `.github/workflows/deploy-supabase-staging.yml`.
+- Because there is currently one project (the live one), an application here is a
+  **production** change: mark the merge `[deploy]` only when you intend it, and
+  confirm the migration is safe against real data first.
 
 Each file is transactional (`begin/commit`) and guarded (`if not exists`)
 where possible; `supabase db push` records applied versions in

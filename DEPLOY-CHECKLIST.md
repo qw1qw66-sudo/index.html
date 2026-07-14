@@ -2,19 +2,24 @@
 
 ## قبل الدمج إلى main
 
-- [ ] تأكد أن الفرع هو `rebuild/clean-root-app`.
+- [ ] الفرع الرسمي للنشر هو `main`.
 - [ ] راجع `/index.html`.
-- [ ] راجع `/database/shared_workspace_sync.sql`.
 - [ ] راجع `/tests/manual-test-checklist.md`.
-- [ ] تأكد أن GitHub Pages workflow ينسخ الملفات الثلاثة فقط.
+- [ ] تأكد أن GitHub Pages workflow ينسخ ملفَّين فقط (index.html + 404.html).
 
-## الملفات المنشورة فقط
+## الملفات المنشورة على Pages فقط
 
 ```text
 dist/index.html
 dist/404.html
-dist/database/shared_workspace_sync.sql
 ```
+
+## نشر الخلفية (Supabase — هجرات/Functions)
+
+- **لا يحدث تلقائياً على الدمج.** لتطبيق تغيير خادم/هجرة على القاعدة الحيّة، شغّل
+  ورك‑فلو `Deploy Supabase` يدوياً، أو اجعل رسالة الدمج تحوي `[deploy]`.
+- القاعدة حالياً واحدة (حيّة بعملاء) — عامِل كل نشر خلفية كنشر إنتاج وتأكّد من أمان
+  الهجرة على بيانات حقيقية أولاً.
 
 ## ممنوع نشره
 
