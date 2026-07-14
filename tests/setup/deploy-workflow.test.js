@@ -1,7 +1,8 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-// The staging deployment surface: the workflow must be manual-only, secrets
+// The deployment surface: the workflow deploys only intentionally (manual
+// dispatch or a "[deploy]"-marked push — never a silent auto-deploy), secrets
 // must be runner-generated (never echoed/stored), the CLI migration chain in
 // supabase/migrations must be complete and ordered, and the baseline must be
 // byte-identical to the published database/shared_workspace_sync.sql.
@@ -9,15 +10,19 @@ import { describe, expect, it } from "vitest";
 const wf = readFileSync(".github/workflows/deploy-supabase-staging.yml", "utf8");
 
 describe("deploy-supabase-staging workflow", () => {
-  it("triggers on manual dispatch and backend pushes to main only (never PR/schedule)", () => {
+  it("deploys ONLY intentionally: manual dispatch, or a push whose commit says [deploy] (H1)", () => {
     expect(wf).toContain("workflow_dispatch:");
     expect(wf).toContain("deploy_ref:");
     expect(wf).toContain('default: "main"');
-    // Backend continuous deploy: push-to-main, path-filtered to server code,
-    // so merged backend fixes reach staging without a manual click.
+    // A push to main is a candidate (path-filtered to server code)…
     expect(wf).toMatch(/push:\s*\n\s*branches:\s*\n\s*- main/);
     expect(wf).toContain('- "supabase/**"');
     expect(wf).toContain('- ".github/workflows/deploy-supabase-staging.yml"');
+    // …but the job runs on a push ONLY when the commit message opts in with
+    // "[deploy]" (H1 safety gate: a normal merge never auto-runs migrations on
+    // the live DB). A manual workflow_dispatch is always an explicit deploy.
+    expect(wf).toContain("github.event_name == 'workflow_dispatch'");
+    expect(wf).toMatch(/contains\(github\.event\.head_commit\.message, '\[deploy\]'\)/);
     // Frontend-only pushes must NOT deploy the backend.
     expect(wf).not.toMatch(/paths:[\s\S]{0,200}index\.html/);
     expect(wf).not.toMatch(/^\s*pull_request:/m);

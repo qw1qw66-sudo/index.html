@@ -1,9 +1,18 @@
-# Deploy Supabase Staging — manual-only (workflow_dispatch), never on push/PR.
+# Deploy Supabase — INTENTIONAL deploys only (never silently on every merge).
 #
-# Deploys the migration chain + Edge Functions to the SEPARATE staging Supabase
-# project selected by repository secrets, then smoke-tests the real deployed
-# Deno functions over HTTP. It never touches the production project: the target
-# is entirely determined by SUPABASE_PROJECT_ID (the staging Project Ref).
+# Runs on a manual workflow_dispatch, OR on a push to main whose HEAD commit
+# message contains the marker "[deploy]". A normal merge to main does NOT deploy,
+# so a server change can never silently run migrations (supabase db push) against
+# the live database. Deploys the migration chain + Edge Functions to the Supabase
+# project selected by repository secrets, then smoke-tests the real deployed Deno
+# functions over HTTP.
+#
+# REALITY (2026-07): there is currently ONE configured Supabase project — the SAME
+# one the official GitHub Pages app talks to (fkqidesfrtpwzjcimjoe, labeled
+# APP_ENV=staging) — and it holds REAL data. A truly separate production+staging
+# split is a follow-up. Until then, treat every deploy here as a PRODUCTION deploy:
+# add "[deploy]" to the merge/commit message ONLY when you intend to change the
+# live backend.
 #
 # Repository secrets (https://github.com/qw1qw66-sudo/index.html/settings/secrets/actions):
 #   REUSED (already exist for the export workflow):
@@ -29,13 +38,14 @@ on:
         description: "Git ref to deploy (branch, tag, or SHA)"
         required: true
         default: "main"
-  # Backend continuous deploy: a push to main that touches server code (or
-  # this workflow / the smoke) deploys automatically. The owner operates from
-  # an iPhone and API workflow-dispatch is not available to every session, so
-  # merged backend fixes must reach staging without a manual click. Frontend
-  # (index.html) pushes do NOT trigger this — GitHub Pages handles those.
-  # On push, inputs.deploy_ref is empty and the checkout step falls back to
-  # the pushed main SHA, which is exactly the ref being deployed.
+  # Gated backend deploy: a push to main only becomes a real deploy when the
+  # HEAD commit message contains "[deploy]" (enforced by the job `if:` below).
+  # This keeps deploys click-free for an iPhone-only owner (mark the merge and
+  # it ships) while ensuring a normal merge NEVER auto-runs migrations against
+  # the live database. The paths filter narrows candidate pushes to server code;
+  # the `[deploy]` marker is the actual intent gate. Frontend (index.html) pushes
+  # go through GitHub Pages, not here. On push, inputs.deploy_ref is empty and
+  # the checkout step falls back to the pushed main SHA.
   push:
     branches:
       - main
@@ -53,8 +63,14 @@ concurrency:
 
 jobs:
   deploy:
-    # Never run for forks — deploys only this repository's own refs.
-    if: github.repository == 'qw1qw66-sudo/index.html'
+    # Never run for forks — deploys only this repository's own refs. And on a
+    # push, deploy ONLY when the commit message opts in with "[deploy]" — a
+    # normal merge to main is not a deploy, so migrations never auto-run against
+    # the live DB. A manual workflow_dispatch is always an explicit deploy.
+    if: >-
+      github.repository == 'qw1qw66-sudo/index.html' &&
+      (github.event_name == 'workflow_dispatch' ||
+       contains(github.event.head_commit.message, '[deploy]'))
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: staging
