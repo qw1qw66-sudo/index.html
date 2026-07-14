@@ -238,9 +238,14 @@ async function bookingCreate(wsKey, pin, args, deps) {
     chalet_id: chalet.id,
     booking_date: String(args.booking_date || ""),
     period_id: period.id,
-    // NO silent defaults: a missing/invalid guests or total fails validation
-    // below (INVALID_GUESTS / INVALID_TOTAL) instead of becoming 1 / 0.
-    guests: Number(args.guests),
+    // Guests is OPTIONAL by owner preference: a missing/invalid count defaults
+    // to 1 (the browser form does the same with `|| 1`), so it never blocks a
+    // booking. total still has NO silent default — a missing/invalid amount
+    // fails validation below (INVALID_TOTAL) instead of becoming 0.
+    guests:
+      Number.isInteger(Number(args.guests)) && Number(args.guests) > 0
+        ? Number(args.guests)
+        : 1,
     total: Number(args.total),
     // The owner's stated deposit («عربون N») rides through as args.paid; a
     // missing/invalid value stays 0. validateResultingBooking checks "paid".

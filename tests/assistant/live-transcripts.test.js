@@ -210,22 +210,21 @@ describe("live transcript corpus (owner-reported conversations, zero model calls
   it("R1 (IMG_6690): «١٠»→«اعتمد»→card; the confirm-time conflict names the blocker and options; «١» recovers", async () => {
     const deps = makeDeps();
     const replies = [];
-    const t1 = await chat(deps, "احجز تولوم بكرة بالليل");
+    const t1 = await chat(deps, "احجز تولوم بكرة بالليل ١٠ ضيوف");
     replies.push(t1.reply_ar);
-    // R8: ONE combined question for everything still open — never one-by-one.
-    expect(t1.reply_ar).toContain("عدد الضيوف");
+    // guests stated explicitly (١٠ ضيوف) and never re-asked; ONE combined
+    // question covers the rest (price + customer) — never one-by-one.
+    expect(t1.reply_ar).not.toContain("عدد الضيوف");
+    expect(t1.reply_ar).toContain("سعر النظام");
     expect(t1.reply_ar).toContain("اسم العميل");
     expect(t1.reply_ar).toContain("رسالة واحدة");
-    const t2 = await chat(deps, "١٠", "th-1");
-    replies.push(t2.reply_ar);
-    expect(t2.reply_ar).toContain("سعر النظام");
     expect(deps._drafts.get("th-1").fields.guests).toBe(10);
-    const t3 = await chat(deps, "اعتمد", "th-1");
+    const t2 = await chat(deps, "اعتمد", "th-1");
+    replies.push(t2.reply_ar);
+    expect(t2.reply_ar).toContain("اسم العميل");
+    const t3 = await chat(deps, "العميل علي تجربة", "th-1");
     replies.push(t3.reply_ar);
-    expect(t3.reply_ar).toContain("اسم العميل");
-    const t4 = await chat(deps, "العميل علي تجربة", "th-1");
-    replies.push(t4.reply_ar);
-    const prep = (t4.tool_results || []).find((x) => x.kind === "prepared_action");
+    const prep = (t3.tool_results || []).find((x) => x.kind === "prepared_action");
     expect(prep).toBeTruthy();
     // The slot is taken between prepare and حفظ (the live race).
     deps._doc.bookings.push({ id: "b-race", customer_name: "منافس تجريبي", chalet_id: "tulum", booking_date: TOMORROW, period_id: "t-pm", guests: 2, total: 400, paid: 0, status: "confirmed", deleted_at: null });
@@ -593,9 +592,10 @@ describe("live transcript corpus (owner-reported conversations, zero model calls
     const deps = makeDeps({ doc });
     const t1 = await chat(deps, "احجز تولوم بكرة فترة 5");
     expect(t1.model_calls).toBe(0);
-    // ONE combined question, not sequential.
+    // ONE combined question, not sequential. guests is optional so it is NOT
+    // one of the asked items.
     expect(t1.reply_ar).toContain("باقي فقط:");
-    expect(t1.reply_ar).toContain("عدد الضيوف");
+    expect(t1.reply_ar).not.toContain("عدد الضيوف");
     expect(t1.reply_ar).toContain("اسم العميل");
     expect(t1.reply_ar).toContain("رسالة واحدة");
     // ONE combined reply carries everything and reaches the card.

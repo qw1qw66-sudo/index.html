@@ -535,7 +535,9 @@ export function missingFields(draft) {
     Boolean(normalizeTimeHHmm(d.canonical_start)) &&
     Boolean(normalizeTimeHHmm(d.canonical_end));
   if (!hasPeriod) missing.push("period");
-  if (!Number.isInteger(d.guests) || d.guests < 1) missing.push("guests");
+  // Guest count is OPTIONAL by owner preference: a booking never waits on it.
+  // The executor defaults a missing/invalid guests to 1 (matching the browser
+  // form's `|| 1`), so guests is intentionally NOT part of the missing gate.
   const t = d.total;
   const totalMissing =
     t === null || t === undefined ||

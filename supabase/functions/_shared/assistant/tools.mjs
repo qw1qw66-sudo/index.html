@@ -126,9 +126,10 @@ function bookingSchema(create, update) {
     chalet_id: { type: "string", maxLen: 64 },
     booking_date: { type: "date", required: !!create },
     period_id: { type: "string", maxLen: 64 },
-    // NO default: a new booking's guest count must come from the owner (the
-    // planner asks; nothing is ever silently assumed to be 1).
-    guests: { type: "integer", min: 1, required: !!create },
+    // Guests is OPTIONAL by owner preference (never required, even on create):
+    // when omitted, the executor defaults it to 1. A provided value must still
+    // be a positive integer and is capacity-checked.
+    guests: { type: "integer", min: 1, required: false },
     // total 0 is allowed ONLY together with total_is_free (an explicit
     // «الحجز مجاني») — the executor rejects unintended zero prices.
     total: { type: "number", min: 0, required: !!create },

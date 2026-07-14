@@ -350,10 +350,10 @@ describe("booking agent draft flow (deterministic, zero model calls)", () => {
     await chat(deps, "خله بعد بكرة", "th-1");
     const f1 = deps._drafts.get("th-1").fields;
     expect(f1.booking_date).toBe(addDays(TODAY, 2));
-    // A bare numeral now answers the guests question — it must NOT be
-    // swallowed as a conflict-alternative pick (none are pending).
+    // A bare numeral now answers the PENDING question (total — guests is
+    // optional) — it must NOT be swallowed as a conflict-alternative pick.
     await chat(deps, "٢", "th-1");
-    expect(deps._drafts.get("th-1").fields.guests).toBe(2);
+    expect(deps._drafts.get("th-1").fields.total).toBe(2);
   });
 
   it("Persian digits and DD-MM-YYYY answers parse through a real chat turn", async () => {
@@ -699,17 +699,42 @@ describe("answer matrix: every pending question accepts its bare answer", () => 
     expect(deps._drafts.get("th-1").fields.total_source).toBe("explicit");
   });
 
-  it("«١٠» answers the GUESTS question (numeral routing never breaks the guests path)", async () => {
+  it("everything-but-guests prepares straight away — guests is optional (defaults to 1)", async () => {
+    const deps = makeDeps();
+    // chalet + date + period + total + name, but NO guest count. Guests is
+    // optional now, so the draft is complete and the card is prepared directly
+    // with a default of 1 guest — the owner is never asked «كم عدد الضيوف».
+    const q = await chat(deps, "احجز تولوم بكرة بالليل بمئة ريال باسم علي تجربة");
+    expect(q.model_calls).toBe(0);
+    expect(q.reply_ar).not.toContain("كم عدد الضيوف");
+    const prep = (q.tool_results || []).find((x) => x.kind === "prepared_action");
+    expect(prep).toBeTruthy();
+    expect(deps._actions.get(prep.action_id).args.guests).toBe(1);
+    expect(deps._actions.get(prep.action_id).args.total).toBe(100);
+  });
+
+  it("F2: a booking with NO guest count confirms and SAVES guests=1", async () => {
     const deps = makeDeps();
     const q = await chat(deps, "احجز تولوم بكرة بالليل بمئة ريال باسم علي تجربة");
-    expect(q.reply_ar).toContain("كم عدد الضيوف");
-    expect(deps._drafts.get("th-1").fields.pending_q.kind).toBe("guests");
-    const r = await chat(deps, "١٠", "th-1");
-    expect(r.model_calls).toBe(0);
-    const prep = (r.tool_results || []).find((x) => x.kind === "prepared_action");
+    const prep = (q.tool_results || []).find((x) => x.kind === "prepared_action");
     expect(prep).toBeTruthy();
-    expect(deps._actions.get(prep.action_id).args.guests).toBe(10);
-    expect(deps._actions.get(prep.action_id).args.total).toBe(100);
+    expect(deps._actions.get(prep.action_id).args.guests).toBe(1);
+    const okc = await post(deps, { invoke_tool: { name: "confirm_booking_create", arguments: { action_id: prep.action_id, confirmation_token: prep.confirmation_token } } });
+    expect(okc.ok).toBe(true);
+    expect(deps._executed).toHaveLength(1);
+    const saved = deps._doc.bookings[deps._doc.bookings.length - 1];
+    expect(saved.guests).toBe(1); // defaulted, never 0 / undefined
+    expect(saved.total).toBe(100);
+  });
+
+  it("F2: a STATED guest count over capacity is still refused", async () => {
+    const deps = makeDeps();
+    // sky capacity is 6; 10 guests must be refused — capacity stays enforced
+    // when the owner DOES state a count. Optional never means unchecked.
+    const r = await chat(deps, "احجز سكاي بكرة مسائي ١٠ ضيوف بمئة ريال باسم علي تجربة");
+    expect(r.model_calls).toBe(0);
+    expect(r.reply_ar).toContain("يتجاوز سعة الشاليه");
+    expect((r.tool_results || []).some((x) => x.kind === "prepared_action")).toBe(false);
   });
 
   it("a numeral while the CHALET question is pending keeps the guests status quo and re-asks the chalet", async () => {
