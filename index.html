@@ -2219,11 +2219,22 @@
             .toUpperCase()
             .replace(/[^A-Z0-9_-]/g, "");
         }
+        // SINGLE SOURCE OF TRUTH for "which collections count as real business
+        // data". The empty-overwrite wipe guard protects every one of these, so a
+        // document holding ONLY (say) expenses is neither wrongly rejected nor
+        // silently wiped. Keep in sync with workspace_has_business_data() in
+        // supabase/migrations/20260712000009_unified_business_data_guard.sql.
+        const BUSINESS_COLLECTIONS = ["chalets", "bookings", "expenses"];
         function counts(doc = state) {
-          return {
-            chalets: (doc.chalets || []).filter((x) => !x.deleted_at).length,
-            bookings: (doc.bookings || []).filter((x) => !x.deleted_at).length,
-          };
+          const out = {};
+          for (const k of BUSINESS_COLLECTIONS) out[k] = (doc[k] || []).filter((x) => !x.deleted_at).length;
+          return out;
+        }
+        // True when a counts() result holds any real business data (any protected
+        // collection is non-empty). Tolerates a legacy counts object missing newer
+        // keys (a restored old snapshot) — an absent key reads as zero.
+        function hasBusinessData(c) {
+          return BUSINESS_COLLECTIONS.some((k) => Number(c && c[k]) > 0);
         }
         // Normalize the REAL stored list without truncating or inventing active
         // periods. The old helper silently cut period 7+ and padded missing
@@ -2991,12 +3002,10 @@
             );
           if (!lastCloudCounts || !lastCloudUpdatedAt)
             return feedback("لا يمكن الرفع قبل توفر آخر حالة سحابية.", "bad");
-          const c = counts(state);
-          if (
-            c.chalets === 0 &&
-            c.bookings === 0 &&
-            (lastCloudCounts.chalets > 0 || lastCloudCounts.bookings > 0)
-          )
+          // Empty-overwrite guard: block only when the LOCAL doc holds no business
+          // data at all (across every protected collection — including expenses)
+          // while the CLOUD did. Mirrors workspace_has_business_data() server-side.
+          if (!hasBusinessData(counts(state)) && hasBusinessData(lastCloudCounts))
             return feedback(
               "تم إيقاف الرفع لحماية بياناتك: لا توجد بيانات محلية بينما توجد بيانات في السحابة، والرفع الآن سيحذف بيانات السحابة الموجودة. اسحب البيانات أولًا ثم أعد المحاولة.",
               "bad",

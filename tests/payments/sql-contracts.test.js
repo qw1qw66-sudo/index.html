@@ -11,6 +11,7 @@ import { describe, expect, it } from "vitest";
 const m1 = readFileSync("supabase/migrations/20260701000001_atomic_workspace_save.sql", "utf8");
 const m2 = readFileSync("supabase/migrations/20260701000002_payment_ledger.sql", "utf8");
 const m7 = readFileSync("supabase/migrations/20260712000007_grandfather_existing_booking_conflicts.sql", "utf8");
+const m9 = readFileSync("supabase/migrations/20260712000009_unified_business_data_guard.sql", "utf8");
 
 // Executable statements only — SQL comments (e.g. the documented rollback
 // section) must not satisfy or violate the contracts below.
@@ -24,6 +25,7 @@ function code(sql) {
 const c1 = code(m1);
 const c2 = code(m2);
 const c7 = code(m7);
+const c9 = code(m9);
 
 describe("migration 0001 (atomic workspace save) contracts", () => {
   it("save v2 verifies the expected revision inside the row lock", () => {
@@ -141,5 +143,36 @@ describe("migration 0007 (grandfather legacy booking conflicts) contracts", () =
     expect(c7).toContain("BOOKING_CONFLICT:");
     expect(c7).toContain("revoke all on function public.workspace_doc_new_booking_conflict(jsonb, jsonb)");
     expect(c7).toContain("notify pgrst, 'reload schema'");
+  });
+});
+
+describe("migration 0009 (unified business-data guard) contracts", () => {
+  it("defines ONE helper that is the single source of truth for 'has business data'", () => {
+    expect(c9).toContain("function public.workspace_has_business_data(p_data jsonb)");
+    // The H2 correction: expenses now count as business data alongside the
+    // original chalets + bookings. Dropping any of these regresses the guard.
+    expect(c9).toContain("jsonb_array_length(p_data->'chalets')");
+    expect(c9).toContain("jsonb_array_length(p_data->'bookings')");
+    expect(c9).toContain("jsonb_array_length(p_data->'expenses')");
+  });
+
+  it("both save contracts derive the wipe guard from the helper (not an inline chalets+bookings count)", () => {
+    // v2 and v1 each gate the empty-overwrite block on the shared helper.
+    expect((c9.match(/public\.workspace_has_business_data\(v_data\)/g) || []).length).toBeGreaterThanOrEqual(2);
+    expect(c9).toContain("public.workspace_has_business_data(v_workspace.data)");
+    expect(c9).toContain("EMPTY_OVERWRITE_BLOCKED");
+  });
+
+  it("only CORRECTS the guard — never weakens wipe protection or mutates data", () => {
+    // Still blocks an empty-of-business-data doc from overwriting a non-empty one.
+    expect(c9).toMatch(/not public\.workspace_has_business_data\(v_data\)\s+and public\.workspace_has_business_data\(v_workspace\.data\)/);
+    expect(c9).not.toMatch(/\bdrop table\b/i);
+    expect(c9).not.toMatch(/delete\s+from\s+public\.shared_workspaces/i);
+    expect(c9).not.toMatch(/update\s+public\.shared_workspaces\s+set\s+data\s*=\s*'{}'/i);
+  });
+
+  it("keeps the helper private and reloads the PostgREST schema cache", () => {
+    expect(c9).toContain("revoke all on function public.workspace_has_business_data(jsonb) from public, anon, authenticated");
+    expect(c9).toContain("notify pgrst, 'reload schema'");
   });
 });
