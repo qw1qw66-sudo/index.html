@@ -92,17 +92,22 @@ const BOOKING_FIELDS_INSTRUCTION =
 // a full prepare_booking_create (owner still confirms). Requires booking INTENT
 // AND a delegation cue; a concrete «احجز تولوم بكرة» has no cue → stays
 // deterministic. Mid-draft turns (an active row) never yield.
+// Only UNAMBIGUOUS delegation cues: imperatives that hand the choice to the
+// assistant, and «أي شاليه» (any chalet). The superlative «أفضل/أنسب/أرخص شاليه»
+// are intentionally EXCLUDED — «احجز أفضل شاليه تولوم» names a real, resolvable
+// chalet, so those cues would wrongly steal a concrete booking to the model.
+// (An imperative like «دبّر لي أرخص شاليه» still yields via «دبّر».)
 const DELEGATE_BOOKING_RE =
-  /(اقترح|اقترحي|دبّر|دبر|رتّب\s*لي|رتب\s*لي|اختر\s*لي|اختاري\s*لي|نصيحتك|شو\s*تنصح|وش\s*تنصح|أنسب\s*شاليه|انسب\s*شاليه|أرخص\s*شاليه|ارخص\s*شاليه|أفضل\s*شاليه|افضل\s*شاليه|أي\s*شاليه|اي\s*شاليه)/;
+  /(اقترح|اقترحي|دبّر|دبر|رتّب\s*لي|رتب\s*لي|اختر\s*لي|اختاري\s*لي|نصيحتك|شو\s*تنصح|وش\s*تنصح|أي\s*شاليه|اي\s*شاليه)/;
 
 // Booking-lead guidance for the MODEL loop (delegated bookings only reach it).
 // The model proposes; the deterministic layer validates every field; the owner
 // confirms. Price stays the CARD price (from find_empty_dates), never invented;
 // the customer phone is never invented (the server binds the real one).
 const BOOKING_LEAD_INSTRUCTION =
-  "إذا طلب صاحب المكان أن ترتّب أو تختار له حجزاً (مثل «احجز أي شاليه فاضي» أو «دبّر أنسب/أرخص شاليه»): " +
-  "اقرأ التوفّر عبر find_empty_dates، اختر فتحة مناسبة، ثم جهّز الحجز باستدعاء prepare_booking_create بالشاليه والتاريخ والفترة وعدد الضيوف والمبلغ. " +
-  "المبلغ خذه من سعر الفتحة الذي تُعيده find_empty_dates (السعر من بطاقة الشاليه) — لا تخترع سعراً؛ وإن لم يكن للفتحة سعر فاسأل صاحب المكان عنه. " +
+  "إذا طلب صاحب المكان أن ترتّب أو تختار له حجزاً (مثل «احجز أي شاليه فاضي» أو «دبّر لي شاليه مناسب»): " +
+  "اقرأ التوفّر عبر find_empty_dates، اختر فتحة مناسبة، ثم جهّز الحجز باستدعاء prepare_booking_create بالشاليه والتاريخ والفترة وعدد الضيوف. " +
+  "المبلغ يحدّده النظام تلقائياً من بطاقة أسعار الشاليه — لا تخترع سعراً ولا تحتاج أن تضعه؛ وإن لم يكن للفترة سعر محفوظ فسيطلب منك النظام سؤال صاحب المكان. " +
   "إن لم تعرف عدد الضيوف فاسأل عنه بإيجاز قبل التجهيز. لا تخترع رقم جوال أبداً. " +
   "أنت تُجهّز فقط ولا تنفّذ — التأكيد النهائي بزرّ صاحب المكان.";
 
@@ -421,12 +426,18 @@ export async function handleAssistant(req, deps) {
     modelCalls++;
     if (!resp.ok) {
       if (hop === 1) {
-        // Fail closed on the FIRST call: no action, clear Arabic error.
+        // Fail closed on the FIRST call: no action, clear Arabic error. If this
+        // was a DELEGATED booking (yielded here from the pipeline) and the model
+        // is down, guide the owner to the deterministic path instead of a
+        // dead-end — «احجز <الشاليه> <التاريخ>» is handled with zero model calls.
+        const bookingIntent = hasBookingIntent(message);
         return json(200, {
           ok: false,
           assistant_unavailable: true,
           error: resp.error,
-          reply_ar: "تعذّر الوصول إلى المساعد الذكي حالياً. لم يتم تنفيذ أي إجراء.",
+          reply_ar: bookingIntent
+            ? "تعذّر الوصول إلى المساعد الذكي حالياً، ولم يُنفَّذ شيء. لتجهيز الحجز الآن اذكر الشاليه والتاريخ مباشرة، مثل: «احجز شاليه سكاي بكرة الفترة المسائية»."
+            : "تعذّر الوصول إلى المساعد الذكي حالياً. لم يتم تنفيذ أي إجراء.",
         });
       }
       // A later hop failed transiently — ground on whatever results we have.
@@ -495,7 +506,10 @@ export async function handleAssistant(req, deps) {
       const callSig = toolSignature([{ name: norm.name, arguments: norm.args }]);
       if (callSig !== null && executedSigs.has(callSig)) continue;
       if (callSig !== null) executedSigs.add(callSig);
-      hopResults.push(await executeTool(deps, { ...ctxBase, norm, raw: true }));
+      // fromModel: a prepare requested BY THE MODEL has its booking total forced
+      // to the card price (never a model-supplied number). The deterministic
+      // pipeline and the owner's direct invoke_tool do NOT set this flag.
+      hopResults.push(await executeTool(deps, { ...ctxBase, norm, raw: true, fromModel: true }));
     }
     toolsUsed += hopResults.length;
     results.push(...hopResults);
@@ -780,7 +794,7 @@ function describeReadAr(result) {
 // Execute one normalized tool call. Returns a plain result object (raw=true) or
 // a Response (raw=false). Read tools run immediately; prepare tools create a
 // confirmation; confirm tools consume + execute the underlying contract.
-async function executeTool(deps, { wsKey, pin, norm, activeMemories, secret, raw, threadId }) {
+async function executeTool(deps, { wsKey, pin, norm, activeMemories, secret, raw, threadId, fromModel }) {
   const { name, args, spec } = norm;
   const wrap = (status, obj) => (raw ? { tool: name, ...obj } : json(status, { ok: obj.ok !== false, tool: name, ...obj }));
 
@@ -837,6 +851,24 @@ async function executeTool(deps, { wsKey, pin, norm, activeMemories, secret, raw
         });
       }
       boundArgs = resolved.args;
+      // G3 price enforcement: a MODEL-led booking prepare NEVER sets its own
+      // price — the total is FORCED to the chalet's card price (weekday/weekend)
+      // for the resolved period+date, so a hallucinated total can't reach the
+      // confirmation card. If the period has no card price, refuse and make the
+      // model ASK the owner (never invent). The deterministic pipeline (no
+      // fromModel) keeps its own owner-accepted total untouched.
+      if (fromModel) {
+        const cardPrice = Number(resolved.suggested_price);
+        if (cardPrice > 0) {
+          boundArgs = { ...boundArgs, total: cardPrice, total_is_free: false, total_source: "card" };
+        } else {
+          return wrap(422, {
+            ok: false,
+            error: "PRICE_NOT_ON_CARD",
+            reason_ar: "لا يوجد سعر محفوظ لهذه الفترة على بطاقة الشاليه، فلا أحدّد المبلغ من عندي. اسأل صاحب المكان عن سعر الحجز، أو اضبط سعر الفترة في تبويب الشاليهات.",
+          });
+        }
+      }
     }
     if (spec.prepares === "confirm_booking_create" && !boundArgs.booking_id && typeof deps.newId === "function") {
       boundArgs = { ...boundArgs, booking_id: deps.newId() };

@@ -30,7 +30,7 @@ function makeDeps({ modelSeq, readResult } = {}) {
     async appendMessages() {},
     async getWorkspaceRevision() { return "r1"; },
     async runReadTool(_k, name, args) { reads.push({ name, args }); return readResult ? readResult(name, args) : { bookings: [] }; },
-    async resolveBookingCreateArgs(_k, args) { return { ok: true, args: { ...args, chalet_id: args.chalet_id || "c1", period_id: args.period_id || "p1" } }; },
+    async resolveBookingCreateArgs(_k, args) { return { ok: true, suggested_price: Number(args.total) || 500, args: { ...args, chalet_id: args.chalet_id || "c1", period_id: args.period_id || "p1" } }; },
     async createThread() { return { ok: true, thread_id: "th-1" }; },
     async threadBelongsToWorkspace() { return true; },
     async getActiveDraft() { return null; },
