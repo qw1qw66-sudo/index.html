@@ -50,6 +50,7 @@ const ALLOWED = new Set([
   "confirm_booking_create",
   "confirm_booking_update",
   "confirm_booking_cancel",
+  "confirm_add_expense",
   "confirm_manual_payment",
   "confirm_payment_link",
   "confirm_outbound_message",
@@ -188,6 +189,8 @@ export async function executeConfirmedAction(ctx, deps) {
       return await bookingUpdate(wsKey, pin, args, deps);
     case "confirm_booking_cancel":
       return await bookingCancel(wsKey, pin, args, deps);
+    case "confirm_add_expense":
+      return await expenseCreate(wsKey, pin, args, deps);
     case "confirm_manual_payment":
       return await manualPayment(wsKey, pin, args, actionId, deps);
     case "confirm_payment_link":
@@ -388,6 +391,98 @@ async function bookingCancel(wsKey, pin, args, deps) {
       booking_id: bookingId, updated_at: saved.updated_at, action: "booking_cancelled", booking: publicBookingProjection(persisted),
       paid_halalas: paidHalalas, warning,
       note_ar: warning ? "الحجز مدفوع جزئياً/كلياً — لن يتم استرداد تلقائي؛ راجع الاسترداد يدوياً." : null,
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Expense executor — append to doc.expenses in the EXACT browser shape (whole
+// riyals; fields amount/date/note, NO status/phone), save via v2 only. No
+// availability/period/capacity: an expense just needs a positive amount, a valid
+// date, and (optionally) a real chalet link.
+// ---------------------------------------------------------------------------
+
+function savedExpense(saved, expenseId) {
+  if (!saved || !saved.data || !Array.isArray(saved.data.expenses)) return null;
+  return saved.data.expenses.find((e) => String(e.id || "") === String(expenseId || "")) || null;
+}
+
+function validateResultingExpense(e) {
+  if (!validIsoDate(e.date)) return { ok: false, error: "INVALID_DATE" };
+  const amount = Number(e.amount);
+  // A zero/negative/NaN amount is never a real expense (there is no «free» flag
+  // like bookings) — reject instead of silently storing 0.
+  if (!Number.isFinite(amount) || amount <= 0) return { ok: false, error: "INVALID_AMOUNT" };
+  if (String(e.category || "").length > 40) return { ok: false, error: "INVALID_CATEGORY" };
+  return { ok: true };
+}
+
+function sameCreateExpense(existing, args) {
+  return Number(existing.amount) === Number(args.amount) &&
+    String(existing.category || "") === (String(args.category || "").trim() || "أخرى");
+}
+
+async function expenseCreate(wsKey, pin, args, deps) {
+  const snap = await deps.getWorkspaceDoc(wsKey);
+  if (!snap || !snap.data) return { ok: false, error: "WORKSPACE_NOT_FOUND" };
+  const doc = snap.data;
+
+  // The expense id is bound at PREPARE time (handler) and travels in the
+  // confirmed payload; a crash-retry reuses it so no second row is written.
+  const expenseId = String(args.expense_id || "") || (typeof deps.newId === "function" ? deps.newId() : "");
+  if (!expenseId) return { ok: false, error: "EXPENSE_ID_MISSING" };
+  const already = (doc.expenses || []).find((e) => String(e.id) === expenseId);
+  if (already) {
+    if (!sameCreateExpense(already, args)) return { ok: false, error: "EXPENSE_ID_CONFLICT" };
+    return {
+      ok: true,
+      result_reference: expenseId,
+      safe_result: { expense_id: expenseId, updated_at: snap.updated_at, action: "expense_created", duplicate: true },
+    };
+  }
+
+  // Optional chalet link: a stated id MUST exist; a stated name resolves to an
+  // existing chalet; anything else leaves the expense unlinked ("").
+  let chaletId = "";
+  if (args.chalet_id) {
+    const c = findChalet(doc, String(args.chalet_id));
+    if (!c) return { ok: false, error: "CHALET_NOT_FOUND" };
+    chaletId = c.id;
+  } else if (args.chalet_name) {
+    const name = String(args.chalet_name).trim();
+    const c = (doc.chalets || []).find((x) => !x.deleted_at && String(x.name || "").trim() === name);
+    if (c) chaletId = c.id;
+  }
+
+  const now = new Date().toISOString();
+  const amount = Number(args.amount);
+  const expense = {
+    id: expenseId,
+    date: validIsoDate(args.date) ? String(args.date) : riyadhToday(Date.now()),
+    category: String(args.category || "").trim() || "أخرى",
+    amount,
+    note: String(args.note || "").trim(),
+    chalet_id: chaletId,
+    deleted_at: null,
+    created_at: now,
+    updated_at: now,
+  };
+  const valid = validateResultingExpense(expense);
+  if (!valid.ok) return valid;
+
+  const nextDoc = { ...doc, expenses: [...(doc.expenses || []), expense] };
+  const saved = await deps.saveWorkspaceV2(wsKey, pin, nextDoc, snap.updated_at);
+  if (!saved.ok) return mapSaveFailure(saved, nextDoc, expense.id);
+  const persisted = savedExpense(saved, expenseId);
+  if (!persisted || Number(persisted.amount) !== amount || String(persisted.category) !== expense.category) {
+    return { ok: false, error: "SAVE_VERIFICATION_FAILED" };
+  }
+  return {
+    ok: true,
+    result_reference: expenseId,
+    safe_result: {
+      expense_id: expenseId, updated_at: saved.updated_at, action: "expense_created",
+      amount, category: expense.category, date: expense.date, chalet_id: chaletId,
     },
   };
 }

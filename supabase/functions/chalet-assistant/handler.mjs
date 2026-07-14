@@ -376,6 +376,34 @@ export async function handleAssistant(req, deps) {
     }
   }
 
+  // Deterministic expense WRITE: «سجّل مصروف كهرباء ٣٠٠» → prepare_add_expense
+  // (model_calls=0). The owner still confirms with the button; nothing is saved
+  // yet. Runs before the booking pipeline so an expense line is never mistaken
+  // for a booking, and after the read intents so «كم صرفت؟» stays a read.
+  const expenseW = expenseWriteIntent(message);
+  if (expenseW.matched) {
+    // Expense line with no amount: ask for it (one-shot, no draft state) instead
+    // of letting the booking pipeline mistake «سجّل مصروف كهرباء» for a booking.
+    if (!expenseW.args) {
+      const replyAr = "كم مبلغ المصروف بالريال؟ اكتبه هكذا مثلاً: «سجّل مصروف كهرباء ٣٠٠».";
+      await deps.appendMessages?.(wsKey, activeThreadId, [
+        { role: "user", safe_content: message },
+        { role: "assistant", safe_content: redactText(replyAr), tool_name: null },
+      ]);
+      return json(200, { ok: true, reply_ar: replyAr, tool_results: [], thread_id: activeThreadId, model_calls: 0, model: "expense-writer" });
+    }
+    const norm = normalizeToolCall({ name: "prepare_add_expense", arguments: expenseW.args });
+    const prepared = norm.ok
+      ? await executeTool(deps, { ...ctxBase, norm, raw: true, threadId: activeThreadId })
+      : { ok: false, error: "READ_FAILED", reason_ar: "تعذّر تجهيز المصروف. لم يتغيّر شيء." };
+    const replyAr = renderFallbackAr([prepared]);
+    await deps.appendMessages?.(wsKey, activeThreadId, [
+      { role: "user", safe_content: message },
+      { role: "assistant", safe_content: redactText(replyAr), tool_name: null },
+    ]);
+    return json(200, { ok: true, reply_ar: replyAr, tool_results: [prepared], thread_id: activeThreadId, model_calls: 0, model: "expense-writer" });
+  }
+
   // Deterministic Booking Agent pipeline: draft in server storage, facts
   // parsed from the raw message (dates/times/counts/amounts), real ids bound
   // only by the resolver. The model is NOT needed for the happy path.
@@ -873,6 +901,21 @@ async function executeTool(deps, { wsKey, pin, norm, activeMemories, secret, raw
     if (spec.prepares === "confirm_booking_create" && !boundArgs.booking_id && typeof deps.newId === "function") {
       boundArgs = { ...boundArgs, booking_id: deps.newId() };
     }
+    // Expense prepare: bind the id + default category→«أخرى» and date→today so
+    // the card, the stored payload, and the executor all agree (a model-led
+    // prepare may omit either). amount is coerced to a number here.
+    if (spec.prepares === "confirm_add_expense") {
+      const todayIso = riyadhToday(Date.now());
+      boundArgs = {
+        ...boundArgs,
+        amount: Number(boundArgs.amount),
+        category: String(boundArgs.category || "").trim() || "أخرى",
+        date: /^\d{4}-\d{2}-\d{2}$/.test(String(boundArgs.date || "")) ? String(boundArgs.date) : todayIso,
+      };
+      if (!boundArgs.expense_id && typeof deps.newId === "function") {
+        boundArgs = { ...boundArgs, expense_id: deps.newId() };
+      }
+    }
     const normalizedPayload = { tool: spec.prepares, args: boundArgs };
     const expectedRevision = spec.usesContract === "save_shared_workspace_v2"
       ? await deps.getWorkspaceRevision(wsKey)
@@ -899,7 +942,7 @@ async function executeTool(deps, { wsKey, pin, norm, activeMemories, secret, raw
       // (this response goes to the frontend confirm card, not into model context).
       confirmation_token: conf.token,
       summary_ar: buildSummaryAr(spec.prepares, boundArgs),
-      card: bookingCardFromArgs(spec.prepares, boundArgs),
+      card: bookingCardFromArgs(spec.prepares, boundArgs) || expenseCardFromArgs(spec.prepares, boundArgs),
       warnings: policy.warnings,
     });
   }
@@ -1126,9 +1169,59 @@ function buildSummaryAr(confirmTool, args) {
       return `تجهيز رابط دفع للحجز ${args.booking_id || "—"}${args.amount_halalas ? ` بمبلغ ${(Number(args.amount_halalas) / 100).toFixed(2)} ر.س` : ""}. اضغط تأكيد لإنشاء الرابط.`;
     case "confirm_outbound_message":
       return `تجهيز رسالة للعميل. اضغط تأكيد للإرسال/الجدولة.`;
+    case "confirm_add_expense": {
+      const amt = Number(args.amount);
+      return `تجهيز تسجيل مصروف «${args.category || "أخرى"}» بمبلغ ${Number.isFinite(amt) ? amt.toFixed(2) : "—"} ر.س بتاريخ ${formatDateDisplay(args.date || "") || "—"}${args.chalet_name ? `، الشاليه «${args.chalet_name}»` : ""}. اضغط تأكيد للحفظ.`;
+    }
     default:
       return "إجراء مُجهّز — اضغط تأكيد للمتابعة.";
   }
+}
+
+// Deterministic expense WRITE intent. Fires ONLY on an explicit write verb
+// («سجّل/أضف/دوّن/قيّد») AND the expense noun («مصروف/مصاريف») AND a positive
+// amount — so it is disjoint from expense READS («كم صرفت؟», no write verb) and
+// from bookings (no expense noun). Returns prepare_add_expense args, or null to
+// fall through (no amount → the model can ask; not an expense → the pipeline).
+const EXPENSE_WRITE_VERB_RE = /سجّ?ل|أضف|اضف|دوّ?ن|قيّ?د|أدخل|ادخل/;
+const EXPENSE_NOUN_RE = /مصروف|مصاريف/;
+// A QUESTION about expenses («كم مصروف سجّلت؟», «وش المصاريف اللي سجّلتها؟») is a
+// READ, not a record command — even though it carries a record-VERB (سجّلت) that
+// tripped the read-intent's writeish guard. Never answer it with a «كم المبلغ؟».
+const EXPENSE_QUESTION_RE = /[؟?]|(?:^|\s)(?:كم|وش|ما|ماذا|أي|أيّ|شنو|هل|متى|كيف|وين|أين|اعرض|أعرض|اعطني|أعطني)(?:\s|$)/;
+const EXPENSE_CATEGORY_WORDS = [
+  { re: /كهرب/, cat: "كهرباء" },
+  { re: /مياه|ماء/, cat: "ماء" },
+  { re: /صيان/, cat: "صيانة" },
+  { re: /مستلزم|أدوات|اغراض|أغراض/, cat: "مستلزمات" },
+  { re: /رات(?:ب|ة)|رواتب|أجور/, cat: "رواتب" },
+];
+function extractExpenseFacts(message) {
+  const raw = String(message || "");
+  const folded = foldDigits(raw);
+  // The amount is the first standalone integer (whole riyals). Amounts never
+  // carry decimals here; a stray year-like number is unlikely in an expense line.
+  const m = folded.match(/(?:^|[^\d])(\d{1,8})(?![\d])/);
+  const amount = m ? Number(m[1]) : null;
+  let category = "";
+  for (const c of EXPENSE_CATEGORY_WORDS) { if (c.re.test(raw)) { category = c.cat; break; } }
+  return { amount, category };
+}
+// Returns { matched, args }: matched=true for any expense-noun+write-verb line
+// (so it is NEVER mistaken for a booking, even though «سجّل» is also a booking
+// verb); args is the prepare_add_expense args when an amount is present, or null
+// when the owner must still be asked for the amount.
+function expenseWriteIntent(message) {
+  const raw = String(message || "");
+  if (!EXPENSE_WRITE_VERB_RE.test(raw) || !EXPENSE_NOUN_RE.test(raw)) return { matched: false };
+  // A question about expenses is a read, not a write — let it fall through to
+  // the model (or the G2 read) instead of prompting for an amount.
+  if (EXPENSE_QUESTION_RE.test(raw)) return { matched: false };
+  const facts = extractExpenseFacts(raw);
+  if (!(Number.isFinite(facts.amount) && facts.amount > 0)) return { matched: true, args: null };
+  const args = { amount: facts.amount };
+  if (facts.category) args.category = facts.category;
+  return { matched: true, args };
 }
 
 function deterministicReadIntent(message, todayIso) {
@@ -1460,6 +1553,21 @@ function bookingCardFromArgs(confirmTool, args) {
   }
 }
 
+// The confirmation card for a prepared expense — same {title, rows:[{k,v,ltr}]}
+// shape the frontend already renders for bookings. No PII (expenses carry none).
+function expenseCardFromArgs(confirmTool, args) {
+  if (confirmTool !== "confirm_add_expense") return undefined;
+  const amt = Number(args.amount);
+  const rows = [
+    { k: "النوع", v: String(args.category || "أخرى"), ltr: false },
+    { k: "المبلغ", v: (Number.isFinite(amt) ? amt : 0) + " ريال", ltr: false },
+    { k: "التاريخ", v: formatDateDisplay(String(args.date || "")) || "—", ltr: true },
+  ];
+  if (args.chalet_name) rows.push({ k: "الشاليه", v: String(args.chalet_name), ltr: false });
+  rows.push({ k: "ملاحظة", v: args.note ? String(args.note) : "لا توجد", ltr: false });
+  return { title: "مصروف جديد", rows };
+}
+
 // Map a confirm tool back to its prepare tool (the registry is the source of
 // truth; nothing is hardcoded).
 function prepareToolFor(confirmName) {
@@ -1506,7 +1614,7 @@ async function rotateLatestPending(deps, ctx, opts = {}) {
     confirm_tool: confirmTool,
     confirmation_token: re.token,
     summary_ar: buildSummaryAr(confirmTool, payload.args || {}),
-    card: bookingCardFromArgs(confirmTool, payload.args || {}),
+    card: bookingCardFromArgs(confirmTool, payload.args || {}) || expenseCardFromArgs(confirmTool, payload.args || {}),
     thread_id: row.thread_id || null,
   };
 }

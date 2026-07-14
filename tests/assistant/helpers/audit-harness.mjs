@@ -83,7 +83,11 @@ function makeDeps(doc) {
     async getWorkspaceDoc() { return { data: doc, updated_at: revId() }; },
     async saveWorkspaceV2(_k, _pin, dataObj, expectedRevision) {
       if (revId() !== expectedRevision) return { ok: false, error: "WORKSPACE_DATA_CONFLICT" };
-      doc.bookings = dataObj.bookings; // persist the reconstructed document
+      // Persist the reconstructed document. Production saves the WHOLE doc, so
+      // mirror that for every mutable collection the executors touch (bookings
+      // AND expenses) — otherwise an expense write can't be read back/verified.
+      if (Array.isArray(dataObj.bookings)) doc.bookings = dataObj.bookings;
+      if (Array.isArray(dataObj.expenses)) doc.expenses = dataObj.expenses;
       rev += 1;
       return { ok: true, updated_at: revId(), data: doc };
     },
