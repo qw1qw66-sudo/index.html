@@ -23,6 +23,7 @@ import { riyadhToday, addDays, availablePeriodsOn, isSlotAvailable } from "../_s
 import { chaletCatalog, resolveBookingCreateArgs as resolveBookingCreateSelection, resolveChaletReference } from "../_shared/assistant/booking-resolution.mjs";
 import { bookingRowsForList, nonDeletedBookingRows, bookingsSummary, monthRangeIso } from "../_shared/assistant/booking-reads.mjs";
 import { expenseSummary, netProfit, chaletProfitability, compareMonths, topCustomers, businessOverview, prevMonthKey } from "../_shared/assistant/analytics.mjs";
+import { suggestedPrice } from "../_shared/assistant/booking-planner.mjs";
 
 // deno-lint-ignore no-explicit-any
 declare const Deno: any;
@@ -606,7 +607,7 @@ function readFromDoc(name: string, args: Record<string, unknown>, doc: { chalets
         for (const chalet of selected) {
           const cid = String(chalet.id || "");
           for (const p of ((chalet.periods ?? []) as Array<Record<string, unknown>>).filter((x) => x.active !== false)) {
-            if (isSlotAvailable(doc as never, cid, dt, p)) out.push({ chalet_id: cid, chalet_name: chalet.name, date: dt, period_id: p.id, period_label: p.label });
+            if (isSlotAvailable(doc as never, cid, dt, p)) out.push({ chalet_id: cid, chalet_name: chalet.name, date: dt, period_id: p.id, period_label: p.label, price: suggestedPrice(p, dt) });
           }
         }
       }

@@ -5,6 +5,7 @@
 
 import { availabilityCheck, availabilityFailureAr, isPeriodBookable, normalizeTimeHHmm } from "./availability.mjs";
 import { foldDigits, parseTimeExpression } from "./nl-normalize.mjs";
+import { suggestedPrice } from "./booking-planner.mjs";
 
 const ARABIC_MARKS = /[\u0610-\u061a\u064b-\u065f\u0670\u06d6-\u06ed\u0640]/g;
 // «شالية» (taa-marbuta) is how owners actually type it on phones — it must
@@ -354,6 +355,11 @@ export function resolveBookingCreateArgs(doc, args = {}) {
   }
   return {
     ok: true,
+    // The card price (weekday/weekend) for the resolved period+date, or null
+    // when the period has no price set. Returned ALONGSIDE args (not merged into
+    // them) so callers may enforce card pricing on a MODEL-led prepare without
+    // affecting the deterministic pipeline, which sets its own accepted total.
+    suggested_price: date ? suggestedPrice(periodResult.period, date) : null,
     args: {
       ...args,
       chalet_id: String(chaletResult.chalet.id || ""),

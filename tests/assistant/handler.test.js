@@ -25,7 +25,7 @@ function makeDeps({ model, workspaces = { [WS]: { pin: "123456", revision: "2026
     async appendMessages() {},
     async getWorkspaceRevision(k) { return workspaces[k]?.revision ?? null; },
     async runReadTool(_k, name, args) { return { name, args, sample: true }; },
-    async resolveBookingCreateArgs(_k, args) { return resolver ? resolver(args) : { ok: true, args }; },
+    async resolveBookingCreateArgs(_k, args) { return resolver ? resolver(args) : { ok: true, args, suggested_price: Number(args.total) || 500 }; },
     async prepareSensitive(_k, spec) {
       const id = "act-" + (actions.size + 1);
       actions.set(id, { id, ...spec, workspace_key: _k, status: "prepared", confirmation_used_at: null });
@@ -108,7 +108,7 @@ describe("assistant handler: safety rules", () => {
   it("a booking named «تولوم» is bound to authoritative ids before confirmation", async () => {
     const deps = makeDeps({
       model: { ok: true, reply: "أجهّز الحجز", toolCalls: [{ name: "prepare_booking_create", arguments: { customer_name: "علي", chalet_name: "تولوم", period_label: "المسائية", booking_date: "2099-06-01", guests: 2, total: 400 } }] },
-      resolver: (args) => ({ ok: true, args: { ...args, chalet_id: "real-tulum", chalet_name: "شاليه تولوم", period_id: "real-evening", period_label: "مسائي" } }),
+      resolver: (args) => ({ ok: true, suggested_price: Number(args.total) || 400, args: { ...args, chalet_id: "real-tulum", chalet_name: "شاليه تولوم", period_id: "real-evening", period_label: "مسائي" } }),
     });
     const b = await (await handleAssistant(chat({ workspace_key: WS, access_pin: "123456", message: "جهز حجز في تولوم" }), deps)).json();
     const prep = b.tool_results[0];

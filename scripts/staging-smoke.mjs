@@ -303,6 +303,24 @@ async function main() {
     record("assistant_agentic_analytical_answer", ok, detail);
   }
 
+  // 8b2. G3 — a DELEGATED booking («احجز أي شاليه فاضي بكرة») has no concrete
+  // chalet for the deterministic planner, so it YIELDS to the model, which reads
+  // availability and leads. Proof it reaches the model (model_calls>=1) with a
+  // clean, non-empty Arabic reply and no leak. Nothing is executed (owner must
+  // confirm), so this is safe to run against staging.
+  {
+    let ok = false, detail = "";
+    for (let attempt = 1; attempt <= 3 && !ok; attempt++) {
+      const r = await assistant({ message: "احجز أي شاليه فاضي بكرة" });
+      const b = r.json || {};
+      if (r.status !== 200 || b.ok !== true) { detail = r.status + ":" + (b.error || "NO_OK"); continue; }
+      const answered = typeof b.reply_ar === "string" && b.reply_ar.length > 0 && b.model_calls >= 1;
+      if (answered && !leaks(r.text)) { ok = true; detail = "model_calls=" + b.model_calls; }
+      else detail = `answered=${answered},clean=${!leaks(r.text)},mc=${b.model_calls}`;
+    }
+    record("assistant_g3_delegated_booking_leads", ok, detail);
+  }
+
   // 8. Server-side thread persistence (message insert already gates the 200).
   {
     const list = await assistant({ thread_action: "list" });
