@@ -5,7 +5,7 @@ import { CHALET_SYSTEM_PROMPT, STRICT_JSON_INSTRUCTION } from "../../supabase/fu
 // OPT-IN real DeepSeek smoke test. Runs ONLY when DEEPSEEK_API_KEY is present
 // in the environment (never committed). Otherwise it is explicitly SKIPPED —
 // the normal suite is not marked failed, and we do NOT claim the real API was
-// tested. Model/base come from env (default deepseek-v4-flash).
+// tested. Model/base come from env (default deepseek-v4-pro).
 //
 // Enable locally with:
 //   DEEPSEEK_API_KEY=sk-... npx vitest run tests/assistant/deepseek-smoke.test.js

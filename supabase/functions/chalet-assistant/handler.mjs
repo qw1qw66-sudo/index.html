@@ -42,17 +42,30 @@ import {
 } from "../_shared/assistant/booking-planner.mjs";
 import { monthRangeIso } from "../_shared/assistant/booking-reads.mjs";
 
-// The model gets at most TWO calls per turn (request tools -> ground the reply
-// on the tool results) and may request at most this many tools per turn.
+// The model runs a bounded AGENTIC loop: on each hop it may request read/prepare
+// tools, read their (redacted) results, then request MORE tools on the next hop —
+// so it can read → reason → read again (multi-step). MAX_MODEL_HOPS bounds the
+// model calls; MAX_TOTAL_TOOLS bounds total tool executions across the turn; and
+// MAX_TOOLS_PER_TURN bounds a single hop. A no-progress guard (a hop repeating its
+// previous tool request) ends the loop so a stuck model can't spin.
 const MAX_TOOLS_PER_TURN = 5;
-// The grounding (second) call returns the FINAL answer only — never planning
-// text, never internal tool names, never error codes.
-const SECOND_STAGE_INSTRUCTION =
-  "هذه نتائج الأدوات. أعطِ الآن الإجابة النهائية فقط بالعربية الطبيعية المختصرة. " +
-  "لا تذكر أسماء الأدوات الداخلية، ولا أكواد الأخطاء، ولا JSON. " +
-  "لا تكرّر عبارات مثل «جاري» أو «سأجلب» بعد توفّر النتائج. " +
-  "أجب بالأرقام والأسماء الواردة في النتائج تحديدًا، ولا تُجب بعبارة عامة مثل «تمام» أبدًا. " +
-  "لا تدّعِ إتمام أي حفظ أو إجراء ما لم تُعِده الأداة كإجراء مكتمل.";
+const MAX_MODEL_HOPS = 4;
+const MAX_TOTAL_TOOLS = 8;
+// Standing guidance for every hop. Multi-step tool use is explicit, and the final
+// answer MAY analyze / compare / advise — a deliberate loosening of the old
+// "restate the numbers only" flatten, so the assistant can be genuinely insightful.
+// The hard safety rails stay: real tool data only (no invented facts), no internal
+// tool names / error codes / JSON in the reply, and NEVER a fake "done/paid/booked"
+// unless a tool returned a completed action.
+const AGENTIC_GUIDANCE =
+  "يمكنك استدعاء الأدوات على عدة خطوات: اطلب أداة، اقرأ نتيجتها، ثم اطلب أداة أخرى إن لزم، حتى تكتمل المعلومة. " +
+  "حين تكفيك النتائج، أعطِ الإجابة النهائية بالعربية الطبيعية المختصرة — ويمكنك التحليل والمقارنة وتقديم نصيحة أو ملاحظة مفيدة إن دعمتها النتائج. " +
+  "اعتمد فقط على الأرقام والأسماء الواردة من الأدوات؛ لا تخترع بيانات غير موجودة. " +
+  "لا تذكر أسماء الأدوات الداخلية ولا أكواد الأخطاء ولا JSON خارج ردّك، " +
+  "ولا تدّعِ إتمام حفظ أو دفع أو إجراء ما لم تُعِده الأداة كإجراء مكتمل فعلاً.";
+// Backstop when the hop cap is hit while the model still wants tools.
+const FORCE_FINAL_INSTRUCTION =
+  "توقّف عن طلب الأدوات وأعطِ الآن أفضل إجابة نهائية ممكنة بالعربية من النتائج المتوفرة، دون ادّعاء أي إجراء لم يكتمل.";
 
 // EVERY failed body that leaves this handler carries a safe public_code +
 // actionable Arabic reason (never a bare internal code) — enforced at the one
@@ -362,101 +375,124 @@ export async function handleAssistant(req, deps) {
   const systemPrompt = CHALET_SYSTEM_PROMPT + "\n\n" + buildToolCatalogText() + "\n\n" + STRICT_JSON_INSTRUCTION + "\n\n" + BOOKING_FIELDS_INSTRUCTION +
     (memoryBlock ? "\n\n" + memoryBlock : "");
 
-  // Stage 1: the model may request tools. Transient provider failures are
-  // retried (3 attempts) before giving up.
-  const first = await callModelWithRetry(deps, { systemPrompt, history }, 3);
-  if (!first.ok) {
-    // Fail closed: no action, clear Arabic error.
-    return json(200, {
-      ok: false,
-      assistant_unavailable: true,
-      error: first.error,
-      reply_ar: "تعذّر الوصول إلى المساعد الذكي حالياً. لم يتم تنفيذ أي إجراء.",
-    });
-  }
+  // Agentic loop: each hop the model may request read/prepare tools; we execute
+  // them (sensitive tools NEVER — owner-only), feed the REDACTED results back,
+  // and let the model request more on the next hop — read → reason → read again.
+  // Bounds: MAX_MODEL_HOPS model calls, MAX_TOTAL_TOOLS tool runs, and a
+  // no-progress guard (a hop repeating its last request) end the loop so a stuck
+  // model can't spin. The final answer is the reply of the hop that stops asking.
+  const loopSystem = systemPrompt + "\n\n" + AGENTIC_GUIDANCE;
+  const results = [];        // ALL tool results across hops (returned + fallback)
+  let convo = history;       // running conversation, grown with each hop
+  let replyAr = "";
+  let usage;
+  let modelName;
+  let modelCalls = 0;
+  let toolsUsed = 0;
+  let prevSig = null;        // previous hop's requested-tool signature (no-progress)
+  const executedSigs = new Set(); // per-TURN set of (name+args) calls already run
+  let finalized = false;
 
-  // The model may have EXTRACTED booking wording (never ids). Merge it into
-  // the server draft silently so the next deterministic turn knows it — the
-  // resolver still does all id binding.
-  if (first.bookingFields && activeThreadId && typeof deps.getActiveDraft === "function" && typeof deps.upsertDraft === "function") {
-    try {
-      const bf = first.bookingFields;
-      const row0 = await deps.getActiveDraft(wsKey, activeThreadId);
-      // Model output goes in as modelFields ONLY: the planner's merge accepts
-      // customer_name/notes at most (length-capped) — never guests, totals,
-      // dates or times, which the model must not invent (§5, live bug A).
-      const modelIncoming = {
-        fields: {},
-        modelFields: {
-          // Redact BEFORE merge, exactly like chalet_text/period_text below: a
-          // phone the model echoes into customer_name/notes must never enter the
-          // draft/card unmasked (C-P9-3).
-          ...(typeof bf.customer_name === "string" && bf.customer_name ? { customer_name: redactText(bf.customer_name) } : {}),
-          ...(typeof bf.notes === "string" && bf.notes ? { notes: redactText(bf.notes) } : {}),
-        },
-        private: {},
-      };
-      let merged = mergeDraft(row0 ? row0.fields || {} : {}, modelIncoming);
-      if (!merged.chalet_id && typeof bf.chalet_text === "string" && bf.chalet_text) merged.chalet_text = redactText(bf.chalet_text).slice(0, 120);
-      if (!merged.period_id && typeof bf.period_text === "string" && bf.period_text) merged.period_text = merged.period_text || redactText(bf.period_text).slice(0, 120);
-      if ((row0 && row0.fields) || Object.keys(modelIncoming.modelFields).length || merged.chalet_text || merged.period_text) {
-        await deps.upsertDraft(wsKey, activeThreadId, merged, null);
+  for (let hop = 1; hop <= MAX_MODEL_HOPS; hop++) {
+    const resp = await callModelWithRetry(deps, { systemPrompt: loopSystem, history: convo }, hop === 1 ? 3 : 2);
+    modelCalls++;
+    if (!resp.ok) {
+      if (hop === 1) {
+        // Fail closed on the FIRST call: no action, clear Arabic error.
+        return json(200, {
+          ok: false,
+          assistant_unavailable: true,
+          error: resp.error,
+          reply_ar: "تعذّر الوصول إلى المساعد الذكي حالياً. لم يتم تنفيذ أي إجراء.",
+        });
       }
-    } catch { /* extraction is best-effort; the chat turn continues */ }
-  }
-
-  // Execute the requested tools (read + prepare only; bounded per turn).
-  const requested = Array.isArray(first.toolCalls) ? first.toolCalls.slice(0, MAX_TOOLS_PER_TURN) : [];
-  const results = [];
-  for (const call of requested) {
-    const norm = normalizeToolCall(withPrivateBookingFacts(call, privateFacts));
-    if (!norm.ok) {
-      // Every failure the owner can see MUST carry a safe Arabic reason —
-      // a bare error code renders as a useless generic apology downstream.
-      results.push({
-        requested: call?.name ?? null,
-        ok: false,
-        error: norm.error,
-        reason_ar: "لم أفهم هذا الطلب كأمر مدعوم. جرّب صياغة أوضح، مثل: «جهّز حجز لشاليه سكاي غداً».",
-      });
-      continue; // unknown/invalid tool from the model is NEVER executed
+      // A later hop failed transiently — ground on whatever results we have.
+      replyAr = results.length ? renderFallbackAr(results) : "تعذّر إكمال المعالجة الآن.";
+      finalized = true;
+      break;
     }
-    if (SENSITIVE_TOOLS.has(norm.name)) {
-      // The model can never run ANY sensitive action (a confirmation) — only
-      // the owner via a direct invoke_tool.
-      results.push({
-        tool: norm.name,
-        ok: false,
-        error: "CONFIRMATION_REQUIRES_OWNER",
-        reason_ar: "التنفيذ الحسّاس لا يتم من المحادثة مباشرة: اطلب مني «جهّز الحجز» وسأعرض لك بطاقة تأكيد تضغطها بنفسك، ولن يُحفظ شيء قبلها.",
-      });
-      continue;
-    }
-    results.push(await executeTool(deps, { ...ctxBase, norm, raw: true }));
-  }
+    usage = resp.usage;
+    modelName = resp.model;
 
-  // Stage 2: if tools ran, ground a final reply on their (token-stripped)
-  // results. Never more than two model calls. If the second call fails, a
-  // deterministic Arabic renderer still gives the owner grounded output.
-  let replyAr = first.reply || "";
-  let usage = first.usage;
-  let modelName = first.model;
-  let modelCalls = 1;
-  if (results.length) {
-    modelCalls = 2;
-    const grounded = history.concat([
-      { role: "assistant", content: first.reply || "" },
-      { role: "tool", content: JSON.stringify(sanitizeResultsForModel(results)).slice(0, 6000) },
+    // The model may have EXTRACTED booking wording (never ids) — merge it into
+    // the server draft (best-effort) so the deterministic resolver can bind ids.
+    await mergeModelBookingFields(deps, { wsKey, activeThreadId, bookingFields: resp.bookingFields });
+
+    const wants = Array.isArray(resp.toolCalls) ? resp.toolCalls : [];
+    const sig = toolSignature(wants);
+    const noProgress = sig !== null && sig === prevSig; // model repeated its last ask
+    const wantsNewTools = wants.length > 0 && !noProgress;
+    if (!wantsNewTools) {
+      // The model is done (no tools) or stuck (repeated its last ask): its reply —
+      // generated AFTER seeing any prior results — is the final answer.
+      replyAr = resp.reply || (results.length ? renderFallbackAr(results) : "");
+      finalized = true;
+      break;
+    }
+    if (hop >= MAX_MODEL_HOPS || toolsUsed >= MAX_TOTAL_TOOLS) {
+      // The model still wants tools but we're capped — stop and FORCE a clean
+      // final answer below rather than surfacing this hop's planning text.
+      break; // finalized stays false → the forced-final pass runs
+    }
+
+    // Execute this hop's tools (read + prepare only; bounded), feed back, continue.
+    prevSig = sig;
+    const budget = Math.min(MAX_TOOLS_PER_TURN, MAX_TOTAL_TOOLS - toolsUsed);
+    const hopResults = [];
+    for (const call of wants.slice(0, budget)) {
+      const norm = normalizeToolCall(withPrivateBookingFacts(call, privateFacts));
+      if (!norm.ok) {
+        // Every failure the owner can see MUST carry a safe Arabic reason.
+        hopResults.push({
+          requested: call?.name ?? null,
+          ok: false,
+          error: norm.error,
+          reason_ar: "لم أفهم هذا الطلب كأمر مدعوم. جرّب صياغة أوضح، مثل: «جهّز حجز لشاليه سكاي غداً».",
+        });
+        continue; // unknown/invalid tool from the model is NEVER executed
+      }
+      if (SENSITIVE_TOOLS.has(norm.name)) {
+        // The model can never run ANY sensitive action (a confirmation) — only
+        // the owner via a direct invoke_tool.
+        hopResults.push({
+          tool: norm.name,
+          ok: false,
+          error: "CONFIRMATION_REQUIRES_OWNER",
+          reason_ar: "التنفيذ الحسّاس لا يتم من المحادثة مباشرة: اطلب مني «جهّز الحجز» وسأعرض لك بطاقة تأكيد تضغطها بنفسك، ولن يُحفظ شيء قبلها.",
+        });
+        continue;
+      }
+      // Per-turn de-dup on the NORMALIZED (name+args) call: an identical tool
+      // request is never executed twice in a turn — whether repeated within a
+      // hop, across non-consecutive hops, or in a changed batch. This is what
+      // actually prevents a repeated prepare_booking_create from arming a SECOND
+      // confirmation card (the no-progress guard only ends the loop; it does not
+      // dedup executions). A re-requested read is likewise skipped — its result
+      // is already in the conversation from the first run.
+      const callSig = toolSignature([{ name: norm.name, arguments: norm.args }]);
+      if (callSig !== null && executedSigs.has(callSig)) continue;
+      if (callSig !== null) executedSigs.add(callSig);
+      hopResults.push(await executeTool(deps, { ...ctxBase, norm, raw: true }));
+    }
+    toolsUsed += hopResults.length;
+    results.push(...hopResults);
+    convo = convo.concat([
+      { role: "assistant", content: resp.reply || "" },
+      { role: "tool", content: JSON.stringify(sanitizeResultsForModel(hopResults)).slice(0, 6000) },
     ]);
-    const second = await callModelWithRetry(deps, { systemPrompt: systemPrompt + "\n\n" + SECOND_STAGE_INSTRUCTION, history: grounded }, 2);
-    if (second && second.ok && second.reply) {
-      replyAr = second.reply;
-      usage = second.usage;
-      modelName = second.model;
+  }
+
+  if (!finalized) {
+    // Hop cap reached while the model still wanted tools — force a final answer
+    // grounded on the accumulated results (no further tool execution).
+    const last = await callModelWithRetry(deps, { systemPrompt: loopSystem + "\n\n" + FORCE_FINAL_INSTRUCTION, history: convo }, 2);
+    modelCalls++;
+    if (last && last.ok && last.reply) {
+      replyAr = last.reply;
+      usage = last.usage;
+      modelName = last.model;
     } else {
-      // Deterministic safety net — describes the ACTUAL returned data. It does
-      // NOT reuse the stage-1 planning reply (first.reply).
-      replyAr = renderFallbackAr(results);
+      replyAr = results.length ? renderFallbackAr(results) : "تعذّر إكمال المعالجة الآن.";
     }
   }
 
@@ -474,6 +510,49 @@ export async function handleAssistant(req, deps) {
     model: modelName,
     model_calls: modelCalls,
   });
+}
+
+// Stable signature of a tool request (name + args, order-independent); null for
+// an empty request. Used two ways: (1) the no-progress guard — two CONSECUTIVE
+// hops with the same signature mean the model isn't progressing, so the loop
+// stops instead of spinning; (2) per-call de-dup (executedSigs) — an identical
+// (name+args) call is executed at most once PER TURN, so a repeated prepare can
+// never arm a second confirmation card.
+function toolSignature(calls) {
+  if (!Array.isArray(calls) || calls.length === 0) return null;
+  const norm = calls
+    .map((c) => ({ n: String(c?.name || ""), a: c?.arguments ?? {} }))
+    .sort((x, y) => (x.n < y.n ? -1 : x.n > y.n ? 1 : 0));
+  try { return JSON.stringify(norm); } catch { return null; }
+}
+
+// Merge booking WORDING the model extracted (customer_name/notes only, redacted;
+// never ids/dates/guests/totals — the resolver binds those) into the server
+// draft, best-effort. Factored out of the agentic loop so it can run each hop.
+async function mergeModelBookingFields(deps, { wsKey, activeThreadId, bookingFields }) {
+  if (!bookingFields || !activeThreadId || typeof deps.getActiveDraft !== "function" || typeof deps.upsertDraft !== "function") return;
+  try {
+    const bf = bookingFields;
+    const row0 = await deps.getActiveDraft(wsKey, activeThreadId);
+    // Model output goes in as modelFields ONLY: the planner's merge accepts
+    // customer_name/notes at most (length-capped) — never guests, totals, dates
+    // or times, which the model must not invent (§5, live bug A). Redact BEFORE
+    // merge so a phone echoed into a name/note never enters the draft unmasked.
+    const modelIncoming = {
+      fields: {},
+      modelFields: {
+        ...(typeof bf.customer_name === "string" && bf.customer_name ? { customer_name: redactText(bf.customer_name) } : {}),
+        ...(typeof bf.notes === "string" && bf.notes ? { notes: redactText(bf.notes) } : {}),
+      },
+      private: {},
+    };
+    let merged = mergeDraft(row0 ? row0.fields || {} : {}, modelIncoming);
+    if (!merged.chalet_id && typeof bf.chalet_text === "string" && bf.chalet_text) merged.chalet_text = redactText(bf.chalet_text).slice(0, 120);
+    if (!merged.period_id && typeof bf.period_text === "string" && bf.period_text) merged.period_text = merged.period_text || redactText(bf.period_text).slice(0, 120);
+    if ((row0 && row0.fields) || Object.keys(modelIncoming.modelFields).length || merged.chalet_text || merged.period_text) {
+      await deps.upsertDraft(wsKey, activeThreadId, merged, null);
+    }
+  } catch { /* extraction is best-effort; the chat turn continues */ }
 }
 
 // Strip anything the model must never see (confirmation tokens above all) from

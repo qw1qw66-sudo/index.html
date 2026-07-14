@@ -276,12 +276,31 @@ async function main() {
       threadId = b.thread_id || threadId;
       const today = (b.tool_results || []).find((t) => t.tool === "get_today_bookings" && t.ok);
       const count = today && today.result && Array.isArray(today.result.bookings) ? today.result.bookings.length : -1;
-      grounded = Boolean(today) && b.model_calls === 2 && typeof b.reply_ar === "string" && b.reply_ar.length > 0;
+      // The agentic loop makes ≥2 model calls (request tool → ground/answer); a
+      // smarter model may chain one extra hop, so assert ≥2 (was exactly 2).
+      grounded = Boolean(today) && b.model_calls >= 2 && typeof b.reply_ar === "string" && b.reply_ar.length > 0;
       redactionOk = !leaks(r.text);
-      if (grounded && count === 1 && redactionOk) { ok = true; detail = "model_calls=2, bookings=1"; }
+      if (grounded && count === 1 && redactionOk) { ok = true; detail = "model_calls=" + b.model_calls + ", bookings=1"; }
       else detail = `grounded=${grounded},bookings=${count},clean=${redactionOk}`;
     }
     record("deepseek_real_grounded_read", ok, detail);
+  }
+
+  // 7b. G1 — the AGENTIC model path answers a free-form analytical question live
+  // on DeepSeek (the stronger default tier). A generic ask reaches the model
+  // (no deterministic intent), runs ≥1 model call, returns a non-empty grounded
+  // Arabic reply, and leaks nothing. Proves the loop + model upgrade end-to-end.
+  {
+    let ok = false, detail = "";
+    for (let attempt = 1; attempt <= 3 && !ok; attempt++) {
+      const r = await assistant({ message: "أعطني نظرة سريعة على وضع حجوزاتي ونصيحة مختصرة." });
+      const b = r.json || {};
+      if (r.status !== 200 || b.ok !== true) { detail = r.status + ":" + (b.error || "NO_OK"); continue; }
+      const answered = typeof b.reply_ar === "string" && b.reply_ar.length > 0 && b.model_calls >= 1;
+      if (answered && !leaks(r.text)) { ok = true; detail = "model_calls=" + b.model_calls; }
+      else detail = `answered=${answered},clean=${!leaks(r.text)},mc=${b.model_calls}`;
+    }
+    record("assistant_agentic_analytical_answer", ok, detail);
   }
 
   // 8. Server-side thread persistence (message insert already gates the 200).

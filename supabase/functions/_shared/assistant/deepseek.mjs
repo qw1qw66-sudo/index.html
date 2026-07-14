@@ -8,11 +8,14 @@
 // deepseek-reasoner are DEPRECATED 2026-07-24; current models are
 // deepseek-v4-flash / deepseek-v4-pro; base_url https://api.deepseek.com;
 // OpenAI-compatible chat completions. Model + base URL are env-configurable so
-// this does not hardcode an obsolete name; default is deepseek-v4-flash.
+// this does not hardcode an obsolete name. Default is the STRONGER deepseek-v4-pro
+// tier (the assistant runs an agentic multi-step loop and gives analytical
+// answers, so it defaults to the smarter model); set DEEPSEEK_MODEL=deepseek-v4-flash
+// to trade some capability for lower cost/latency.
 
 import { redactText } from "./redact.mjs";
 
-export const DEFAULT_MODEL = "deepseek-v4-flash";
+export const DEFAULT_MODEL = "deepseek-v4-pro";
 export const DEFAULT_BASE_URL = "https://api.deepseek.com";
 
 const MAX_HISTORY_MESSAGES = 20;
@@ -72,7 +75,10 @@ export async function callDeepSeek({ env, systemPrompt, history, fetchImpl }) {
     model: cfg.model,
     messages: [{ role: "system", content: systemPrompt }, ...sanitizeHistory(history)],
     temperature: 0.4,
-    max_tokens: 1200,
+    // Room for a genuinely analytical/advisory answer (comparisons, a short
+    // insight) rather than a one-line number readout. Each agentic hop is capped
+    // here; the loop bounds total hops.
+    max_tokens: 2000,
     response_format: { type: "json_object" },
     stream: false,
   };
