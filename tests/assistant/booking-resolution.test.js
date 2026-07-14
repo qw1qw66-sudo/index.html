@@ -58,6 +58,25 @@ describe("authoritative chalet/period name resolution", () => {
     });
   });
 
+  it("F2: bound args default an omitted guest count to 1 (model-led prepare)", () => {
+    // A model-led prepare_booking_create may never state guests. The bound args
+    // must carry guests=1 so the stored payload, the card, and the executor's
+    // idempotency check all agree — otherwise a crash-recovery re-dispatch
+    // compares saved-guests(1) against undefined and falsely reports a conflict.
+    const omitted = resolveBookingCreateArgs(workspaceDoc(), {
+      customer_name: "عميل تجربة", chalet_name: "تولوم", period_label: "مسائي",
+      booking_date: "2099-07-11", total: 500,
+    });
+    expect(omitted.ok).toBe(true);
+    expect(omitted.args.guests).toBe(1);
+    // A stated count is preserved untouched.
+    const stated = resolveBookingCreateArgs(workspaceDoc(), {
+      customer_name: "عميل تجربة", chalet_name: "تولوم", period_label: "مسائي",
+      booking_date: "2099-07-11", guests: 7, total: 500,
+    });
+    expect(stated.args.guests).toBe(7);
+  });
+
   it("fails closed and returns only real choices when the name is unknown", () => {
     const result = resolveBookingCreateArgs(workspaceDoc(), {
       customer_name: "عميل تجربة",

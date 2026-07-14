@@ -106,9 +106,9 @@ const DELEGATE_BOOKING_RE =
 // the customer phone is never invented (the server binds the real one).
 const BOOKING_LEAD_INSTRUCTION =
   "إذا طلب صاحب المكان أن ترتّب أو تختار له حجزاً (مثل «احجز أي شاليه فاضي» أو «دبّر لي شاليه مناسب»): " +
-  "اقرأ التوفّر عبر find_empty_dates، اختر فتحة مناسبة، ثم جهّز الحجز باستدعاء prepare_booking_create بالشاليه والتاريخ والفترة وعدد الضيوف. " +
+  "اقرأ التوفّر عبر find_empty_dates، اختر فتحة مناسبة، ثم جهّز الحجز باستدعاء prepare_booking_create بالشاليه والتاريخ والفترة. " +
   "المبلغ يحدّده النظام تلقائياً من بطاقة أسعار الشاليه — لا تخترع سعراً ولا تحتاج أن تضعه؛ وإن لم يكن للفترة سعر محفوظ فسيطلب منك النظام سؤال صاحب المكان. " +
-  "إن لم تعرف عدد الضيوف فاسأل عنه بإيجاز قبل التجهيز. لا تخترع رقم جوال أبداً. " +
+  "عدد الضيوف اختياري — إن لم يذكره صاحب المكان فلا تسأل عنه وأكمل التجهيز. لا تخترع رقم جوال أبداً. " +
   "أنت تُجهّز فقط ولا تنفّذ — التأكيد النهائي بزرّ صاحب المكان.";
 
 // Transient model failures (timeout, unreachable, rate limit, 5xx, stochastic
@@ -1441,7 +1441,9 @@ function bookingCardFromArgs(confirmTool, args) {
     period_label: args.period_label,
     canonical_start: args.period_start,
     canonical_end: args.period_end,
-    guests: args.guests,
+    // Guests is optional: a card built from args that never stated it (e.g. a
+    // model-led prepare) still shows 1, matching the saved booking's default.
+    guests: Number.isInteger(args.guests) && args.guests > 0 ? args.guests : 1,
     total: args.total,
     total_source: args.total_is_free ? "free" : "explicit",
     // Render «المدفوع» on the card when a deposit is present (buildCardData
@@ -2434,7 +2436,10 @@ async function runBookingPipeline(deps, ctx, { threadId, rawMessage, message, pr
     chalet_id: fields.chalet_id,
     booking_date: fields.booking_date,
     period_id: fields.period_id,
-    guests: fields.guests,
+    // Guests is OPTIONAL by owner preference: when the owner never stated it,
+    // the card and the saved booking default to 1 (never 0 / undefined).
+    guests:
+      Number.isInteger(fields.guests) && fields.guests > 0 ? fields.guests : 1,
     total: fields.total,
     total_is_free: fields.total_source === "free" ? true : undefined,
     // The owner's stated deposit («عربون N») was captured by the planner into

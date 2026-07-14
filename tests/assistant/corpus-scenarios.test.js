@@ -157,12 +157,14 @@ describe("guests", () => {
     expect(r.fields.guests).toBe(exp);
   });
 
-  it("«عدد 3 ليالي» is a nights count, NOT guests (stays asked)", async () => {
+  it("«عدد 3 ليالي» is a nights count, NOT guests (never fabricated)", async () => {
     const c = convo();
     const r = await c.say(OPENER + "عدد 3 ليالي");
     expect(r.model_calls).toBe(0);
+    // «3 ليالي» is a nights count — it must NEVER be parsed as guests=3. (The
+    // rest of the OPENER is complete and guests is optional, so the card is
+    // prepared with guests defaulting to 1, never the 3 from «ليالي».)
     expect(r.fields.guests).toBeUndefined();
-    expect(r.fields.pending_q.kind).toBe("guests");
   });
 
   it("«من سبعة لخمسة» never fabricates a headcount (explicit 4 survives)", async () => {

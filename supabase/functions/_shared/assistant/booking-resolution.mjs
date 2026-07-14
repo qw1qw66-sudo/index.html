@@ -362,6 +362,15 @@ export function resolveBookingCreateArgs(doc, args = {}) {
     suggested_price: date ? suggestedPrice(periodResult.period, date) : null,
     args: {
       ...args,
+      // Guests is optional: normalize an omitted/invalid count to 1 in the BOUND
+      // args (a model-led prepare may never state it). This keeps the stored
+      // payload, the card, and the executor idempotency check all agreeing on
+      // the same value — otherwise a crash-recovery re-dispatch compares
+      // saved-guests(1) against undefined and falsely reports BOOKING_ID_CONFLICT.
+      guests:
+        Number.isInteger(Number(args.guests)) && Number(args.guests) > 0
+          ? Number(args.guests)
+          : 1,
       chalet_id: String(chaletResult.chalet.id || ""),
       chalet_name: String(chaletResult.chalet.name || ""),
       period_id: String(periodResult.period.id || ""),

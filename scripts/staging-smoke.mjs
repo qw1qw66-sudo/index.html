@@ -230,7 +230,8 @@ async function main() {
     const b1 = r1.json || {};
     const th = b1.thread_id;
     const reply1 = String(b1.reply_ar || "");
-    const combined = /باقي فقط:/.test(reply1) && /عدد الضيوف/.test(reply1) && /اسم العميل/.test(reply1) && /رسالة واحدة/.test(reply1);
+    // guests is OPTIONAL now, so it is NOT one of the combined-question items.
+    const combined = /باقي فقط:/.test(reply1) && !/عدد الضيوف/.test(reply1) && /اسم العميل/.test(reply1) && /رسالة واحدة/.test(reply1);
     const zero1 = b1.model_calls === 0;
     const r2 = th ? await assistant({ message: "٤ ضيوف باسم سالم جوال 0500000012 والسعر 450", thread_id: th }) : { json: {} };
     const b2 = r2.json || {};
@@ -245,6 +246,21 @@ async function main() {
       zero1 && zero2 && combined && Boolean(prepared) && completed && !leak,
       `combined=${combined},completed=${completed},zero=${zero1 && zero2}` + (leak ? ",LEAK" : ""),
     );
+  }
+
+  // 6f. F2 (LIVE): guests is OPTIONAL — a booking that never states a guest
+  // count completes and prepares with guests defaulting to 1, and the owner is
+  // never asked «كم عدد الضيوف». Deterministic (model_calls=0). Prepare-only.
+  {
+    const r = await assistant({ message: "احجز تولوم بكرة بالليل بمئة ريال باسم علي تجربة" });
+    const b = r.json || {};
+    const prepared = (b.tool_results || []).find((x) => x.kind === "prepared_action" && x.ok);
+    const rows = prepared && prepared.card && Array.isArray(prepared.card.rows)
+      ? Object.fromEntries(prepared.card.rows.map((x) => [x.k, x.v])) : {};
+    const noGuestsQuestion = !/كم عدد الضيوف/.test(String(b.reply_ar || ""));
+    const guestsDefaulted = rows["الضيوف"] === "1";
+    const ok = b.model_calls === 0 && Boolean(prepared) && guestsDefaulted && noGuestsQuestion && !leaks(r.text);
+    record("assistant_guests_optional_defaults_one", ok, `mc=${b.model_calls},guests=${rows["الضيوف"]},prepared=${Boolean(prepared)}`);
   }
 
   // 6. setup-status with valid auth: booleans only, staging env, DeepSeek ready.

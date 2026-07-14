@@ -66,7 +66,9 @@ describe('extractFacts + mergeDraft: multi-turn accumulation', () => {
     draft = { ...draft, chalet_id: 'c1', chalet_name: 'سكاي' };
     let prev = missingFields(draft);
     expect(prev).not.toContain('chalet');
-    expect(prev).toEqual(expect.arrayContaining(['booking_date', 'period', 'guests', 'total', 'customer_name']));
+    // guests is OPTIONAL (defaults to 1) — never part of the missing gate.
+    expect(prev).not.toContain('guests');
+    expect(prev).toEqual(expect.arrayContaining(['booking_date', 'period', 'total', 'customer_name']));
 
     // Turn 2: «بكرة بالليل» -> tomorrow; period bound externally by resolver.
     draft = mergeDraft(draft, extractFacts('بكرة بالليل', TODAY));
@@ -79,14 +81,15 @@ describe('extractFacts + mergeDraft: multi-turn accumulation', () => {
     expect(m.length).toBeLessThan(prev.length);
     prev = m;
 
-    // Turn 3: bare Arabic number word -> guests only, never a total.
+    // Turn 3: bare Arabic number word -> still PARSED as guests, never a total.
+    // guests is optional, so the missing set does not change (it never grows).
     draft = mergeDraft(draft, extractFacts('أربعة', TODAY));
     expect(draft.guests).toBe(4);
     expect(draft.total).toBeUndefined();
     m = missingFields(draft);
     expect(m).not.toContain('guests');
     expect(isSubset(m, prev)).toBe(true);
-    expect(m.length).toBeLessThan(prev.length);
+    expect(m).toEqual(prev); // an optional field never shrinks the gate
 
     // Turn 4: explicit amount + customer name in one message.
     draft = mergeDraft(draft, extractFacts('500 ريال، العميل علي تجربة', TODAY));
@@ -171,15 +174,15 @@ describe('phone handling', () => {
 });
 
 describe('missingFields never defaults', () => {
-  it('an empty draft is missing everything, including guests and total', () => {
+  it('an empty draft is missing every required field — but NOT the optional guests', () => {
     const m = missingFields({});
-    expect(m).toContain('guests');
+    expect(m).not.toContain('guests'); // guests is optional (defaults to 1)
     expect(m).toContain('total');
     expect(m).toContain('chalet');
     expect(m).toContain('booking_date');
     expect(m).toContain('period');
     expect(m).toContain('customer_name');
-    expect(m.length).toBe(6);
+    expect(m.length).toBe(5);
   });
 
   it('a merely SUGGESTED price still counts as a missing total', () => {
@@ -265,9 +268,12 @@ describe('nextQuestionAr', () => {
     expect(q(d1)).toContain('تاريخ');
     const d2 = { ...d1, booking_date: '2026-07-13' };
     expect(q(d2)).toContain('فترة');
+    // guests is optional (defaults to 1) — once the core is bound the next ask
+    // is the price/customer tail, never عدد الضيوف.
     const d3 = { ...d2, period_id: 'p1', canonical_start: '19:00', canonical_end: '05:00' };
-    expect(q(d3)).toContain('الضيوف');
-    const d4 = { ...d3, guests: 4, total: 500, total_source: 'explicit' };
+    expect(q(d3)).not.toContain('الضيوف');
+    expect(q(d3)).toContain('السعر');
+    const d4 = { ...d3, total: 500, total_source: 'explicit' };
     expect(q(d4)).toContain('باسم من');
     const done = { ...d4, customer_name: 'علي' };
     expect(nextQuestionAr(done, missingFields(done))).toBe('');
@@ -308,7 +314,7 @@ describe('nextQuestionAr', () => {
     };
     const q = nextQuestionAr(d, missingFields(d), { hasPhone: false });
     expect(q).toContain('باقي فقط:');
-    expect(q).toContain('عدد الضيوف');
+    expect(q).not.toContain('عدد الضيوف'); // guests is optional — never asked
     expect(q).toContain('اسم العميل');
     expect(q).toContain('رقم الجوال');
     expect(q).toContain('رسالة واحدة');
@@ -324,7 +330,7 @@ describe('nextQuestionAr', () => {
     };
     const q = nextQuestionAr(d, missingFields(d), { hasPhone: true });
     expect(q).toContain('باقي فقط:');
-    expect(q).toContain('عدد الضيوف');
+    expect(q).not.toContain('عدد الضيوف'); // guests is optional — never asked
     expect(q).toContain('اسم العميل');
     expect(q).not.toContain('رقم الجوال'); // phone already known
     expect(q).toContain('سعر النظام لهذه الفترة 600 ريال');
@@ -500,7 +506,9 @@ describe('date errors and model merging', () => {
     expect(draft.canonical_start).toBeUndefined();
     expect(draft.canonical_end).toBeUndefined();
     const missing = missingFields(draft);
-    expect(missing).toContain('guests');
+    // guests is optional so it is never in `missing`; the point here is that the
+    // model's volunteered total/date are IGNORED and stay missing.
+    expect(missing).not.toContain('guests');
     expect(missing).toContain('total');
     expect(missing).toContain('booking_date');
   });
