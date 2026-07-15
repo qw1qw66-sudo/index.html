@@ -149,7 +149,9 @@ async function main() {
       bookings: [{
         id: "b1", customer_name: "عميل تجريبي", customer_phone: FAKE_PHONE,
         chalet_id: "c1", booking_date: RIYADH_TODAY, period_id: "p1",
-        guests: 2, total: 500, paid: 0, status: "confirmed",
+        // Partially paid via the FORM (doc.paid), with an empty payment ledger —
+        // the live default. Outstanding must read total(500) − paid(200) = 300.
+        guests: 2, total: 500, paid: 200, status: "confirmed",
         notes: "", remaining_status: "", remaining_note: "", remaining_updated_at: "",
         deleted_at: null, created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
       }],
@@ -756,20 +758,24 @@ async function main() {
     record("audit_guests_name_money_fixed", ok, `guests=${rows["الضيوف"]},name=${rows["العميل"]},total=${rows["الإجمالي"]}`);
   }
 
-  // 10j. R7 CHIP TRUTH (IMG_6711): «من عليه مبالغ متبقية؟» must answer with
-  // the debtor NAMES + amounts, deterministically — never the bare count
+  // 10j. R7 CHIP TRUTH (IMG_6711): «من عليه مبالغ متبقية؟» answers with the
+  // debtor NAMES + amounts, deterministically — never the bare count
   // («يوجد N حجوزات») and never a model turn. The seeded «عميل تجريبي» has
-  // total 500 / paid 0, so the ledger view owes 500.
+  // total 500 / paid 200 (form-tracked, EMPTY ledger), so the answer must owe
+  // exactly 300 — proving list_outstanding_balances honours doc.paid (audit #3)
+  // rather than ignoring it and showing the full 500.
   {
     const r = await assistant({ message: "من عليه مبالغ متبقية؟" });
     const b = r.json || {};
-    const named = /عميل تجريبي/.test(String(b.reply_ar || ""));
-    const amounts = /المتبقي/.test(String(b.reply_ar || "")) && /ريال/.test(String(b.reply_ar || ""));
-    const notBareCount = !/^يوجد \d+ حجوزات\.$/.test(String(b.reply_ar || "").trim());
+    const reply = String(b.reply_ar || "");
+    const named = /عميل تجريبي/.test(reply);
+    const amounts = /المتبقي/.test(reply) && /ريال/.test(reply);
+    const honoursDocPaid = /300/.test(reply) && !/500/.test(reply); // total−paid, not the full total
+    const notBareCount = !/^يوجد \d+ حجوزات\.$/.test(reply.trim());
     record(
       "balances_names_listed",
-      r.status === 200 && b.ok === true && b.model_calls === 0 && named && amounts && notBareCount && !leaks(r.text),
-      "model_calls=" + b.model_calls + ",named=" + named,
+      r.status === 200 && b.ok === true && b.model_calls === 0 && named && amounts && honoursDocPaid && notBareCount && !leaks(r.text),
+      "model_calls=" + b.model_calls + ",named=" + named + ",owes300=" + honoursDocPaid,
     );
   }
 
