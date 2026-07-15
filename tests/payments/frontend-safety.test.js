@@ -73,6 +73,21 @@ describe("19. no secrets in the frontend or committed payment sources", () => {
     expect(html).toContain("beforeunload");
     expect(html).toContain("STALE_REVISION");
   });
+
+  it("the local push marker never persists the customer document (no PII at rest in localStorage)", () => {
+    const html = inlineHtml();
+    const start = html.indexOf("function backupBeforePush()");
+    const end = html.indexOf("function purgeLegacyLocalPii()");
+    expect(start, "backupBeforePush must exist").toBeGreaterThan(-1);
+    expect(end, "purgeLegacyLocalPii must exist").toBeGreaterThan(start);
+    const region = html.slice(start, end);
+    // It writes a marker keyed by this prefix...
+    expect(region).toContain('"backup_before_cloud_push_"');
+    // ...but NEVER the full document (customer names/phones) at rest.
+    expect(region).not.toMatch(/data:\s*state/);
+    // And a one-time purge clears any legacy entry that still carries a document.
+    expect(html).toMatch(/purgeLegacyLocalPii\(\);/);
+  });
 });
 
 describe("20. no provider secrets in logs or outputs", () => {
