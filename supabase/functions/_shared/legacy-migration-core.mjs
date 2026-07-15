@@ -24,6 +24,17 @@ export function legacyIdempotencyKey(workspaceKey, bookingId) {
  *   in payment_transactions (for dry-runs against a live ledger snapshot).
  * @param {boolean} [opts.includeDeleted=false]  also migrate soft-deleted
  *   bookings that carry a paid amount (default: report them, skip them).
+ * @param {Record<string, number>} [opts.existingLedgerNetByBooking]  a map of
+ *   booking_id -> the NET halalas already recorded in payment_transactions for
+ *   that booking (payments − refunds), BEFORE this migration runs. When given,
+ *   the planner reconciles instead of blindly seeding: it seeds only the
+ *   top-up `max(0, round(paid*100) − existingNet)`. This is the single-source
+ *   policy — the ledger becomes authoritative and equals `max(form, ledger)` by
+ *   a ONE-TIME migration, never a runtime `max()`. A booking whose ledger
+ *   already covers (or exceeds) its form-tracked paid amount is counted as
+ *   `already_reconciled` and seeds nothing, so a booking that has BOTH a form
+ *   `paid` and a real ledger payment can never be double-counted. Omit the map
+ *   (default) to seed the full form amount (form-only workspaces).
  * @returns {{ plan: object[], report: object }}
  */
 export function planLegacyMigration({
@@ -31,6 +42,7 @@ export function planLegacyMigration({
   workspaceDoc,
   existingIdempotencyKeys = new Set(),
   includeDeleted = false,
+  existingLedgerNetByBooking = null,
 }) {
   const doc = workspaceDoc && workspaceDoc.data && workspaceDoc.data.bookings
     ? workspaceDoc.data
@@ -44,6 +56,7 @@ export function planLegacyMigration({
     eligible: 0,
     planned: 0,
     already_migrated: 0,
+    already_reconciled: 0,
     total_planned_halalas: 0,
     skipped_zero_paid: 0,
     skipped_deleted: 0,
@@ -113,6 +126,20 @@ export function planLegacyMigration({
       continue;
     }
 
+    // Reconcile against the pre-migration ledger net when a snapshot is given:
+    // seed only the top-up needed to make the ledger equal the form amount.
+    // A booking already covered by real ledger payments seeds nothing, so a
+    // form `paid` and a real payment can never be double-counted.
+    const reconciling = existingLedgerNetByBooking !== null && existingLedgerNetByBooking !== undefined;
+    const existingNet = reconciling
+      ? Math.max(0, Math.round(Number(existingLedgerNetByBooking[id]) || 0))
+      : 0;
+    const seedHalalas = Math.max(0, conv.halalas - existingNet);
+    if (reconciling && seedHalalas === 0) {
+      report.already_reconciled += 1;
+      continue;
+    }
+
     if (bookingIsCancelled(b)) {
       report.flags.push({ id, flag: "CANCELLED_WITH_PAID_AMOUNT" });
     }
@@ -126,7 +153,7 @@ export function planLegacyMigration({
       transaction_type: "legacy_opening_balance",
       payment_method: "other",
       direction: "in",
-      amount_halalas: conv.halalas,
+      amount_halalas: seedHalalas,
       currency: "SAR",
       status: "succeeded",
       occurred_at: typeof b.created_at === "string" && b.created_at ? b.created_at : null,
@@ -136,10 +163,13 @@ export function planLegacyMigration({
         booking_status: String(b.status || ""),
         booking_deleted: bookingIsDeleted(b),
         legacy_paid_riyals: paidNumber,
+        ...(reconciling
+          ? { form_paid_halalas: conv.halalas, existing_ledger_net_halalas: existingNet }
+          : {}),
       },
     });
     report.planned += 1;
-    report.total_planned_halalas += conv.halalas;
+    report.total_planned_halalas += seedHalalas;
   }
 
   return { plan, report };
