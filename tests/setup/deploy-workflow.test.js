@@ -100,6 +100,8 @@ describe("supabase/migrations — single, ordered source of truth", () => {
       "20260712000008_night_anchor_booking_conflicts.sql",
       // Unified "has business data" guard: expenses now count (chalets+bookings+expenses).
       "20260712000009_unified_business_data_guard.sql",
+      // Structural integrity: a NEW duplicate booking id is rejected (existing dup grandfathered).
+      "20260712000010_structural_duplicate_id_guard.sql",
     ]);
   });
 

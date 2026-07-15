@@ -48,6 +48,7 @@ d("REAL Postgres: confirmed assistant actions write real rows", () => {
       "supabase/migrations/20260712000007_grandfather_existing_booking_conflicts.sql",
       "supabase/migrations/20260712000008_night_anchor_booking_conflicts.sql",
       "supabase/migrations/20260712000009_unified_business_data_guard.sql",
+      "supabase/migrations/20260712000010_structural_duplicate_id_guard.sql",
     ]) {
       await pool.query(readFileSync(f, "utf8"));
     }
@@ -286,6 +287,59 @@ d("REAL Postgres: confirmed assistant actions write real rows", () => {
     await expect(
       pool.query("select public.save_shared_workspace($1,$2,$3::jsonb)", ["WSEXP", "123456", "{}"]),
     ).rejects.toThrow(/EMPTY_OVERWRITE_BLOCKED/);
+  });
+
+  it("structural guard (migration 0010): a NEW duplicate booking id is rejected, an existing one grandfathered", async () => {
+    // Two rows sharing one id but on DIFFERENT dates → no slot conflict, so the
+    // structural guard (not the conflict guard) is the thing under test.
+    const doc = {
+      schema_version: 3, settings: {},
+      chalets: [{ id: "c1", name: "ش", deleted_at: null, periods: [{ id: "p1", label: "صباحي", start: "07:00", end: "17:00", active: true, sort: 1 }] }],
+      bookings: [{ id: "d1", customer_name: "الأول", chalet_id: "c1", booking_date: "2099-07-01", period_id: "p1", guests: 2, total: 100, paid: 0, status: "confirmed", deleted_at: null }],
+    };
+    await pool.query("select public.create_shared_workspace($1,$2,$3::jsonb)", ["WSDUP", "123456", JSON.stringify(doc)]);
+    let snap = (await pool.query("select data, updated_at::text as rev from public.shared_workspaces where workspace_key='WSDUP'")).rows[0];
+
+    // (A) A NEW second row that reuses id "d1" (different date) is corruption → rejected.
+    const dup = structuredClone(snap.data);
+    dup.bookings.push({ id: "d1", customer_name: "المكرر", chalet_id: "c1", booking_date: "2099-07-02", period_id: "p1", guests: 2, total: 100, paid: 0, status: "confirmed", deleted_at: null });
+    let saved = (await pool.query("select public.save_shared_workspace_v2($1,$2,$3::jsonb,$4::timestamptz) r", ["WSDUP", "123456", JSON.stringify(dup), snap.rev])).rows[0].r;
+    expect(saved.ok).toBe(false);
+    expect(saved.error).toBe("DUPLICATE_BOOKING_ID:d1");
+
+    // (B) An unrelated safe edit (fresh distinct id) still SUCCEEDS.
+    const safe = structuredClone(snap.data);
+    safe.bookings.push({ id: "d2", customer_name: "آمن", chalet_id: "c1", booking_date: "2099-07-03", period_id: "p1", guests: 2, total: 100, paid: 0, status: "confirmed", deleted_at: null });
+    saved = (await pool.query("select public.save_shared_workspace_v2($1,$2,$3::jsonb,$4::timestamptz) r", ["WSDUP", "123456", JSON.stringify(safe), snap.rev])).rows[0].r;
+    expect(saved.ok).toBe(true);
+
+    // (C) Grandfathering: a doc that ALREADY carries the dup still accepts an
+    // unrelated edit (fixture writes the corrupt doc directly, bypassing guards).
+    const corrupt = structuredClone(snap.data);
+    corrupt.bookings.push({ id: "d1", customer_name: "قديم مكرر", chalet_id: "c1", booking_date: "2099-07-05", period_id: "p1", guests: 2, total: 100, paid: 0, status: "confirmed", deleted_at: null });
+    await pool.query("update public.shared_workspaces set data=$2::jsonb, updated_at=statement_timestamp() where workspace_key=$1", ["WSDUP", JSON.stringify(corrupt)]);
+    snap = (await pool.query("select data, updated_at::text as rev from public.shared_workspaces where workspace_key='WSDUP'")).rows[0];
+    const unrelated = structuredClone(snap.data);
+    unrelated.bookings.push({ id: "d9", customer_name: "تعديل لاحق", chalet_id: "c1", booking_date: "2099-07-09", period_id: "p1", guests: 2, total: 100, paid: 0, status: "confirmed", deleted_at: null });
+    saved = (await pool.query("select public.save_shared_workspace_v2($1,$2,$3::jsonb,$4::timestamptz) r", ["WSDUP", "123456", JSON.stringify(unrelated), snap.rev])).rows[0].r;
+    expect(saved.ok).toBe(true); // the pre-existing d1 dup is grandfathered
+  });
+
+  it("structural guard (migration 0010): a soft-deleted tombstone lets its id be reused by a fresh active row", async () => {
+    // One active row + one tombstone sharing an id is NOT a duplicate — the
+    // browser reuses an id after a soft-delete and must never be blocked.
+    const doc = {
+      schema_version: 3, settings: {},
+      chalets: [{ id: "c1", name: "ش", deleted_at: null, periods: [{ id: "p1", label: "صباحي", start: "07:00", end: "17:00", active: true, sort: 1 }] }],
+      bookings: [{ id: "t1", customer_name: "محذوف", chalet_id: "c1", booking_date: "2099-08-01", period_id: "p1", guests: 2, total: 100, paid: 0, status: "cancelled", deleted_at: "2099-08-02T00:00:00Z" }],
+    };
+    await pool.query("select public.create_shared_workspace($1,$2,$3::jsonb)", ["WSTOMB", "123456", JSON.stringify(doc)]);
+    const snap = (await pool.query("select data, updated_at::text as rev from public.shared_workspaces where workspace_key='WSTOMB'")).rows[0];
+    const reuse = structuredClone(snap.data);
+    // A fresh ACTIVE row reusing the tombstoned id "t1" (different night) is fine.
+    reuse.bookings.push({ id: "t1", customer_name: "جديد", chalet_id: "c1", booking_date: "2099-08-05", period_id: "p1", guests: 2, total: 100, paid: 0, status: "confirmed", deleted_at: null });
+    const saved = (await pool.query("select public.save_shared_workspace_v2($1,$2,$3::jsonb,$4::timestamptz) r", ["WSTOMB", "123456", JSON.stringify(reuse), snap.rev])).rows[0].r;
+    expect(saved.ok).toBe(true);
   });
 
   it("composite workspace FK blocks a message referencing another workspace's thread (Stage 5)", async () => {
