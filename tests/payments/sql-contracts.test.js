@@ -12,6 +12,7 @@ const m1 = readFileSync("supabase/migrations/20260701000001_atomic_workspace_sav
 const m2 = readFileSync("supabase/migrations/20260701000002_payment_ledger.sql", "utf8");
 const m7 = readFileSync("supabase/migrations/20260712000007_grandfather_existing_booking_conflicts.sql", "utf8");
 const m9 = readFileSync("supabase/migrations/20260712000009_unified_business_data_guard.sql", "utf8");
+const m10 = readFileSync("supabase/migrations/20260712000010_structural_duplicate_id_guard.sql", "utf8");
 
 // Executable statements only — SQL comments (e.g. the documented rollback
 // section) must not satisfy or violate the contracts below.
@@ -26,6 +27,7 @@ const c1 = code(m1);
 const c2 = code(m2);
 const c7 = code(m7);
 const c9 = code(m9);
+const c10 = code(m10);
 
 describe("migration 0001 (atomic workspace save) contracts", () => {
   it("save v2 verifies the expected revision inside the row lock", () => {
@@ -174,5 +176,62 @@ describe("migration 0009 (unified business-data guard) contracts", () => {
   it("keeps the helper private and reloads the PostgREST schema cache", () => {
     expect(c9).toContain("revoke all on function public.workspace_has_business_data(jsonb) from public, anon, authenticated");
     expect(c9).toContain("notify pgrst, 'reload schema'");
+  });
+});
+
+describe("migration 0010 (structural duplicate-id guard) contracts", () => {
+  it("defines a duplicate-id detector that emits a DUPLICATE_BOOKING_ID token", () => {
+    expect(c10).toContain("function public.workspace_doc_duplicate_booking_ids(p_data jsonb)");
+    expect(c10).toContain("DUPLICATE_BOOKING_ID:");
+  });
+
+  it("fails OPEN — null / non-array bookings and id-less rows never raise a duplicate", () => {
+    // The three fail-open exits: null doc, non-array bookings, and empty id.
+    expect(c10).toMatch(/if p_data is null then return '\{\}'::text\[\]; end if;/);
+    expect(c10).toMatch(/jsonb_typeof\(v_bookings\) <> 'array'/);
+    expect(c10).toContain("if v_id = '' then continue; end if;");
+  });
+
+  it("ignores soft-deleted tombstones so a reused id after deletion is not a duplicate", () => {
+    // A deleted row is skipped before the id is counted.
+    expect(c10).toContain("b ? 'deleted_at'");
+    expect(c10).toContain("continue;");
+  });
+
+  it("grandfathers via an old-vs-new wrapper — only a NEW duplicate blocks", () => {
+    expect(c10).toContain("function public.workspace_doc_new_structural_problem(");
+    // returns the first NEW-doc token absent from the OLD-doc set
+    expect(c10).toContain("if not (v_token = any(v_old)) then return v_token; end if;");
+  });
+
+  it("wires the structural check into BOTH save contracts (v2 + v1)", () => {
+    // v2 and v1-existing both compare against the locked authoritative doc.
+    expect((c10.match(/workspace_doc_new_structural_problem\(v_workspace\.data, v_data\)/g) || []).length).toBeGreaterThanOrEqual(2);
+    // v1 new-workspace branch grandfathers against an empty old doc.
+    expect(c10).toContain("workspace_doc_new_structural_problem('{}'::jsonb, v_data)");
+  });
+
+  it("runs the structural check AFTER the conflict check and BEFORE the wipe guard in v2", () => {
+    const v2 = c10.slice(c10.indexOf("function public.save_shared_workspace_v2"), c10.indexOf("function public.save_shared_workspace("));
+    const conflictIdx = v2.indexOf("workspace_doc_new_booking_conflict(v_workspace.data, v_data)");
+    const structuralIdx = v2.indexOf("workspace_doc_new_structural_problem(v_workspace.data, v_data)");
+    const wipeIdx = v2.indexOf("workspace_has_business_data(v_data)");
+    expect(conflictIdx).toBeGreaterThan(-1);
+    expect(structuralIdx).toBeGreaterThan(conflictIdx);
+    expect(wipeIdx).toBeGreaterThan(structuralIdx);
+  });
+
+  it("is function-only and never mutates existing workspace/booking data", () => {
+    expect(c10).not.toMatch(/\bdrop table\b/i);
+    expect(c10).not.toMatch(/delete\s+from\s+public\.shared_workspaces/i);
+    expect(c10).not.toMatch(/truncate\s+/i);
+    expect(c10).not.toMatch(/update\s+public\.shared_workspaces\s+set\s+data\s*=\s*'{}'/i);
+    expect(c10).not.toMatch(/jsonb_set\s*\(/i);
+  });
+
+  it("keeps both helper functions private and reloads the PostgREST schema cache", () => {
+    expect(c10).toContain("revoke all on function public.workspace_doc_duplicate_booking_ids(jsonb) from public, anon, authenticated");
+    expect(c10).toContain("revoke all on function public.workspace_doc_new_structural_problem(jsonb, jsonb) from public, anon, authenticated");
+    expect(c10).toContain("notify pgrst, 'reload schema'");
   });
 });

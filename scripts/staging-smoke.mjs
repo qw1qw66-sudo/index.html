@@ -818,6 +818,40 @@ async function main() {
     record("empty_slots_deduped", r.status === 200 && unique === keys.length, "count=" + keys.length + ",unique=" + unique);
   }
 
+  // 10n. B1 (migration 0010 STRUCTURAL guard): a direct RPC client (bypassing
+  // the browser) that tries to persist the SAME booking id on two non-deleted
+  // rows — the exact «حجزان مكرران» corruption behind IMG_6745 — is rejected by
+  // the DEPLOYED save_shared_workspace_v2 with DUPLICATE_BOOKING_ID. The save is
+  // rejected, so NOTHING is written (this probe never mutates the live doc). The
+  // legitimate-save direction is already proven live by the agent booking-create
+  // step above (a normal browser-shaped write passes straight through the guard).
+  {
+    const snap = await http("POST", "/rest/v1/rpc/get_shared_workspace", {
+      body: { p_workspace_key: WS_KEY, p_access_pin: PIN },
+    });
+    const doc = snap.json && snap.json.data ? snap.json.data : null;
+    const rev = snap.json ? snap.json.updated_at : null;
+    const src = doc && Array.isArray(doc.bookings)
+      ? doc.bookings.find((x) => x && x.id && !x.deleted_at) : null;
+    if (doc && rev && src) {
+      // A second active row that REUSES an existing id, on a far-future date so
+      // it can never collide on a slot — only the structural guard can fire.
+      const corrupt = JSON.parse(JSON.stringify(doc));
+      corrupt.bookings.push({ ...src, booking_date: "2099-12-31", created_at: undefined, updated_at: undefined });
+      const r = await http("POST", "/rest/v1/rpc/save_shared_workspace_v2", {
+        body: { p_workspace_key: WS_KEY, p_access_pin: PIN, p_data: corrupt, p_expected_updated_at: rev },
+      });
+      const b = r.json || {};
+      record(
+        "structural_duplicate_id_rejected",
+        r.status === 200 && b.ok === false && String(b.error || "").startsWith("DUPLICATE_BOOKING_ID"),
+        (b.error ? String(b.error).slice(0, 40) : r.status),
+      );
+    } else {
+      record("structural_duplicate_id_rejected", false, "NO_SEED_BOOKING");
+    }
+  }
+
   // 11. No automation rule exists/enabled on staging.
   {
     const r = await assistant({ invoke_tool: { name: "get_automation_status", arguments: {} } });
