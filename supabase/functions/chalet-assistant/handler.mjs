@@ -1408,7 +1408,7 @@ function deterministicReadIntent(message, todayIso) {
     return { name: "list_bookings", arguments: { from: todayIso, to: addDaysIso(todayIso, 60) } };
   }
   // Empty days this week.
-  if (/(فاضي|فاضية|فاضيه|متاح|متاحة|فراغ)/.test(text) && /(اسبوع|الاسبوع|الأسبوع)/.test(text)) {
+  if (/(فاضي|فاضية|فاضيه|متاح|متاحة|فراغ|شاغر|شاغرة|متوفّر|متوفر)/.test(text) && /(اسبوع|الاسبوع|الأسبوع)/.test(text)) {
     return { name: "find_empty_dates", arguments: { days_ahead: 7 } };
   }
   // Availability with NO explicit day-word: «شنو اقرب حجز/فترة متاح», «وش الفاضي

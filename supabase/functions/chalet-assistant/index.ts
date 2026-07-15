@@ -52,7 +52,16 @@ function makeDeps() {
   // Ledger-backed outstanding balances (source of truth = payment_transactions).
   async function outstandingFromLedger(wsKey: string) {
     const d = await workspaceDoc(wsKey);
-    const bookings = ((d?.data?.bookings ?? []) as Array<Record<string, unknown>>).filter((b) => !b.deleted_at && b.status !== "cancelled");
+    // Dedup by booking id (same guard as nonDeletedBookingRows) so a duplicated
+    // id never doubles the remaining owed — keeping «من عليه فلوس؟» consistent
+    // with «كم دخلي؟».
+    const seenIds = new Set<string>();
+    const bookings = ((d?.data?.bookings ?? []) as Array<Record<string, unknown>>).filter((b) => {
+      if (b.deleted_at || b.status === "cancelled") return false;
+      const id = b.id != null ? String(b.id) : "";
+      if (id) { if (seenIds.has(id)) return false; seenIds.add(id); }
+      return true;
+    });
     const totals = await ledgerTotals(wsKey);
     const rows = bookings.map((b) => {
       const totalHalalas = Math.round((Number(b.total) || 0) * 100);
@@ -625,7 +634,11 @@ function readFromDoc(name: string, args: Record<string, unknown>, doc: { chalets
           const cid = String(chalet.id || "");
           for (const p of ((chalet.periods ?? []) as Array<Record<string, unknown>>).filter((x) => x.active !== false)) {
             if (!isSlotAvailable(doc as never, cid, dt, p)) continue;
-            const slotKey = `${cid}|${dt}|${String(p.start ?? p.id ?? "")}|${String(p.end ?? "")}`;
+            // Identity = the PERIOD itself (chalet + date + period_id). Two DISTINCT
+            // periods that happen to share times (e.g. the price tiers «فترة 5» /
+            // «فترة 6») are BOTH kept; only a truly duplicated period/chalet entry
+            // (same period_id) is collapsed — the live 3× repeat.
+            const slotKey = `${cid}|${dt}|${String(p.id || `${p.start ?? ""}-${p.end ?? ""}`)}`;
             if (seen.has(slotKey)) continue;
             seen.add(slotKey);
             out.push({ chalet_id: cid, chalet_name: chalet.name, date: dt, period_id: p.id, period_label: p.label, price: suggestedPrice(p, dt) });
