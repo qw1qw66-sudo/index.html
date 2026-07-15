@@ -5,6 +5,7 @@ import {
   parseRiyalsToHalalas,
   riyalsNumberToHalalas,
   halalasToRiyalsDisplay,
+  effectiveNetPaidHalalas,
 } from "../../supabase/functions/_shared/ledger-core.mjs";
 
 const tx = (over) => ({
@@ -116,5 +117,31 @@ describe("integer halala money (no float money in the ledger)", () => {
     expect(halalasToRiyalsDisplay(100000)).toBe("1000");
     expect(halalasToRiyalsDisplay(1250)).toBe("12.50");
     expect(halalasToRiyalsDisplay(-500)).toBe("-5");
+  });
+});
+
+describe("effectiveNetPaidHalalas: reconcile the doc `paid` field with the ledger", () => {
+  it("ledger empty (the live default) → uses the form-tracked paid riyals", () => {
+    // 300 SAR recorded on the booking, nothing in the ledger → 30000 halalas.
+    expect(effectiveNetPaidHalalas(0, 300)).toBe(30000);
+  });
+  it("form paid = 0 → falls back to the ledger net (payment-panel usage)", () => {
+    expect(effectiveNetPaidHalalas(50000, 0)).toBe(50000);
+  });
+  it("both records present → the MAX (never double-counts, never over-reports debt)", () => {
+    expect(effectiveNetPaidHalalas(20000, 300)).toBe(30000); // form 30000 > ledger 20000
+    expect(effectiveNetPaidHalalas(50000, 300)).toBe(50000); // ledger 50000 > form 30000
+  });
+  it("a fully-paid form booking reads as fully paid → zero remaining", () => {
+    // The bug this fixes: total 900 SAR, paid 900 on the form, empty ledger.
+    // remaining = total*100 - effectiveNet must be 0, not the full 90000.
+    const totalHalalas = 900 * 100;
+    expect(totalHalalas - effectiveNetPaidHalalas(0, 900)).toBe(0);
+  });
+  it("nothing paid anywhere → 0; NaN / negative inputs are clamped to 0", () => {
+    expect(effectiveNetPaidHalalas(0, 0)).toBe(0);
+    expect(effectiveNetPaidHalalas(NaN, 300)).toBe(30000);
+    expect(effectiveNetPaidHalalas(-5, -5)).toBe(0);
+    expect(effectiveNetPaidHalalas(undefined, undefined)).toBe(0);
   });
 });

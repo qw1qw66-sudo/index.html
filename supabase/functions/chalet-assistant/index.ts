@@ -18,6 +18,7 @@ import { handleAssistant } from "./handler.mjs";
 import { callDeepSeek } from "../_shared/assistant/deepseek.mjs";
 import { redactObject } from "../_shared/assistant/redact.mjs";
 import { executeConfirmedAction } from "../_shared/assistant/executors.mjs";
+import { effectiveNetPaidHalalas } from "../_shared/ledger-core.mjs";
 import { corsWrap } from "../_shared/cors.mjs";
 import { riyadhToday, addDays, availablePeriodsOn, isSlotAvailable } from "../_shared/assistant/availability.mjs";
 import { chaletCatalog, resolveBookingCreateArgs as resolveBookingCreateSelection, resolveChaletReference } from "../_shared/assistant/booking-resolution.mjs";
@@ -54,7 +55,10 @@ function makeDeps() {
     const totals = await ledgerTotals(wsKey);
     const rows = bookings.map((b) => {
       const totalHalalas = Math.round((Number(b.total) || 0) * 100);
-      const net = totals.get(String(b.id))?.net ?? 0;
+      // Reconcile both payment records so a form-tracked `booking.paid` is never
+      // ignored (which would wrongly report a paid customer as owing the total).
+      const ledgerNet = totals.get(String(b.id))?.net ?? 0;
+      const net = effectiveNetPaidHalalas(ledgerNet, Number(b.paid) || 0);
       const remaining = totalHalalas - net;
       return { booking_id: b.id, customer_name: b.customer_name, booking_date: b.booking_date, chalet_id: b.chalet_id, total_halalas: totalHalalas, net_paid_halalas: net, remaining_halalas: remaining };
     }).filter((r) => r.remaining_halalas > 0)
@@ -113,7 +117,10 @@ function makeDeps() {
     const chalet = (doc.chalets ?? []).find((c) => c.id === b.chalet_id);
     const period = ((chalet?.periods ?? []) as Array<Record<string, unknown>>).find((p) => p.id === b.period_id);
     const totalHalalas = Math.round((Number(b.total) || 0) * 100);
-    const net = (await ledgerTotals(wsKey)).get(String(b.id))?.net ?? 0;
+    // Same reconciliation as outstandingFromLedger: a payment-reminder message
+    // must not show the full total as due when the owner recorded `booking.paid`.
+    const ledgerNet = (await ledgerTotals(wsKey)).get(String(b.id))?.net ?? 0;
+    const net = effectiveNetPaidHalalas(ledgerNet, Number(b.paid) || 0);
     return {
       booking_id: b.id, customer_name: b.customer_name, booking_date: b.booking_date,
       chalet_name: chalet?.name ?? "", period_label: period?.label ?? "",

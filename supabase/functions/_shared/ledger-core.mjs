@@ -113,6 +113,28 @@ export function halalasToRiyalsDisplay(halalas) {
   return rem === 0 ? `${sign}${riyals}` : `${sign}${riyals}.${String(rem).padStart(2, "0")}`;
 }
 
+/**
+ * How much a booking has been paid, in halalas, reconciling the TWO independent
+ * (and never-merged) records of payment:
+ *   - the JSON document's whole-riyal `booking.paid` (booking form / mark-paid),
+ *   - the halalas payment LEDGER net (payment panel / links).
+ * We take the MAX, not the sum. In the live app exactly ONE of the two is ever
+ * populated (the ledger is dormant), so max = whichever record holds the payment
+ * — and when only the form is used it makes `list_outstanding_balances` agree
+ * with the doc-based `businessOverview.outstanding_total` instead of ignoring
+ * `booking.paid` and reporting every customer as owing the full total. If BOTH
+ * were ever to hold SEPARATE real payments, max is deliberately conservative: it
+ * may OVER-report the remaining but never under-report it — the safe side for a
+ * "who owes money" answer. NaN/negative inputs → 0.
+ */
+export function effectiveNetPaidHalalas(ledgerNetHalalas, docPaidRiyals) {
+  const ledger = Number(ledgerNetHalalas);
+  const fromLedger = Number.isFinite(ledger) && ledger > 0 ? ledger : 0;
+  const paid = Number(docPaidRiyals);
+  const fromDoc = Number.isFinite(paid) && paid > 0 ? Math.round(paid * HALALAS_PER_RIYAL) : 0;
+  return Math.max(fromLedger, fromDoc);
+}
+
 // ---------------------------------------------------------------------------
 // Ledger totals + derived payment state (mirror of the SQL view + function)
 // ---------------------------------------------------------------------------
