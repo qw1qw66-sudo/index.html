@@ -35,6 +35,37 @@ describe("owner-facing booking read filters", () => {
   });
 });
 
+describe("A3: duplicate booking IDs are collapsed (never listed/counted twice)", () => {
+  it("nonDeletedBookingRows keeps the first row per id (the live «حجزان لخالد» dup)", () => {
+    const dup = [
+      { id: "k1", customer_name: "خالد", booking_date: "2026-07-15", total: 500, paid: 0, status: "confirmed", deleted_at: null },
+      { id: "k1", customer_name: "خالد", booking_date: "2026-07-15", total: 500, paid: 0, status: "confirmed", deleted_at: null },
+      { id: "k2", customer_name: "سعد", booking_date: "2026-07-16", total: 300, paid: 0, status: "confirmed", deleted_at: null },
+    ];
+    const rows = nonDeletedBookingRows(dup);
+    expect(rows.map((b) => b.id)).toEqual(["k1", "k2"]); // one خالد, not two
+  });
+
+  it("income is NOT double-counted when a booking id is duplicated", () => {
+    const dup = [
+      { id: "k1", booking_date: "2026-07-15", total: 500, paid: 200, status: "confirmed", deleted_at: null },
+      { id: "k1", booking_date: "2026-07-15", total: 500, paid: 200, status: "confirmed", deleted_at: null },
+    ];
+    const s = bookingsSummary(dup, { from: "2026-07-01", to: "2026-07-31" });
+    expect(s.count).toBe(1);
+    expect(s.total_income).toBe(500); // not 1000
+    expect(s.paid_total).toBe(200); // not 400
+  });
+
+  it("rows without an id keep their own identity (no accidental collapse)", () => {
+    const noId = [
+      { customer_name: "أ", status: "confirmed", deleted_at: null },
+      { customer_name: "ب", status: "confirmed", deleted_at: null },
+    ];
+    expect(nonDeletedBookingRows(noId)).toHaveLength(2);
+  });
+});
+
 describe("monthRangeIso — calendar-month bounds", () => {
   it("returns the first and last day of the month", () => {
     expect(monthRangeIso("2026-07-13")).toEqual({ from: "2026-07-01", to: "2026-07-31" });

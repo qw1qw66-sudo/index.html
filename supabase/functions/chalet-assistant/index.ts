@@ -7,8 +7,9 @@
 //
 // Deploy (owner, staging first — NOT done by this branch):
 //   supabase functions deploy chalet-assistant
-//   supabase secrets set DEEPSEEK_API_KEY=... DEEPSEEK_MODEL=deepseek-v4-flash \
+//   supabase secrets set DEEPSEEK_API_KEY=... DEEPSEEK_MODEL=deepseek-v4-pro \
 //     DEEPSEEK_BASE_URL=https://api.deepseek.com ASSISTANT_CONFIRM_SECRET=...
+//   (the deploy workflow pins DEEPSEEK_MODEL=deepseek-v4-pro — the stronger model)
 //
 // ASSISTANT_CONFIRM_SECRET is MANDATORY for any sensitive action (there is no
 // fallback); without it the handler fails those closed.
@@ -225,10 +226,14 @@ function makeDeps() {
     },
     async loadHistory(wsKey: string, threadId: string | null) {
       if (!threadId) return [];
+      // Fetch the MOST RECENT 20 turns (descending) then reverse into
+      // chronological order for the model. The old `ascending: true` fetched the
+      // OLDEST 20, so once a thread passed 20 messages the model only ever saw
+      // the START of the conversation and appeared to "forget" recent turns.
       const { data } = await supabase.from("assistant_messages")
         .select("role, safe_content").eq("workspace_key", wsKey).eq("thread_id", threadId)
-        .order("created_at", { ascending: true }).limit(20);
-      return (data ?? []).map((m: { role: string; safe_content: string }) => ({ role: m.role, content: m.safe_content }));
+        .order("created_at", { ascending: false }).limit(20);
+      return (data ?? []).reverse().map((m: { role: string; safe_content: string }) => ({ role: m.role, content: m.safe_content }));
     },
     async appendMessages(wsKey: string, threadId: string | null, rows: Record<string, unknown>[]) {
       if (!threadId) return;
@@ -609,12 +614,21 @@ function readFromDoc(name: string, args: Record<string, unknown>, doc: { chalets
         selected = [resolved.chalet];
       }
       const out: Array<Record<string, unknown>> = [];
+      // Dedup by the PHYSICAL slot (chalet + date + times). A document with
+      // duplicate periods, or duplicate chalet entries (possible before the
+      // structural save guard), must never surface the SAME empty slot 2–3×
+      // (live «غباء»: one opening listed three times).
+      const seen = new Set<string>();
       for (let i = 0; i < daysAhead && out.length < 100; i++) {
         const dt = addDays(today, i);
         for (const chalet of selected) {
           const cid = String(chalet.id || "");
           for (const p of ((chalet.periods ?? []) as Array<Record<string, unknown>>).filter((x) => x.active !== false)) {
-            if (isSlotAvailable(doc as never, cid, dt, p)) out.push({ chalet_id: cid, chalet_name: chalet.name, date: dt, period_id: p.id, period_label: p.label, price: suggestedPrice(p, dt) });
+            if (!isSlotAvailable(doc as never, cid, dt, p)) continue;
+            const slotKey = `${cid}|${dt}|${String(p.start ?? p.id ?? "")}|${String(p.end ?? "")}`;
+            if (seen.has(slotKey)) continue;
+            seen.add(slotKey);
+            out.push({ chalet_id: cid, chalet_name: chalet.name, date: dt, period_id: p.id, period_label: p.label, price: suggestedPrice(p, dt) });
           }
         }
       }
