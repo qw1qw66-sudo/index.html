@@ -2945,11 +2945,11 @@
         }
         let lastBackupHash = "";
         // Reverse-audit R-1 fix: a failed upload (e.g. stale-revision) must not
-        // fill the 10-slot backup ring with identical copies of the same
-        // document. We back up the CURRENT document but skip when it is
-        // byte-identical (same workspace + same data) to the newest existing
-        // backup, so ten retries of the same failed push create at most one
-        // backup while genuinely different documents still each get one.
+        // fill the 10-slot marker ring with identical entries for the same
+        // document. We record a marker for the CURRENT document but skip when it
+        // is byte-identical (same workspace + same data hash) to the newest
+        // existing marker, so ten retries of the same failed push create at most
+        // one marker while genuinely different documents still each get one.
         function backupBeforePush() {
           try {
             const hash = docHash(workspaceKey + "|" + JSON.stringify(state));
@@ -2976,13 +2976,17 @@
               } catch (_) {}
             }
             const key = "backup_before_cloud_push_" + now();
+            // PRIVACY (Production Strong): never persist the customer document
+            // (names/phones) at rest in localStorage. This is a push MARKER only
+            // — workspace + counts + content hash + time. The authoritative copy
+            // is the cloud (Supabase, guarded by CAS + conflict + wipe guards);
+            // nothing in the app ever reads a `data` field back from here.
             localStorage.setItem(
               key,
               JSON.stringify({
                 workspace_key: workspaceKey,
                 lastCloudUpdatedAt,
                 lastCloudCounts,
-                data: state,
                 doc_hash: hash,
                 timestamp: now(),
               }),
@@ -2996,6 +3000,30 @@
             log("Local backup created", { key });
           } catch (e) {
             log("Backup failed", { message: e.message });
+          }
+        }
+        // One-time cleanup: earlier builds stored the FULL customer document
+        // (names/phones) inside each backup marker. Purge any such legacy entry
+        // so no unprotected PII lingers in localStorage once this build ships.
+        function purgeLegacyLocalPii() {
+          try {
+            const stale = [];
+            for (let i = 0; i < localStorage.length; i++) {
+              const k = localStorage.key(i);
+              if (k && k.indexOf("backup_before_cloud_push_") === 0) {
+                let hasData = false;
+                try {
+                  hasData = Boolean(JSON.parse(localStorage.getItem(k) || "{}").data);
+                } catch (_) {
+                  hasData = true; // unparseable legacy entry — remove it too
+                }
+                if (hasData) stale.push(k);
+              }
+            }
+            stale.forEach((k) => localStorage.removeItem(k));
+            if (stale.length) log("Purged legacy PII backups", { count: stale.length });
+          } catch (e) {
+            log("Legacy PII purge failed", { message: e.message });
           }
         }
         async function uploadChanges() {
@@ -5892,6 +5920,7 @@
             e.preventDefault();
             e.returnValue = "";
           });
+          purgeLegacyLocalPii();
           if (!restoreSessionFromStorage()) clearSessionSnapshot();
           log("Ready");
         });
