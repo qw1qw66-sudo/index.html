@@ -28,6 +28,12 @@ async function canConnect() {
 }
 
 const AVAILABLE = await canConnect();
+// In CI the SQL job sets ASSIST_PG_REQUIRED=1: a skip there would be a FALSE
+// green (the whole point is to run these contracts against a real database), so
+// turn an unreachable DB into a hard failure instead of a silent skip.
+if (process.env.ASSIST_PG_REQUIRED === "1" && !AVAILABLE) {
+  throw new Error(`ASSIST_PG_REQUIRED=1 but no Postgres reachable at ${HOST}:${PORT} — the CI SQL job needs a live database`);
+}
 const d = AVAILABLE ? describe : describe.skip;
 
 d("REAL Postgres: confirmed assistant actions write real rows", () => {
@@ -40,6 +46,13 @@ d("REAL Postgres: confirmed assistant actions write real rows", () => {
     await admin.query(`create database ${DB}`);
     await admin.end();
     pool = new pg.Pool({ host: HOST, port: PORT, user: USER, database: DB });
+    // Supabase provisions these roles in production; a bare Postgres (a CI
+    // service container, or a developer's local cluster) does not, so the
+    // migrations' grant/revoke-to-anon statements would error at load. Create
+    // them idempotently first — names are fixed literals, no injection surface.
+    for (const role of ["anon", "authenticated", "service_role"]) {
+      await pool.query(`do $$ begin if not exists (select 1 from pg_roles where rolname='${role}') then create role ${role} nologin; end if; end $$;`);
+    }
     for (const f of [
       "database/shared_workspace_sync.sql",
       "supabase/migrations/20260701000001_atomic_workspace_save.sql",

@@ -37,3 +37,45 @@ jobs:
 
       - name: E2E tests
         run: npm run e2e
+
+  # Runs the real-PostgreSQL SQL contract suite (workspace save guards, payment
+  # ledger, grandfathered booking-conflict + structural duplicate-id guards)
+  # against an ephemeral Postgres 16 — so a regression in a migration is caught
+  # HERE, on the PR, instead of only at deploy time against live staging. The
+  # suite self-provisions the Supabase roles it needs; ASSIST_PG_REQUIRED=1 makes
+  # an unreachable database a hard failure (never a false-green skip).
+  sql-integration:
+    name: SQL contracts (real Postgres)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      ASSIST_PG_HOST: 127.0.0.1
+      ASSIST_PG_PORT: '5432'
+      ASSIST_PG_USER: postgres
+      PGPASSWORD: postgres
+      ASSIST_PG_REQUIRED: '1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies (reproducible)
+        run: npm ci
+
+      - name: Real-Postgres SQL contracts
+        run: npx vitest run tests/assistant/integration-postgres.test.js
