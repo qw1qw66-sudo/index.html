@@ -1196,13 +1196,26 @@ const EXPENSE_CATEGORY_WORDS = [
   { re: /مستلزم|أدوات|اغراض|أغراض/, cat: "مستلزمات" },
   { re: /رات(?:ب|ة)|رواتب|أجور/, cat: "رواتب" },
 ];
+// Amount = whole riyals. Prefer a number tied to a money marker («مبلغ ٥٠٠»,
+// «٥٠٠ ريال»); otherwise the first standalone integer that is NOT a chalet/room
+// ordinal («شاليه ٢», «رقم ٣») — so «صيانة شاليه ٢ مبلغ ٥٠٠» records ٥٠٠, not ٢.
+// If the only integers are chalet/room ordinals, return null so the owner is
+// asked for the amount rather than banking a unit number as the cost.
+const EXPENSE_MONEY_BEFORE_RE = /(?:بمبلغ|مبلغ|بقيمة|قيمة|بسعر|سعر|بـ)\s*[:=]?\s*(\d{1,8})(?![\d])/;
+const EXPENSE_MONEY_AFTER_RE = /(\d{1,8})\s*(?:ريال|ر\.?\s?س|﷼)(?![\d])/;
+const EXPENSE_UNIT_ORDINAL_RE = /(?:شالي[هة]|شقة|غرفة|وحدة|فيلا|استراح[ةه]|رقم)\s*(\d{1,8})/g;
+function extractExpenseAmount(folded) {
+  const marked = folded.match(EXPENSE_MONEY_BEFORE_RE) || folded.match(EXPENSE_MONEY_AFTER_RE);
+  if (marked) return Number(marked[1]);
+  // Mask chalet/room ordinals so a unit number is never mistaken for the amount.
+  const masked = folded.replace(EXPENSE_UNIT_ORDINAL_RE, (s, d) => s.slice(0, s.length - d.length) + "#".repeat(d.length));
+  const m = masked.match(/(?:^|[^\d])(\d{1,8})(?![\d])/);
+  return m ? Number(m[1]) : null;
+}
 function extractExpenseFacts(message) {
   const raw = String(message || "");
   const folded = foldDigits(raw);
-  // The amount is the first standalone integer (whole riyals). Amounts never
-  // carry decimals here; a stray year-like number is unlikely in an expense line.
-  const m = folded.match(/(?:^|[^\d])(\d{1,8})(?![\d])/);
-  const amount = m ? Number(m[1]) : null;
+  const amount = extractExpenseAmount(folded);
   let category = "";
   for (const c of EXPENSE_CATEGORY_WORDS) { if (c.re.test(raw)) { category = c.cat; break; } }
   return { amount, category };

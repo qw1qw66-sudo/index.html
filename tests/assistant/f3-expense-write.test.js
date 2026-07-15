@@ -102,4 +102,41 @@ describe("F3: assistant records expenses (deterministic write)", () => {
     expect(saved.ok).toBe(true);
     expect((c.doc.expenses || [])[0]).toMatchObject({ category: "صيانة", amount: 250, chalet_id: "tulum2" });
   });
+
+  it("records the MONEY-marked amount, not a chalet ordinal («صيانة شاليه ٢ مبلغ ٥٠٠» → ٥٠٠)", async () => {
+    const c = convo();
+    const r = await c.say("سجّل مصروف صيانة شاليه ٢ مبلغ ٥٠٠");
+    expect(r.model_calls).toBe(0);
+    const prep = preparedExpense(r);
+    expect(prep).toBeTruthy();
+    const rows = Object.fromEntries((r.card || []).map((x) => [x.k, x.v]));
+    expect(String(rows["المبلغ"])).toContain("500"); // NOT «2»
+    expect(String(rows["المبلغ"])).not.toMatch(/(^|[^\d])2([^\d]|$)/);
+    const saved = await c.post({
+      invoke_tool: { name: "confirm_add_expense", arguments: { action_id: prep.action_id, confirmation_token: prep.confirmation_token } },
+    });
+    expect(saved.ok).toBe(true);
+    expect((c.doc.expenses || [])[0]).toMatchObject({ category: "صيانة", amount: 500 });
+  });
+
+  it("reads an amount that TRAILS a currency word («٥٠٠ ريال» → ٥٠٠)", async () => {
+    const c = convo();
+    const r = await c.say("سجّل مصروف كهرباء ٥٠٠ ريال");
+    const prep = preparedExpense(r);
+    expect(prep).toBeTruthy();
+    const saved = await c.post({
+      invoke_tool: { name: "confirm_add_expense", arguments: { action_id: prep.action_id, confirmation_token: prep.confirmation_token } },
+    });
+    expect(saved.ok).toBe(true);
+    expect((c.doc.expenses || [])[0]).toMatchObject({ category: "كهرباء", amount: 500 });
+  });
+
+  it("a chalet ordinal ALONE (no real amount) asks for the amount, never banks the unit number", async () => {
+    const c = convo();
+    const r = await c.say("سجّل مصروف صيانة شاليه ٢");
+    expect(r.model_calls).toBe(0);
+    expect(preparedExpense(r)).toBeFalsy(); // «٢» is a chalet ordinal, not a cost
+    expect(r.reply).toContain("مبلغ"); // asks «كم مبلغ المصروف؟»
+    expect(c.doc.expenses || []).toHaveLength(0);
+  });
 });
