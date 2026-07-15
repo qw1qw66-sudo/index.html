@@ -146,6 +146,63 @@ describe("16. repeated migration runs cannot duplicate", () => {
   });
 });
 
+describe("15b. reconciliation-aware seeding (single money source, no double-count)", () => {
+  it("seeds only the top-up and never double-counts a booking that already has ledger payments", () => {
+    const { plan, report } = planLegacyMigration({
+      workspaceKey: WS,
+      workspaceDoc: doc([
+        paidBooking("b-covered", 300), // ledger already has 300 -> seed nothing
+        paidBooking("b-partial", 300), // ledger has 100 -> seed the 200 gap
+        paidBooking("b-formonly", 300), // no ledger rows -> seed full 300
+        paidBooking("b-exceeds", 300), // ledger has 500 (> form) -> seed nothing
+      ]),
+      existingLedgerNetByBooking: {
+        "b-covered": 30000,
+        "b-partial": 10000,
+        "b-formonly": 0,
+        "b-exceeds": 50000,
+      },
+    });
+    expect(report.planned).toBe(2); // b-partial, b-formonly
+    expect(report.already_reconciled).toBe(2); // b-covered, b-exceeds
+    expect(report.total_planned_halalas).toBe(20000 + 30000);
+
+    const partial = plan.find((t) => t.booking_id === "b-partial");
+    expect(partial.amount_halalas).toBe(20000); // only the gap, not the full 30000
+    expect(partial.metadata).toMatchObject({ form_paid_halalas: 30000, existing_ledger_net_halalas: 10000 });
+
+    const formOnly = plan.find((t) => t.booking_id === "b-formonly");
+    expect(formOnly.amount_halalas).toBe(30000);
+    // b-covered / b-exceeds must NOT appear in the plan (zero double-count).
+    expect(plan.find((t) => t.booking_id === "b-covered")).toBeUndefined();
+    expect(plan.find((t) => t.booking_id === "b-exceeds")).toBeUndefined();
+  });
+
+  it("is backward compatible: omitting the ledger map seeds the full form amount", () => {
+    const { plan, report } = planLegacyMigration({
+      workspaceKey: WS,
+      workspaceDoc: doc([paidBooking("b-1", 300)]),
+    });
+    expect(report.planned).toBe(1);
+    expect(report.already_reconciled).toBe(0);
+    expect(plan[0].amount_halalas).toBe(30000);
+    // No reconciliation metadata when no ledger snapshot is supplied.
+    expect(plan[0].metadata.form_paid_halalas).toBeUndefined();
+  });
+
+  it("re-running after the seed (ledger now reflects it) reconciles to zero — effectively idempotent", () => {
+    // First pass seeds the form amount; a later dry-run against the resulting
+    // ledger net must plan nothing new.
+    const afterSeed = planLegacyMigration({
+      workspaceKey: WS,
+      workspaceDoc: doc([paidBooking("b-1", 300)]),
+      existingLedgerNetByBooking: { "b-1": 30000 },
+    });
+    expect(afterSeed.report.planned).toBe(0);
+    expect(afterSeed.report.already_reconciled).toBe(1);
+  });
+});
+
 describe("25. compatibility with the real workspace document shape", () => {
   it("plans correctly against the repository's sample workspace fixture", () => {
     const sample = JSON.parse(readFileSync("scripts/sample-bookings.json", "utf8"));

@@ -26,6 +26,17 @@
 //   --existing-keys  optional file with one idempotency_key per line
 //                    (export from payment_transactions) so the report can
 //                    show what a re-run would skip.
+//   --ledger-net     optional JSON file: { "<booking_id>": <net_halalas>, ... }
+//                    the CURRENT net (payments − refunds) already in
+//                    payment_transactions per booking. When given, the planner
+//                    RECONCILES — it seeds only the top-up max(0, paid − net),
+//                    so a booking that already has real ledger payments is never
+//                    double-counted (single-source policy). Export it with:
+//                      select booking_id, sum(case when direction='in'
+//                        then amount_halalas else -amount_halalas end) net
+//                      from public.payment_transactions
+//                      where workspace_key='<KEY>' and status='succeeded'
+//                      group by booking_id;   -> {booking_id: net} JSON
 //   --include-deleted  also migrate soft-deleted bookings with paid > 0.
 
 import { readFileSync, writeFileSync } from "node:fs";
@@ -43,6 +54,7 @@ const inputPath = arg("--input");
 const workspaceKey = arg("--workspace-key");
 const sqlOut = arg("--sql-out");
 const existingKeysPath = arg("--existing-keys");
+const ledgerNetPath = arg("--ledger-net");
 const includeDeleted = has("--include-deleted");
 
 if (!inputPath || !workspaceKey) {
@@ -71,10 +83,25 @@ if (existingKeysPath) {
   }
 }
 
+let existingLedgerNetByBooking = null;
+if (ledgerNetPath) {
+  try {
+    const parsed = JSON.parse(readFileSync(ledgerNetPath, "utf8"));
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("expected a JSON object { booking_id: net_halalas }");
+    }
+    existingLedgerNetByBooking = parsed;
+  } catch (e) {
+    console.error(`ERROR: cannot read/parse ${ledgerNetPath}: ${e.message}`);
+    process.exit(1);
+  }
+}
+
 const { plan, report } = planLegacyMigration({
   workspaceKey,
   workspaceDoc,
   existingIdempotencyKeys,
+  existingLedgerNetByBooking,
   includeDeleted,
 });
 
