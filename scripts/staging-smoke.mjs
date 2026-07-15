@@ -793,6 +793,31 @@ async function main() {
     );
   }
 
+  // 10l. A1 (live «غباء» IMG_6744): «شنو اقرب حجز متاح و اي شالية» must ANSWER
+  // availability, never «لم أجد حجوزات مطابقة لبحثك» (the bug that read it as a
+  // customer-name booking search). Deterministic (model_calls=0).
+  {
+    const r = await assistant({ message: "شنو اقرب حجز متاح و اي شالية" });
+    const b = r.json || {};
+    const reply = String(b.reply_ar || "");
+    record(
+      "availability_not_read_as_search",
+      r.status === 200 && b.ok === true && b.model_calls === 0 && !/لم أجد حجوزات/.test(reply) && !leaks(r.text),
+      "model_calls=" + b.model_calls + ",reply=" + reply.slice(0, 40),
+    );
+  }
+
+  // 10m. A2 (live «غباء» IMG_6745): find_empty_dates must never surface the SAME
+  // physical slot twice (one opening listed 3×). Assert no duplicate
+  // (chalet, date, period) tuples in the returned openings.
+  {
+    const r = await assistant({ invoke_tool: { name: "find_empty_dates", arguments: { days_ahead: 30 } } });
+    const list = r.json && r.json.result && Array.isArray(r.json.result.empty) ? r.json.result.empty : [];
+    const keys = list.map((x) => `${x.chalet_id}|${x.date}|${x.period_id}`);
+    const unique = new Set(keys).size;
+    record("empty_slots_deduped", r.status === 200 && unique === keys.length, "count=" + keys.length + ",unique=" + unique);
+  }
+
   // 11. No automation rule exists/enabled on staging.
   {
     const r = await assistant({ invoke_tool: { name: "get_automation_status", arguments: {} } });

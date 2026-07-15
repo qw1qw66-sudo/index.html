@@ -44,8 +44,9 @@ generic workflow engines, shell execution.
   are **deprecated 2026-07-24**; current models are `deepseek-v4-flash` /
   `deepseek-v4-pro`; base URL `https://api.deepseek.com`; OpenAI-compatible
   chat completions with tool calling. The client does **not** hardcode an
-  obsolete name — model and base URL are env-configurable; default is
-  `deepseek-v4-flash`.
+  obsolete name — model and base URL are env-configurable; default is the
+  STRONGER `deepseek-v4-pro` (better dialect + complex-analysis quality). The
+  deploy pins `DEEPSEEK_MODEL=deepseek-v4-pro`.
 - The browser never calls DeepSeek and never holds the key.
 - Fails **closed**: no key / no model → no call, clear Arabic error, no action.
 - Redacts phone numbers before every call; enforces request timeout, size and
@@ -54,7 +55,7 @@ generic workflow engines, shell execution.
 
 ### Secrets (owner-held; set via `supabase secrets set`, never committed)
 
-`DEEPSEEK_API_KEY`, `DEEPSEEK_MODEL` (default `deepseek-v4-flash`),
+`DEEPSEEK_API_KEY`, `DEEPSEEK_MODEL` (default/pinned `deepseek-v4-pro`),
 `DEEPSEEK_BASE_URL` (default `https://api.deepseek.com`),
 `ASSISTANT_CONFIRM_SECRET` (HMAC for confirmation tokens),
 and for official WhatsApp: `WHATSAPP_CLOUD_TOKEN`, `WHATSAPP_PHONE_ID`.

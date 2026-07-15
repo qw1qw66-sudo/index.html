@@ -1256,7 +1256,10 @@ function deterministicReadIntent(message, todayIso) {
   // A profitability/expenses question about a «شاليه» («وش الشاليه الأكثر دخل؟»)
   // is analytical, not a catalog list — exclude analytical words so it falls
   // through to the G2 profitability/expense intents below.
-  const asksCatalog = /(شاليه|شاليهات)/.test(text) && /(ما\s*هي|وش|ايش|اعرض|اظهر|قائمة|المسجل|عندي|لديك)/.test(text) && !/(احجز|حجز|جهز|سج[ّل]+\s+حجز)/.test(text) && !/(أربح|اربح|أرباح|ارباح|ربح|صافي|مصاريف|المصاريف|تكاليف|أكثر\s*دخل|اكثر\s*دخل|أعلى\s*دخل|اعلى\s*دخل)/.test(text);
+  // An AVAILABILITY question about chalets («وش الشاليهات المتاحة») is NOT a
+  // catalog list — exclude availability words so it falls through to the
+  // find_empty_dates intent (openings), not a dump of every chalet.
+  const asksCatalog = /(شاليه|شاليهات)/.test(text) && /(ما\s*هي|وش|ايش|اعرض|اظهر|قائمة|المسجل|عندي|لديك)/.test(text) && !/(احجز|حجز|جهز|سج[ّل]+\s+حجز)/.test(text) && !/(فاضي|فاضية|فاضيه|متوفر|متوفّر|فراغ|شاغر)/.test(text) && !/(أربح|اربح|أرباح|ارباح|ربح|صافي|مصاريف|المصاريف|تكاليف|أكثر\s*دخل|اكثر\s*دخل|أعلى\s*دخل|اعلى\s*دخل)/.test(text);
   if (asksCatalog) return { name: "list_chalets", arguments: {} };
   // «شنو/وش/ايش/اعرض حجوزات اليوم؟» answers from the workspace even when the
   // model provider is down. Deliberately narrow: «ما هي حجوزات اليوم؟» stays on
@@ -1405,8 +1408,26 @@ function deterministicReadIntent(message, todayIso) {
     return { name: "list_bookings", arguments: { from: todayIso, to: addDaysIso(todayIso, 60) } };
   }
   // Empty days this week.
-  if (/(فاضي|فاضية|فاضيه|متاح|متاحة|فراغ)/.test(text) && /(اسبوع|الاسبوع|الأسبوع)/.test(text)) {
+  if (/(فاضي|فاضية|فاضيه|متاح|متاحة|فراغ|شاغر|شاغرة|متوفّر|متوفر)/.test(text) && /(اسبوع|الاسبوع|الأسبوع)/.test(text)) {
     return { name: "find_empty_dates", arguments: { days_ahead: 7 } };
+  }
+  // Availability with NO explicit day-word: «شنو اقرب حجز/فترة متاح», «وش الفاضي
+  // عندك», «الفترات/الأيام الفاضية», «فيه شي متوفّر؟». The day-anchored variants
+  // (اليوم/بكرة/أسبوع) are handled above; this catches the day-less phrasings that
+  // used to fall to the model OR — the live «غباء» bug — be captured as a customer
+  // NAME by the byName lookup below («اقرب حجز متاح و اي شالية» → find_bookings →
+  // «لم أجد حجوزات»). Answer real availability instead. «اقرب» scans further out.
+  // Delegated bookings («دبّر لي أرخص شاليه متاح»، «اختر لي») YIELD to the model
+  // (G3) — never grab them here as a read.
+  const asksArrange = /(دبّر|دبر|رتّب|رتب|اختر|جهّز|جهز)\s*(لي|لنا)?/.test(text);
+  // A STRONG vacancy word alone means availability; a bare «متاح/متاحة» only means
+  // availability when paired with a slot/nearest word — «الشاليهات المتاحة عندي»
+  // (bare متاح, no slot word) stays the catalog list, as before.
+  const vacantWord = /(فاضي|فاضية|فاضيه|فاضيات|فراغ|شاغر|شاغرة|متوفّر|متوفر|متوفرة)/.test(text);
+  const availSlot = /(متاح|متاحة|متاحه)/.test(text) && /(اقرب|أقرب|قريب|متى|حجز|حجوزات|فتر|فترات|موعد|مواعيد|يوم|ايام|أيام)/.test(text);
+  if (!asksArrange && (vacantWord || availSlot)) {
+    const nearest = /(اقرب|أقرب|قريب|متى)/.test(text);
+    return { name: "find_empty_dates", arguments: { days_ahead: nearest ? 45 : 14 } };
   }
   // Marketing: attributed revenue («كم دخل جابه التسويق؟») — must precede the
   // generic status match («دخل» questions are about money, not settings).
@@ -1428,7 +1449,7 @@ function deterministicReadIntent(message, todayIso) {
   // must stand alone («الحجز مجاني» is a free-price statement, not a lookup),
   // and generic words are never treated as a customer name.
   const byName = text.match(/(?:^|\s)(?:حجز|حجوزات)\s+(?:العميل\s+)?([\p{L}][\p{L}\s]{1,30})$/u);
-  if (byName && !/(اليوم|بكرة|غدا|القادمة|الفاضية|مجاني|مجانا|جديد|صفر)/.test(byName[1])) {
+  if (byName && !/(اليوم|بكرة|غدا|القادمة|الفاضية|فاضي|فاضية|متاح|متاحة|متوفر|متوفّر|شالي|شاليه|شاليهات|فترة|فترات|مجاني|مجانا|جديد|صفر)/.test(byName[1])) {
     return { name: "find_bookings", arguments: { customer_name: byName[1].trim() } };
   }
   return null;

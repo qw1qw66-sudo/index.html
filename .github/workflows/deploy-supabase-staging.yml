@@ -216,6 +216,12 @@ jobs:
           ensure AUTOPILOT_CRON_SECRET
           supabase secrets set APP_ENV=staging
           echo "APP_ENV=staging set"
+          # Pin the STRONGER model for the assistant (owner request). This
+          # overrides any earlier manual DEEPSEEK_MODEL=deepseek-v4-flash secret
+          # (the weaker model the setup docs used to suggest) on every deploy, so
+          # the live assistant is always deepseek-v4-pro unless this line changes.
+          supabase secrets set DEEPSEEK_MODEL=deepseek-v4-pro
+          echo "DEEPSEEK_MODEL=deepseek-v4-pro pinned"
 
       # Use Supabase's Management API bundler instead of local Docker. This
       # avoids Docker Hub/public ECR pull-rate limits on shared GitHub runners.

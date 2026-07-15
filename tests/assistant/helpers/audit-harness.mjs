@@ -71,6 +71,7 @@ function makeDeps(doc) {
   let seq = 0;
   let rev = 1; // workspace revision — bumped by every successful save (revision-atomic)
   const executed = [];
+  const reads = []; // every deterministic/model read-tool call: { name, args }
   const memories = [];
   let memSeq = 0;
   const revId = () => "r" + rev;
@@ -99,7 +100,7 @@ function makeDeps(doc) {
     async recordOutbound() {},
   };
   return {
-    env: ENV, _modelCalls: modelCalls, _drafts: drafts, _executed: executed, _doc: doc, _memories: memories, _actions: actions, _threads: threads,
+    env: ENV, _modelCalls: modelCalls, _drafts: drafts, _executed: executed, _reads: reads, _doc: doc, _memories: memories, _actions: actions, _threads: threads,
     async auth(k, p) { return k === WS && p === "123456" ? { ok: true, workspace_key: WS } : { ok: false, error_code: "X" }; },
     async callModel(a) { modelCalls.push(a); return { ok: false, error: "DEEPSEEK_UNREACHABLE" }; },
     async activeMemories() { return memories.filter((m) => m.status === "active"); },
@@ -119,7 +120,7 @@ function makeDeps(doc) {
     async appendMessages() {},
     async getWorkspaceRevision() { return revId(); },
     async getWorkspaceData() { return { data: doc, updated_at: revId() }; },
-    async runReadTool() { return {}; },
+    async runReadTool(_k, name, args) { reads.push({ name: String(name || ""), args: args || {} }); return {}; },
     async resolveBookingCreateArgs(_k, a) { return resolveBookingCreateArgs(doc, a); },
     async createThread(_k, title) { const id = "th-1"; threads.set(id, { id, title: String(title || "").slice(0, 120), status: "active", updated_at: "t1" }); return { ok: true, thread_id: id }; },
     // Thread lifecycle (workspace-scoped): list newest-first, archive one row.
@@ -192,6 +193,7 @@ export function convo(docOpts = {}) {
         card: prep && prep.card ? prep.card.rows : null,
         next_actions: j.next_actions || [],
         executed_count: deps._executed.length,
+        reads: deps._reads.slice(),
         raw: j,
       };
     },

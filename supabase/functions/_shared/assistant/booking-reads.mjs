@@ -3,7 +3,22 @@
 // active reservations and must never inflate "today" or "upcoming" answers.
 
 export function nonDeletedBookingRows(bookings) {
-  return (Array.isArray(bookings) ? bookings : []).filter((b) => b && !b.deleted_at);
+  const rows = (Array.isArray(bookings) ? bookings : []).filter((b) => b && !b.deleted_at);
+  // Collapse accidental duplicate booking IDs (data corruption that was possible
+  // before the structural save guard) so a single booking is never listed OR
+  // counted/summed twice — the live «حجزان لخالد» duplicate and its inflated
+  // income. Rows without an id keep their own identity (no dedup).
+  const seen = new Set();
+  const out = [];
+  for (const b of rows) {
+    const id = b.id != null ? String(b.id) : "";
+    if (id) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+    }
+    out.push(b);
+  }
+  return out;
 }
 
 export function bookingRowsForList(bookings, requestedStatus = "") {
