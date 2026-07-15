@@ -289,6 +289,44 @@ test('F1: one-tap «إلغاء الحجز» on the card cancels without the dele
   await expect(cancelledCard.locator('[data-action="cancel-booking-status"]')).toHaveCount(0);
 });
 
+test('cancelling a booking frees its slot for a different customer (الإلغاء يفرّغ الفترة)', async ({ page }) => {
+  // The business promise behind cancel: once a booking is cancelled it must no
+  // longer hold its slot, so a DIFFERENT customer can take the same date/period.
+  // (The mirror — that a CONFIRMED booking blocks the slot — is covered by the
+  // conflict test above; this proves the release side end to end.)
+  await mockRpc(page);
+  await page.goto('/');
+  await create(page);
+  await createChaletWithSixPeriods(page);
+  await page.locator('[data-tab="bookings"]').click();
+
+  // Customer A takes the slot.
+  await page.locator('[data-action="new-booking"]').click();
+  await page.locator('#bookingCustomerName').fill('العميل الأول');
+  await page.locator('#bookingCustomerPhone').fill('0509999999');
+  await page.locator('#bookingDate').fill(FUTURE_DATE);
+  await page.locator('#bookingTotal').fill('900');
+  await page.locator('[data-action="save-booking"]').click();
+  await expect(page.locator('#bookingList')).toContainText('العميل الأول');
+
+  // Cancel A with the one-tap button — the record is kept but the slot is freed.
+  page.once('dialog', (d) => d.accept());
+  await page.locator('#bookingList [data-booking-card-id]').first()
+    .locator('[data-action="cancel-booking-status"]').click();
+  await expect(page.locator('#feedback')).toContainText('تم إلغاء الحجز');
+  await expect(page.locator('#bookingList')).not.toContainText('العميل الأول');
+
+  // A DIFFERENT customer now books the SAME date/slot — no time conflict, because
+  // the only booking there is cancelled (cancelled bookings never block).
+  await page.locator('[data-action="new-booking"]').click();
+  await page.locator('#bookingCustomerName').fill('العميل الثاني');
+  await page.locator('#bookingCustomerPhone').fill('0555555555');
+  await page.locator('#bookingDate').fill(FUTURE_DATE);
+  await page.locator('#bookingTotal').fill('900');
+  await page.locator('[data-action="save-booking"]').click();
+  await expect(page.locator('#bookingList')).toContainText('العميل الثاني');
+});
+
 test('a booking saved while an upload is in flight is never lost (mid-flight edit kept)', async ({ page }) => {
   const box = await mockMutableCloud(page);
   // Make the save RPC slow so we can edit during the in-flight window.
