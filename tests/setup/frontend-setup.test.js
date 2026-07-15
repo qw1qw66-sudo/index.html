@@ -80,7 +80,7 @@ describe("mobile setup page — security & structure", () => {
   });
 
   it("the copied key template is names + non-secret defaults ONLY (internal secrets are runner-generated)", () => {
-    for (const key of ["DEEPSEEK_API_KEY=", "DEEPSEEK_MODEL=deepseek-v4-flash", "DEEPSEEK_BASE_URL=https://api.deepseek.com", "APP_ENV=staging"]) {
+    for (const key of ["DEEPSEEK_API_KEY=", "DEEPSEEK_MODEL=deepseek-v4-pro", "DEEPSEEK_BASE_URL=https://api.deepseek.com", "APP_ENV=staging"]) {
       expect(html).toContain(`"${key}"`);
     }
     // The owner never types these — the GitHub runner generates them.

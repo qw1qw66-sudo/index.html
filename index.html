@@ -1964,7 +1964,10 @@
         // automatically by the GitHub deployment workflow on its runner.
         const SETUP_SECRET_TEMPLATE = [
           "DEEPSEEK_API_KEY=",
-          "DEEPSEEK_MODEL=deepseek-v4-flash",
+          // The STRONGER model (better Arabic dialect + complex analysis). The
+          // deploy also pins this; keep the in-app template consistent so an
+          // owner who copies it never provisions the weaker deepseek-v4-flash.
+          "DEEPSEEK_MODEL=deepseek-v4-pro",
           "DEEPSEEK_BASE_URL=https://api.deepseek.com",
           "APP_ENV=staging",
         ].join("\n");
